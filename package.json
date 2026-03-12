@@ -1,0 +1,42 @@
+{
+  "name": "aegis",
+  "version": "0.1.0",
+  "description": "Multi-agent swarm orchestrator for Pi + Beads",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "aegis": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "build:olympus": "cd olympus && npm run build",
+    "build:all": "npm run build && npm run build:olympus"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "swarm",
+    "orchestrator",
+    "pi",
+    "beads"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@mariozechner/pi-agent-core": "^0.57.1",
+    "@mariozechner/pi-ai": "^0.57.1",
+    "@mariozechner/pi-coding-agent": "^0.57.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.4.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

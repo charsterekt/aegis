@@ -1,0 +1,14 @@
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db
+
+# Aegis
+.aegis/config.json
+.aegis/labors/
+dist/
+node_modules/
+
+# Olympus build output
+olympus/dist/
+olympus/node_modules/
