@@ -2,7 +2,7 @@
 // Mnemosyne — learnings store read/write interface.
 // Agents accumulate project knowledge as JSONL in .aegis/mnemosyne.jsonl.
 
-import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { MnemosyneRecord } from "./types.js";
