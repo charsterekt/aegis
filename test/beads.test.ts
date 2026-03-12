@@ -22,7 +22,7 @@ function mockSuccess(output: string): void {
   mockExecFile.mockImplementation(
     (_cmd: unknown, _args: unknown, callback: unknown) => {
       (callback as ExecFileCallback)(null, output, "");
-      return undefined as never;
+      return {} as ReturnType<typeof execFile>;
     }
   );
 }
@@ -31,7 +31,7 @@ function mockError(err: Error): void {
   mockExecFile.mockImplementation(
     (_cmd: unknown, _args: unknown, callback: unknown) => {
       (callback as ExecFileCallback)(err, "", err.message);
-      return undefined as never;
+      return {} as ReturnType<typeof execFile>;
     }
   );
 }
@@ -90,7 +90,7 @@ describe("ready()", () => {
     mockExecFile.mockImplementation(
       (_cmd: unknown, _args: unknown, callback: unknown) => {
         (callback as ExecFileCallback)(err, "", "bd: unknown error");
-        return undefined as never;
+        return {} as ReturnType<typeof execFile>;
       }
     );
     await expect(beads.ready()).rejects.toThrow(/bd command failed/);

@@ -132,9 +132,7 @@ export function postProcess(
     if (!completed.source) {
       completed.source = agentId;
     }
-    if (completed.issue === undefined || completed.issue === null) {
-      completed.issue = issueId;
-    }
+    completed.issue ??= issueId;
     if (!completed.ts) {
       completed.ts = Date.now();
     }

@@ -154,9 +154,8 @@ export async function comment(id: string, text: string): Promise<void> {
     // bd comment may not return JSON — treat Malformed JSON errors as success
     if (
       err instanceof Error &&
-      err.message.startsWith("Malformed JSON") || 
-      err instanceof Error &&
-      err.message.startsWith("Empty output")
+      (err.message.startsWith("Malformed JSON") ||
+        err.message.startsWith("Empty output"))
     ) {
       return;
     }
