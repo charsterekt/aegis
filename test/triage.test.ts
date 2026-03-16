@@ -119,6 +119,13 @@ describe("triage()", () => {
     expect(result.type).toBe("dispatch_oracle");
   });
 
+  it("returns skip 'already in progress' for in_progress issue with SCOUTED comment", () => {
+    const issue = makeIssue({ status: "in_progress", comments: [makeComment("SCOUTED: Claimed")] });
+    const result = triage(issue, new Map(), LIMITS);
+    expect(result.type).toBe("skip");
+    if (result.type === "skip") expect(result.reason).toBe("already in progress");
+  });
+
   it("SCOUTED: is case-sensitive, lowercase scouted: does not match", () => {
     const issue = makeIssue({ status: "open", comments: [makeComment("scouted: lowercase prefix")] });
     const result = triage(issue, new Map(), LIMITS);

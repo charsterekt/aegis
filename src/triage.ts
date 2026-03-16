@@ -71,5 +71,9 @@ export function triage(
     return { type: "skip", issue, reason: "review failed, fix issues filed" };
   }
 
+  if (status === "in_progress") {
+    return { type: "skip", issue, reason: "already in progress" };
+  }
+
   return { type: "skip", issue, reason: `unknown status: ${status}` };
 }
