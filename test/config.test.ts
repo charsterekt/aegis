@@ -56,30 +56,40 @@ describe("getDefaultConfig()", () => {
   it("has the correct default model names", () => {
     const cfg = getDefaultConfig();
     expect(cfg.models.oracle).toBe("claude-haiku-4-5");
-    expect(cfg.models.titan).toBe("claude-sonnet-4-5");
-    expect(cfg.models.sentinel).toBe("claude-opus-4-5");
+    expect(cfg.models.titan).toBe("claude-sonnet-4-6");
+    expect(cfg.models.sentinel).toBe("claude-sonnet-4-6");
     expect(cfg.models.metis).toBe("claude-haiku-4-5");
-    expect(cfg.models.prometheus).toBe("claude-opus-4-5");
+    expect(cfg.models.prometheus).toBe("claude-sonnet-4-6");
   });
 
   it("has correct default concurrency values", () => {
     const cfg = getDefaultConfig();
-    expect(cfg.concurrency.max_agents).toBe(4);
+    expect(cfg.concurrency.max_agents).toBe(3);
     expect(cfg.concurrency.max_oracles).toBe(2);
-    expect(cfg.concurrency.max_titans).toBe(2);
+    expect(cfg.concurrency.max_titans).toBe(3);
     expect(cfg.concurrency.max_sentinels).toBe(1);
+  });
+
+  it("has correct default budget values matching SPEC §4.1", () => {
+    const cfg = getDefaultConfig();
+    expect(cfg.budgets.oracle_turns).toBe(5);
+    expect(cfg.budgets.oracle_tokens).toBe(50000);
+    expect(cfg.budgets.titan_turns).toBe(20);
+    expect(cfg.budgets.titan_tokens).toBe(300000);
+    expect(cfg.budgets.sentinel_turns).toBe(8);
+    expect(cfg.budgets.sentinel_tokens).toBe(100000);
   });
 
   it("has correct default timing values", () => {
     const cfg = getDefaultConfig();
     expect(cfg.timing.poll_interval_seconds).toBe(5);
-    expect(cfg.timing.stuck_warning_seconds).toBe(120);
-    expect(cfg.timing.stuck_kill_seconds).toBe(300);
+    expect(cfg.timing.stuck_warning_seconds).toBe(90);
+    expect(cfg.timing.stuck_kill_seconds).toBe(150);
   });
 
   it("has correct olympus defaults", () => {
     const cfg = getDefaultConfig();
-    expect(cfg.olympus.port).toBe(3737);
+    expect(cfg.olympus.port).toBe(3847);
     expect(cfg.olympus.open_browser).toBe(true);
   });
 });
