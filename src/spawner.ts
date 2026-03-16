@@ -145,6 +145,7 @@ async function spawnSession(caste: Caste, issue: BeadsIssue, learnings: Mnemosyn
   } else {
     model = getModelAny("anthropic", modelName);
   }
+  if (!model) throw new Error(`Model not found: ${modelName}`);
   const { session } = await createAgentSession({
     cwd: workingDir,
     agentDir: getAgentDir(),

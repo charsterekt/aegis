@@ -160,6 +160,18 @@ describe("spawn functions", () => {
     expect(mockGetModel).toHaveBeenCalledWith("openai", "gpt-4o");
   });
 
+  it("throws if getModel returns null (unknown model ID)", async () => {
+    mockGetModel.mockReturnValueOnce(null);
+    const cfg = { ...CFG, models: { ...CFG.models, oracle: "bad-model-id" } };
+    await expect(spawnOracle(makeIssue(), [], cfg, "AGENTS")).rejects.toThrow("Model not found: bad-model-id");
+  });
+
+  it("throws if getModel returns undefined for provider:model format", async () => {
+    mockGetModel.mockReturnValueOnce(undefined);
+    const cfg = { ...CFG, models: { ...CFG.models, oracle: "openai:nonexistent" } };
+    await expect(spawnOracle(makeIssue(), [], cfg, "AGENTS")).rejects.toThrow("Model not found: openai:nonexistent");
+  });
+
   // aegis-cqp: ModelRegistry must be created from authStorage and passed to createAgentSession
   it("creates a ModelRegistry from authStorage and passes it to createAgentSession", async () => {
     await spawnOracle(makeIssue(), [], CFG, "AGENTS");
