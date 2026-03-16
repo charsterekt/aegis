@@ -25,9 +25,13 @@ function runGit(args: string[], cwd?: string): Promise<string> {
   });
 }
 
-/** Absolute path to the worktree directory for a given issue. */
-function worktreePath(issueId: string, config: AegisConfig): string {
-  return resolve(join(config.labors.base_path, `labor-${issueId}`));
+/**
+ * Absolute path to the worktree directory for a given issue.
+ * base_path is resolved relative to projectRoot so that relative paths
+ * (the default ".aegis/labors") work correctly regardless of process.cwd().
+ */
+function worktreePath(issueId: string, config: AegisConfig, projectRoot: string): string {
+  return resolve(projectRoot, config.labors.base_path, `labor-${issueId}`);
 }
 
 /** Git branch name for a Labor. */
@@ -47,12 +51,14 @@ function toForwardSlashes(p: string): string {
 /**
  * Creates a new git worktree for the given issue on a dedicated branch.
  * Returns the absolute path to the worktree directory.
+ * projectRoot is used as the cwd for all git commands and to resolve a
+ * relative base_path, so this works correctly regardless of process.cwd().
  */
-export async function create(issueId: string, config: AegisConfig): Promise<string> {
-  const wtPath = worktreePath(issueId, config);
+export async function create(issueId: string, config: AegisConfig, projectRoot: string): Promise<string> {
+  const wtPath = worktreePath(issueId, config, projectRoot);
   const branch = branchName(issueId);
   const gitPath = toForwardSlashes(wtPath);
-  await runGit(["worktree", "add", gitPath, "-b", branch]);
+  await runGit(["worktree", "add", gitPath, "-b", branch], projectRoot);
   return wtPath;
 }
 
@@ -60,21 +66,23 @@ export async function create(issueId: string, config: AegisConfig): Promise<stri
  * Merges the Labor branch back into main.
  * On success returns { success: true }.
  * On merge conflict, aborts and returns { success: false, conflict: <message> }.
+ * projectRoot is used as the cwd for all git commands.
  */
 export async function merge(
   issueId: string,
-  _config: AegisConfig
+  _config: AegisConfig,
+  projectRoot: string
 ): Promise<{ success: boolean; conflict?: string }> {
   const branch = branchName(issueId);
   try {
-    await runGit(["checkout", "main"]);
-    await runGit(["merge", branch, "--no-edit"]);
+    await runGit(["checkout", "main"], projectRoot);
+    await runGit(["merge", branch, "--no-edit"], projectRoot);
     return { success: true };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     // Attempt to abort the merge; ignore errors if nothing to abort
     try {
-      await runGit(["merge", "--abort"]);
+      await runGit(["merge", "--abort"], projectRoot);
     } catch {
       // ignore
     }
@@ -85,20 +93,21 @@ export async function merge(
 /**
  * Removes the worktree directory and deletes the Labor branch.
  * Handles already-removed worktrees gracefully (does not throw).
+ * projectRoot is used as the cwd for all git commands.
  */
-export async function cleanup(issueId: string, config: AegisConfig): Promise<void> {
-  const wtPath = worktreePath(issueId, config);
+export async function cleanup(issueId: string, config: AegisConfig, projectRoot: string): Promise<void> {
+  const wtPath = worktreePath(issueId, config, projectRoot);
   const branch = branchName(issueId);
   const gitPath = toForwardSlashes(wtPath);
 
   try {
-    await runGit(["worktree", "remove", gitPath, "--force"]);
+    await runGit(["worktree", "remove", gitPath, "--force"], projectRoot);
   } catch {
     // Worktree already removed or not registered — proceed to branch cleanup
   }
 
   try {
-    await runGit(["branch", "-D", branch]);
+    await runGit(["branch", "-D", branch], projectRoot);
   } catch {
     // Branch may already be deleted
   }
@@ -106,10 +115,11 @@ export async function cleanup(issueId: string, config: AegisConfig): Promise<voi
 
 /**
  * Lists the issue IDs of all active Labors (git worktrees under the base path).
+ * projectRoot is used as the cwd for git commands and to resolve a relative base_path.
  */
-export async function list(config: AegisConfig): Promise<string[]> {
-  const output = await runGit(["worktree", "list", "--porcelain"]);
-  const basePath = toForwardSlashes(resolve(config.labors.base_path));
+export async function list(config: AegisConfig, projectRoot: string): Promise<string[]> {
+  const output = await runGit(["worktree", "list", "--porcelain"], projectRoot);
+  const basePath = toForwardSlashes(resolve(projectRoot, config.labors.base_path));
   const issueIds: string[] = [];
 
   // git worktree list --porcelain outputs blocks separated by blank lines.

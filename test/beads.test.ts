@@ -275,6 +275,29 @@ describe("mapIssue() status validation", () => {
   });
 });
 
+// ---------- reopen() ----------
+describe("reopen()", () => {
+  it("calls bd update <id> --status open --json", async () => {
+    mockSuccess(JSON.stringify({ ...sampleRawIssue, status: "open" }));
+    const result = await beads.reopen("aegis-001");
+    expect(result.status).toBe("open");
+    const [cmd, args] = mockExecFile.mock.calls[0]!;
+    expect(cmd).toBe("bd");
+    expect(args).toContain("update");
+    expect(args).toContain("aegis-001");
+    expect(args).toContain("--status");
+    expect(args).toContain("open");
+    expect(args).toContain("--json");
+  });
+
+  it("propagates errors from bd", async () => {
+    const err = new Error("bd failed") as NodeJS.ErrnoException;
+    err.code = "ENOENT";
+    mockError(err);
+    await expect(beads.reopen("aegis-001")).rejects.toThrow(/bd CLI not found/);
+  });
+});
+
 // ---------- list() ----------
 describe("list()", () => {
   it("calls bd query status!=deferred --json to include closed issues", async () => {
