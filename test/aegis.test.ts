@@ -327,7 +327,7 @@ describe("dispatch via tick", () => {
     const aegis = makeAegis();
     await (aegis as unknown as { runTick: () => Promise<void> }).runTick();
 
-    expect(laborsMock.create).toHaveBeenCalledWith(issue.id, CFG);
+    expect(laborsMock.create).toHaveBeenCalledWith(issue.id, CFG, expect.any(String));
     expect(spawnerMock.spawnTitan).toHaveBeenCalledOnce();
   });
 
@@ -435,7 +435,7 @@ describe("reap: Titan Labor merge", () => {
 
     // Give the fire-and-forget promise a chance to settle
     await vi.waitFor(() => {
-      expect(laborsMock.merge).toHaveBeenCalledWith(issue.id, CFG);
+      expect(laborsMock.merge).toHaveBeenCalledWith(issue.id, CFG, expect.any(String));
     }, { timeout: 1000 });
   });
 

@@ -566,7 +566,7 @@ export class Aegis {
     // Create the git worktree Labor
     let laborPath: string;
     try {
-      laborPath = await labors.create(issue.id, this.config);
+      laborPath = await labors.create(issue.id, this.config, this.projectRoot);
     } catch (err) {
       this.emit({
         type: "labor.create_failed",
@@ -593,7 +593,7 @@ export class Aegis {
       this.spawnPendingReap.add(agentId);
       this.recordDispatchFailure(issue.id);
       // Clean up the Labor we just created
-      await labors.cleanup(issue.id, this.config).catch(() => undefined);
+      await labors.cleanup(issue.id, this.config, this.projectRoot).catch(() => undefined);
       return;
     }
 
@@ -832,7 +832,7 @@ export class Aegis {
   private async reapTitanLabor(state: AgentState): Promise<void> {
     let mergeResult: { success: boolean; conflict?: string };
     try {
-      mergeResult = await labors.merge(state.issue_id, this.config);
+      mergeResult = await labors.merge(state.issue_id, this.config, this.projectRoot);
     } catch (err) {
       mergeResult = { success: false, conflict: String(err) };
     }
@@ -844,7 +844,7 @@ export class Aegis {
         timestamp: Date.now(),
       });
       // Clean up worktree + branch
-      await labors.cleanup(state.issue_id, this.config).catch(() => undefined);
+      await labors.cleanup(state.issue_id, this.config, this.projectRoot).catch(() => undefined);
     } else {
       this.emit({
         type: "labor.conflict",

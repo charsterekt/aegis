@@ -77,18 +77,18 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 describe("create()", () => {
   it("creates a worktree at the correct path", async () => {
-    const wtPath = await create("issue-001", config);
-    const expectedPath = resolve(join(config.labors.base_path, "labor-issue-001"));
+    const wtPath = await create("issue-001", config, repoDir);
+    const expectedPath = resolve(repoDir, config.labors.base_path, "labor-issue-001");
     expect(wtPath).toBe(expectedPath);
   });
 
   it("returns an absolute path", async () => {
-    const wtPath = await create("issue-002", config);
+    const wtPath = await create("issue-002", config, repoDir);
     expect(wtPath.startsWith("/") || /^[A-Za-z]:/.test(wtPath)).toBe(true);
   });
 
   it("creates the worktree on a branch named aegis/<issueId>", async () => {
-    await create("issue-003", config);
+    await create("issue-003", config, repoDir);
     // Verify the branch exists
     const branches = execFileSync("git", ["branch", "--list", "aegis/issue-003"], {
       cwd: repoDir,
@@ -98,9 +98,18 @@ describe("create()", () => {
   });
 
   it("creates the worktree directory on disk", async () => {
-    const wtPath = await create("issue-004", config);
+    const wtPath = await create("issue-004", config, repoDir);
     const { existsSync } = await import("node:fs");
     expect(existsSync(wtPath)).toBe(true);
+  });
+
+  it("resolves a relative base_path against projectRoot (not process.cwd)", async () => {
+    // Use a config with a relative base_path
+    const relConfig = { ...config, labors: { base_path: ".aegis/labors" } };
+    const wtPath = await create("issue-rel-001", relConfig, repoDir);
+    // Must be under repoDir, not process.cwd()
+    expect(wtPath.startsWith(repoDir)).toBe(true);
+    await cleanup("issue-rel-001", relConfig, repoDir);
   });
 });
 
@@ -109,22 +118,22 @@ describe("create()", () => {
 // ---------------------------------------------------------------------------
 describe("list()", () => {
   it("returns empty array when no labors exist", async () => {
-    const result = await list(config);
+    const result = await list(config, repoDir);
     expect(result).toEqual([]);
   });
 
   it("returns issue IDs for active labors", async () => {
-    await create("issue-010", config);
-    await create("issue-011", config);
+    await create("issue-010", config, repoDir);
+    await create("issue-011", config, repoDir);
 
-    const result = await list(config);
+    const result = await list(config, repoDir);
     expect(result).toContain("issue-010");
     expect(result).toContain("issue-011");
   });
 
   it("does not include the main worktree in results", async () => {
-    await create("issue-012", config);
-    const result = await list(config);
+    await create("issue-012", config, repoDir);
+    const result = await list(config, repoDir);
     // Main repo path should not be included (it's not under the labors base_path)
     expect(result).not.toContain("");
     expect(result.every((id) => id.length > 0)).toBe(true);
@@ -136,9 +145,9 @@ describe("list()", () => {
 // ---------------------------------------------------------------------------
 describe("cleanup()", () => {
   it("removes the worktree and deletes the branch", async () => {
-    await create("issue-020", config);
+    await create("issue-020", config, repoDir);
 
-    await cleanup("issue-020", config);
+    await cleanup("issue-020", config, repoDir);
 
     // Branch should be gone
     const branches = execFileSync("git", ["branch", "--list", "aegis/issue-020"], {
@@ -150,14 +159,14 @@ describe("cleanup()", () => {
 
   it("handles already-removed worktrees without throwing", async () => {
     // Cleanup a non-existent labor — should not throw
-    await expect(cleanup("issue-nonexistent", config)).resolves.not.toThrow();
+    await expect(cleanup("issue-nonexistent", config, repoDir)).resolves.not.toThrow();
   });
 
   it("removes the issue from the list after cleanup", async () => {
-    await create("issue-021", config);
-    await cleanup("issue-021", config);
+    await create("issue-021", config, repoDir);
+    await cleanup("issue-021", config, repoDir);
 
-    const result = await list(config);
+    const result = await list(config, repoDir);
     expect(result).not.toContain("issue-021");
   });
 });
@@ -167,21 +176,21 @@ describe("cleanup()", () => {
 // ---------------------------------------------------------------------------
 describe("merge()", () => {
   it("successfully merges a branch with new commits", async () => {
-    const wtPath = await create("issue-030", config);
+    const wtPath = await create("issue-030", config, repoDir);
 
     // Make a commit in the worktree
     writeFileSync(join(wtPath, "feature.txt"), "new feature\n");
     execFileSync("git", ["add", "feature.txt"], { cwd: wtPath });
     execFileSync("git", ["commit", "-m", "feat: add feature"], { cwd: wtPath });
 
-    const result = await merge("issue-030", config);
+    const result = await merge("issue-030", config, repoDir);
 
     expect(result.success).toBe(true);
     expect(result.conflict).toBeUndefined();
   });
 
   it("returns success:false on merge conflict and aborts", async () => {
-    const wtPath = await create("issue-031", config);
+    const wtPath = await create("issue-031", config, repoDir);
 
     // Make conflicting changes in both branches
     // Worktree branch: modify README
@@ -195,7 +204,7 @@ describe("merge()", () => {
     execFileSync("git", ["add", "README.md"], { cwd: repoDir });
     execFileSync("git", ["commit", "-m", "fix: main change"], { cwd: repoDir });
 
-    const result = await merge("issue-031", config);
+    const result = await merge("issue-031", config, repoDir);
 
     expect(result.success).toBe(false);
     expect(result.conflict).toBeTruthy();
@@ -229,14 +238,14 @@ describe("Windows path compatibility", () => {
       labors: { base_path: config.labors.base_path.replace(/\//g, "\\") },
     };
     // Should not throw regardless of slash style
-    await expect(create("issue-win-001", backslashConfig)).resolves.toBeTruthy();
-    await cleanup("issue-win-001", backslashConfig);
+    await expect(create("issue-win-001", backslashConfig, repoDir)).resolves.toBeTruthy();
+    await cleanup("issue-win-001", backslashConfig, repoDir);
   });
 
   it("list() normalizes paths and extracts issue IDs correctly", async () => {
-    await create("issue-win-002", config);
-    const result = await list(config);
+    await create("issue-win-002", config, repoDir);
+    const result = await list(config, repoDir);
     expect(result).toContain("issue-win-002");
-    await cleanup("issue-win-002", config);
+    await cleanup("issue-win-002", config, repoDir);
   });
 });
