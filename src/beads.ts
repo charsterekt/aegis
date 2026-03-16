@@ -173,6 +173,16 @@ export async function comment(id: string, text: string): Promise<void> {
   await runBd(["comments", "add", id, text]);
 }
 
+/**
+ * Resets an in_progress issue back to open.
+ * Used by crash recovery on startup to reclaim orphaned issues.
+ */
+export async function reopen(id: string): Promise<BeadsIssue> {
+  const output = await runBd(["update", id, "--status", "open", "--json"]);
+  const raw = parseJson<RawBeadsIssue>(output, `update ${id}`);
+  return mapIssue(raw);
+}
+
 export async function list(): Promise<BeadsIssue[]> {
   // "bd list --json" does not return JSON in v0.59+.
   // Use "bd query" which reliably returns JSON and includes all non-deferred issues.

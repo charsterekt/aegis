@@ -128,6 +128,10 @@ export class Aegis {
 
     this.emit({ type: "orchestrator.started", data: {}, timestamp: Date.now() });
 
+    // Crash recovery: reset any orphaned in_progress issues and clean up
+    // stale labors left over from a previous crash (SPEC §2.3).
+    await this.recover();
+
     // First tick immediately
     await this.tick();
 
@@ -196,6 +200,58 @@ export class Aegis {
       data: { total_cost_usd: totalCost },
       timestamp: Date.now(),
     });
+  }
+
+  /**
+   * Crash recovery per SPEC §2.3.
+   * On startup there are no running agents, so any in_progress issue in beads
+   * is orphaned from a previous crash. Reset each to open so they re-enter
+   * the dispatch queue. Also clean up any stale git worktrees in .aegis/labors/.
+   */
+  private async recover(): Promise<void> {
+    // Reset orphaned in_progress issues
+    let allIssues: import("./types.js").BeadsIssue[];
+    try {
+      allIssues = await beads.list();
+    } catch {
+      return; // bd unavailable — skip recovery silently
+    }
+
+    const orphaned = allIssues.filter((i) => i.status === "in_progress");
+
+    for (const issue of orphaned) {
+      try {
+        await beads.reopen(issue.id);
+        this.emit({
+          type: "orchestrator.recovered_issue",
+          data: { issue_id: issue.id, issue_title: issue.title },
+          timestamp: Date.now(),
+        });
+      } catch {
+        // Best-effort — log but don't crash startup
+      }
+    }
+
+    // Clean up any orphaned labors (worktrees without a running agent)
+    let orphanedLabors: string[];
+    try {
+      orphanedLabors = await labors.list(this.config, this.projectRoot);
+    } catch {
+      return;
+    }
+
+    for (const issueId of orphanedLabors) {
+      try {
+        await labors.cleanup(issueId, this.config, this.projectRoot);
+        this.emit({
+          type: "labor.orphan_cleaned",
+          data: { issue_id: issueId },
+          timestamp: Date.now(),
+        });
+      } catch {
+        // ignore — best effort
+      }
+    }
   }
 
   pause(): void {

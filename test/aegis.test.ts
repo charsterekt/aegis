@@ -82,6 +82,7 @@ vi.mock("../src/beads.js", () => ({
   create: vi.fn().mockResolvedValue(makeIssue("new-001")),
   update: vi.fn().mockResolvedValue(makeIssue("test-001")),
   close: vi.fn().mockResolvedValue(makeIssue("test-001")),
+  reopen: vi.fn().mockResolvedValue(makeIssue("test-001")),
   comment: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -953,5 +954,91 @@ describe("concurrency enforcement", () => {
     // 4th tick: issue not blocked, spawn attempted (triage allows it)
     await runTick();
     expect(vi.mocked(spawnerMock.spawnOracle).mock.calls.length).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Crash recovery — aegis-7lg
+// ---------------------------------------------------------------------------
+
+describe("crash recovery on start()", () => {
+  type RecoverFn = () => Promise<void>;
+
+  it("calls beads.reopen() for each in_progress issue on startup", async () => {
+    const orphan1 = makeIssue("orphan-001", { status: "in_progress" });
+    const orphan2 = makeIssue("orphan-002", { status: "in_progress" });
+    const openIssue = makeIssue("open-001", { status: "open" });
+
+    vi.mocked(beadsMock.list).mockResolvedValueOnce([orphan1, orphan2, openIssue]);
+    vi.mocked(beadsMock.reopen).mockResolvedValue(makeIssue("x", { status: "open" }));
+    vi.mocked(laborsMock.list).mockResolvedValueOnce([]);
+
+    const aegis = makeAegis();
+    await (aegis as unknown as { recover: RecoverFn }).recover();
+
+    expect(beadsMock.reopen).toHaveBeenCalledWith("orphan-001");
+    expect(beadsMock.reopen).toHaveBeenCalledWith("orphan-002");
+    expect(beadsMock.reopen).not.toHaveBeenCalledWith("open-001");
+  });
+
+  it("emits orchestrator.recovered_issue for each reset issue", async () => {
+    const orphan = makeIssue("orphan-010", { status: "in_progress" });
+    vi.mocked(beadsMock.list).mockResolvedValueOnce([orphan]);
+    vi.mocked(beadsMock.reopen).mockResolvedValue(makeIssue("orphan-010", { status: "open" }));
+    vi.mocked(laborsMock.list).mockResolvedValueOnce([]);
+
+    const aegis = makeAegis();
+    const events: SSEEvent[] = [];
+    aegis.onEvent((e) => events.push(e));
+
+    await (aegis as unknown as { recover: RecoverFn }).recover();
+
+    expect(events.some((e) => e.type === "orchestrator.recovered_issue" &&
+      (e.data as { issue_id: string }).issue_id === "orphan-010")).toBe(true);
+  });
+
+  it("cleans up orphaned labors found in .aegis/labors/", async () => {
+    vi.mocked(beadsMock.list).mockResolvedValueOnce([]);
+    vi.mocked(laborsMock.list).mockResolvedValueOnce(["stale-001", "stale-002"]);
+
+    const aegis = makeAegis();
+    await (aegis as unknown as { recover: RecoverFn }).recover();
+
+    expect(laborsMock.cleanup).toHaveBeenCalledWith("stale-001", CFG, expect.any(String));
+    expect(laborsMock.cleanup).toHaveBeenCalledWith("stale-002", CFG, expect.any(String));
+  });
+
+  it("emits labor.orphan_cleaned for each cleaned worktree", async () => {
+    vi.mocked(beadsMock.list).mockResolvedValueOnce([]);
+    vi.mocked(laborsMock.list).mockResolvedValueOnce(["stale-003"]);
+
+    const aegis = makeAegis();
+    const events: SSEEvent[] = [];
+    aegis.onEvent((e) => events.push(e));
+
+    await (aegis as unknown as { recover: RecoverFn }).recover();
+
+    expect(events.some((e) => e.type === "labor.orphan_cleaned" &&
+      (e.data as { issue_id: string }).issue_id === "stale-003")).toBe(true);
+  });
+
+  it("does nothing when there are no orphaned issues or labors", async () => {
+    vi.mocked(beadsMock.list).mockResolvedValueOnce([makeIssue("open-001")]);
+    vi.mocked(laborsMock.list).mockResolvedValueOnce([]);
+
+    const aegis = makeAegis();
+    await (aegis as unknown as { recover: RecoverFn }).recover();
+
+    expect(beadsMock.reopen).not.toHaveBeenCalled();
+    expect(laborsMock.cleanup).not.toHaveBeenCalled();
+  });
+
+  it("skips recovery silently when beads.list() throws", async () => {
+    vi.mocked(beadsMock.list).mockRejectedValueOnce(new Error("bd not found"));
+
+    const aegis = makeAegis();
+    await expect(
+      (aegis as unknown as { recover: RecoverFn }).recover()
+    ).resolves.toBeUndefined();
   });
 });
