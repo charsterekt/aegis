@@ -178,6 +178,30 @@ describe("validateConfig()", () => {
     expect(() => validateConfig(bad)).toThrow(/open_browser/);
   });
 
+  it("throws when concurrency value is a non-integer positive number (aegis-sgg)", () => {
+    const bad = {
+      ...getDefaultConfig(),
+      concurrency: { ...getDefaultConfig().concurrency, max_agents: 2.5 },
+    };
+    expect(() => validateConfig(bad)).toThrow(/integer/);
+  });
+
+  it("throws when budget value is a non-integer positive number (aegis-sgg)", () => {
+    const bad = {
+      ...getDefaultConfig(),
+      budgets: { ...getDefaultConfig().budgets, oracle_turns: 5.5 },
+    };
+    expect(() => validateConfig(bad)).toThrow(/integer/);
+  });
+
+  it("throws when port is a non-integer positive number (aegis-sgg)", () => {
+    const bad = {
+      ...getDefaultConfig(),
+      olympus: { ...getDefaultConfig().olympus, port: 3847.5 },
+    };
+    expect(() => validateConfig(bad)).toThrow(/integer/);
+  });
+
   it("accepts null auth values", () => {
     const cfg: AegisConfig = {
       ...getDefaultConfig(),

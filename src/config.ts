@@ -103,6 +103,19 @@ function requirePositiveNumber(
   return val;
 }
 
+function requirePositiveInteger(
+  parent: Record<string, unknown>,
+  path: string
+): number {
+  const val = requirePositiveNumber(parent, path);
+  if (!Number.isInteger(val)) {
+    throw new Error(
+      `Config: '${path}' must be a positive integer, got ${val}`
+    );
+  }
+  return val;
+}
+
 function requireBoolean(
   parent: Record<string, unknown>,
   path: string
@@ -158,22 +171,22 @@ export function validateConfig(raw: unknown): AegisConfig {
     },
 
     concurrency: {
-      max_agents: requirePositiveNumber(concurrency, "concurrency.max_agents"),
-      max_oracles: requirePositiveNumber(concurrency, "concurrency.max_oracles"),
-      max_titans: requirePositiveNumber(concurrency, "concurrency.max_titans"),
-      max_sentinels: requirePositiveNumber(
+      max_agents: requirePositiveInteger(concurrency, "concurrency.max_agents"),
+      max_oracles: requirePositiveInteger(concurrency, "concurrency.max_oracles"),
+      max_titans: requirePositiveInteger(concurrency, "concurrency.max_titans"),
+      max_sentinels: requirePositiveInteger(
         concurrency,
         "concurrency.max_sentinels"
       ),
     },
 
     budgets: {
-      oracle_turns: requirePositiveNumber(budgets, "budgets.oracle_turns"),
-      oracle_tokens: requirePositiveNumber(budgets, "budgets.oracle_tokens"),
-      titan_turns: requirePositiveNumber(budgets, "budgets.titan_turns"),
-      titan_tokens: requirePositiveNumber(budgets, "budgets.titan_tokens"),
-      sentinel_turns: requirePositiveNumber(budgets, "budgets.sentinel_turns"),
-      sentinel_tokens: requirePositiveNumber(budgets, "budgets.sentinel_tokens"),
+      oracle_turns: requirePositiveInteger(budgets, "budgets.oracle_turns"),
+      oracle_tokens: requirePositiveInteger(budgets, "budgets.oracle_tokens"),
+      titan_turns: requirePositiveInteger(budgets, "budgets.titan_turns"),
+      titan_tokens: requirePositiveInteger(budgets, "budgets.titan_tokens"),
+      sentinel_turns: requirePositiveInteger(budgets, "budgets.sentinel_turns"),
+      sentinel_tokens: requirePositiveInteger(budgets, "budgets.sentinel_tokens"),
     },
 
     timing: {
@@ -192,8 +205,8 @@ export function validateConfig(raw: unknown): AegisConfig {
     },
 
     mnemosyne: {
-      max_records: requirePositiveNumber(mnemosyne, "mnemosyne.max_records"),
-      context_budget_tokens: requirePositiveNumber(
+      max_records: requirePositiveInteger(mnemosyne, "mnemosyne.max_records"),
+      context_budget_tokens: requirePositiveInteger(
         mnemosyne,
         "mnemosyne.context_budget_tokens"
       ),
@@ -204,7 +217,7 @@ export function validateConfig(raw: unknown): AegisConfig {
     },
 
     olympus: {
-      port: requirePositiveNumber(olympus, "olympus.port"),
+      port: requirePositiveInteger(olympus, "olympus.port"),
       open_browser: requireBoolean(olympus, "olympus.open_browser"),
     },
   };

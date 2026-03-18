@@ -17,6 +17,10 @@ export async function poll(): Promise<BeadsIssue[]> {
  * Diffs the ready issue list against currently running agents.
  * Returns only issues that are NOT already being worked on by a running agent.
  *
+ * This is an optimization that reduces the number of triage() calls —
+ * triage() itself also checks the running map, so diff() is not required
+ * for correctness but prevents unnecessary work in the triage loop.
+ *
  * @param ready - The full list of ready issues from beads
  * @param running - Map of issue ID → AgentState for all running agents
  */

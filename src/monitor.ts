@@ -76,9 +76,11 @@ export function calculateCost(
 /**
  * Registers tracking for an agent and emits a tracking_started SSEEvent.
  *
- * In a full implementation this subscribes to the Pi SDK session event stream
- * to update agent.state (turns, tokens, cost, last_tool_call_at) on each event.
- * The onEvent callback forwards events to the Olympus dashboard via SSE.
+ * Session event tracking (turns, tokens, cost, last_tool_call_at) is handled
+ * by aegis.ts registerAgent() which subscribes to the Pi SDK session events
+ * directly. This function emits the initial tracking_started event only.
+ * Stateless check functions (checkStuck, checkBudget, checkRepeatedToolCall)
+ * are called from the aegis.ts monitor phase of each tick.
  */
 export function track(
   agent: MonitoredAgent,

@@ -131,6 +131,13 @@ export class Aegis {
    */
   private processQueue = new Set<string>();
 
+  /**
+   * Issue IDs that were in the ready queue when auto mode was activated.
+   * These are excluded from automatic dispatch per SPEC §3.1 (conversational-first).
+   * Cleared on autoOff().
+   */
+  private autoModeIgnoreSet = new Set<string>();
+
   constructor(config: AegisConfig, projectRoot: string = process.cwd()) {
     this.config = config;
     this.projectRoot = projectRoot;
@@ -209,6 +216,37 @@ export class Aegis {
         }
       }
       await this.reap(agentId);
+    }
+
+    // Mark any remaining in_progress issues back to open (SPEC §9.2 step 5, aegis-xp2).
+    // This catches issues claimed by agents that crashed without being reaped.
+    try {
+      const allIssues = await beads.list();
+      for (const issue of allIssues) {
+        if (issue.status === "in_progress") {
+          try {
+            await beads.reopen(issue.id);
+          } catch {
+            // best-effort
+          }
+        }
+      }
+    } catch {
+      // beads unavailable — skip
+    }
+
+    // Clean up any remaining Labors (SPEC §9.2 step 6, aegis-xp2).
+    try {
+      const remainingLabors = await labors.list(this.config, this.projectRoot);
+      for (const issueId of remainingLabors) {
+        try {
+          await labors.cleanup(issueId, this.config, this.projectRoot);
+        } catch {
+          // best-effort
+        }
+      }
+    } catch {
+      // labors unavailable — skip
     }
 
     const totalCost = this.totalCost();
@@ -306,8 +344,12 @@ export class Aegis {
     };
   }
 
-  onEvent(handler: (event: SSEEvent) => void): void {
+  onEvent(handler: (event: SSEEvent) => void): () => void {
     this.eventListeners.push(handler);
+    return () => {
+      const idx = this.eventListeners.indexOf(handler);
+      if (idx !== -1) this.eventListeners.splice(idx, 1);
+    };
   }
 
   // --------------------------------------------------------------------------
@@ -367,11 +409,24 @@ export class Aegis {
 
   /**
    * Activate the autonomous poll loop (SPEC §3.1 auto mode).
+   * Snapshots the current ready queue so pre-existing issues are excluded
+   * from automatic dispatch (conversational-first principle).
    * Runs the first tick immediately, then on the configured interval.
    */
-  autoOn(): void {
+  async autoOn(): Promise<void> {
     if (this.autoMode) return; // already active
     this.autoMode = true;
+
+    // Snapshot current ready queue so pre-existing issues are excluded (SPEC §3.1).
+    try {
+      const currentReady = await poller.poll();
+      for (const issue of currentReady) {
+        this.autoModeIgnoreSet.add(issue.id);
+      }
+    } catch {
+      // If poll fails, proceed without a snapshot — all issues will be processed.
+    }
+
     void this.tick();
     this.pollTimer = setInterval(() => {
       if (!this._paused && !this._stopping && !this.ticking) {
@@ -387,6 +442,7 @@ export class Aegis {
   autoOff(): void {
     if (!this.autoMode) return; // already inactive
     this.autoMode = false;
+    this.autoModeIgnoreSet.clear();
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
@@ -420,6 +476,34 @@ export class Aegis {
     const issue = await beads.show(issueId);
     const action = triage(issue, this.runningByIssueId(), this.config.concurrency);
     await this.dispatch(action);
+  }
+
+  /** Reprioritize a beads issue (SPEC §3.2, aegis-dgs). */
+  async reprioritize(issueId: string, priority: number): Promise<void> {
+    await beads.update(issueId, { priority });
+    this.emit({
+      type: "orchestrator.reprioritized",
+      data: { issue_id: issueId, priority },
+      timestamp: Date.now(),
+    });
+  }
+
+  /** Return a summary of the current swarm state (SPEC §3.2, aegis-dgs). */
+  summarize(): SwarmState {
+    return this.getState();
+  }
+
+  /** Add a learning to the Mnemosyne store (SPEC §3.2, aegis-dgs). */
+  addLearning(domain: string, text: string): void {
+    mnemo.append(
+      { type: "convention", domain, text, source: "human", issue: null },
+      this.projectRoot
+    );
+    this.emit({
+      type: "mnemosyne.learning_added",
+      data: { domain, text },
+      timestamp: Date.now(),
+    });
   }
 
   async tellAgent(agentId: string, message: string): Promise<void> {
@@ -497,12 +581,18 @@ export class Aegis {
     const newIssues = poller.diff(allActionable, runningByIssue);
 
     // ----- FILTER -----
+    // In auto mode, exclude issues that were already in the ready queue
+    // when auto mode was activated (SPEC §3.1 conversational-first).
+    const autoFiltered = this.autoMode && this.autoModeIgnoreSet.size > 0
+      ? newIssues.filter((i) => !this.autoModeIgnoreSet.has(i.id))
+      : newIssues;
+
     const filtered = this.focusFilter
-      ? newIssues.filter((i) => {
+      ? autoFiltered.filter((i) => {
           const text = `${i.title} ${i.description}`.toLowerCase();
           return text.includes(this.focusFilter!.toLowerCase());
         })
-      : newIssues;
+      : autoFiltered;
 
     // ----- TRIAGE + DISPATCH -----
     for (const issue of filtered) {
@@ -954,6 +1044,31 @@ export class Aegis {
       timestamp: Date.now(),
     });
 
+    // Verify agent completion criteria per SPEC §4.2/§4.3/§4.4 (aegis-qgm).
+    // If the agent "completed" but didn't achieve its expected outcome, mark as failed.
+    if (state.status === "completed") {
+      try {
+        const issue = await beads.show(state.issue_id);
+        if (state.caste === "oracle") {
+          const hasScouted = issue.comments.some((c) => c.body.startsWith("SCOUTED:"));
+          if (!hasScouted) {
+            state.status = "failed";
+          }
+        } else if (state.caste === "titan") {
+          if (issue.status !== "closed") {
+            state.status = "failed";
+          }
+        } else if (state.caste === "sentinel") {
+          const hasReviewed = issue.comments.some((c) => c.body.startsWith("REVIEWED:"));
+          if (!hasReviewed) {
+            state.status = "failed";
+          }
+        }
+      } catch {
+        // beads unavailable — skip verification
+      }
+    }
+
     // Update dispatch failure tracking (aegis-0in).
     // Consolidating here (instead of per-spawn-path) ensures budget-killed and
     // stuck-killed agents also count toward the backoff window.
@@ -961,6 +1076,16 @@ export class Aegis {
       this.recordDispatchFailure(state.issue_id);
     } else if (state.status === "completed") {
       this.resetDispatchFailures(state.issue_id);
+    }
+
+    // Mark failed/killed agent issues back to open so they re-enter the
+    // dispatch queue (SPEC §3.1 REAP — aegis-dos).
+    if (state.status === "killed" || state.status === "failed") {
+      try {
+        await beads.reopen(state.issue_id);
+      } catch {
+        // Best-effort — issue may already be open or beads unavailable
+      }
     }
 
     // For Titans: merge Labor back into main
@@ -1117,15 +1242,10 @@ export class Aegis {
    * Calls bd show for each; skips issues that fail to fetch.
    */
   private async fetchFullIssues(ids: string[]): Promise<BeadsIssue[]> {
-    const results: BeadsIssue[] = [];
-    for (const id of ids) {
-      try {
-        results.push(await beads.show(id));
-      } catch {
-        // Skip issues that can't be fetched (e.g., already closed/deleted)
-      }
-    }
-    return results;
+    const settled = await Promise.allSettled(ids.map((id) => beads.show(id)));
+    return settled
+      .filter((r): r is PromiseFulfilledResult<BeadsIssue> => r.status === "fulfilled")
+      .map((r) => r.value);
   }
 
   /**

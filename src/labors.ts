@@ -107,7 +107,7 @@ export async function cleanup(issueId: string, config: AegisConfig, projectRoot:
   }
 
   try {
-    await runGit(["branch", "-D", branch], projectRoot);
+    await runGit(["branch", "-d", branch], projectRoot);
   } catch {
     // Branch may already be deleted
   }
