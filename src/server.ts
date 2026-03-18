@@ -6,6 +6,7 @@ import * as http from "node:http";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as url from "node:url";
+import { fileURLToPath } from "node:url";
 
 import type { Aegis } from "./aegis.js";
 import type { AegisConfig, SSEEvent } from "./types.js";
@@ -145,13 +146,62 @@ async function handleDirect(input: string, aegis: Aegis): Promise<DirectResult> 
   }
 
   if (trimmed === "auto on") {
-    aegis.autoOn();
+    await aegis.autoOn();
     return { ok: true, message: "Auto mode activated — poll loop running." };
   }
 
   if (trimmed === "auto off") {
     aegis.autoOff();
     return { ok: true, message: "Auto mode deactivated — returning to conversational mode." };
+  }
+
+  // restart <issue-id> — kill current agent and re-dispatch (aegis-0jw)
+  const restartMatch = /^restart\s+(\S+)$/.exec(trimmed);
+  if (restartMatch) {
+    const issueId = restartMatch[1] ?? "";
+    await aegis.restart(issueId);
+    return { ok: true, message: `Restarted dispatch for ${issueId}.` };
+  }
+
+  // tell all <message> — steer all agents (aegis-0jw) — must be before tell <id>
+  const tellAllMatch = /^tell\s+all\s+(.+)$/i.exec(input.trim());
+  if (tellAllMatch) {
+    const message = tellAllMatch[1]!;
+    await aegis.tellAll(message);
+    return { ok: true, message: "Message sent to all agents." };
+  }
+
+  // tell <agent-id> <message> — steer a specific agent (aegis-0jw)
+  const tellMatch = /^tell\s+(\S+)\s+(.+)$/i.exec(input.trim());
+  if (tellMatch) {
+    const agentId = tellMatch[1]!.toLowerCase();
+    const message = tellMatch[2]!;
+    await aegis.tellAgent(agentId, message);
+    return { ok: true, message: `Message sent to ${agentId}.` };
+  }
+
+  // add_learning <domain> <text> — add a Mnemosyne learning (aegis-0jw)
+  const learningMatch = /^add_learning\s+(\S+)\s+(.+)$/i.exec(input.trim());
+  if (learningMatch) {
+    const domain = learningMatch[1]!;
+    const text = learningMatch[2]!;
+    aegis.addLearning(domain, text);
+    return { ok: true, message: `Learning added to domain "${domain}".` };
+  }
+
+  // reprioritize <issue-id> <priority> (aegis-dgs)
+  const reprioMatch = /^reprioritize\s+(\S+)\s+(\d+)$/.exec(trimmed);
+  if (reprioMatch) {
+    const issueId = reprioMatch[1] ?? "";
+    const priority = parseInt(reprioMatch[2] ?? "1", 10);
+    await aegis.reprioritize(issueId, priority);
+    return { ok: true, message: `Issue ${issueId} reprioritized to P${priority}.` };
+  }
+
+  // summarize (aegis-dgs)
+  if (trimmed === "summarize") {
+    const state = aegis.summarize();
+    return { ok: true, message: JSON.stringify(state, null, 2) };
   }
 
   const statusCmds = new Set(["status", "state", "info"]);
@@ -165,7 +215,7 @@ async function handleDirect(input: string, aegis: Aegis): Promise<DirectResult> 
     return { ok: true, message: "Orchestrator stopping." };
   }
 
-  return { ok: false, message: `Unknown direct command: "${input}". Try: pause, resume, stop, kill <id>, scale <n>, focus <text>, rush <issue-id>, scout <id>, implement <id>, review <id>, process <id>, auto on, auto off` };
+  return { ok: false, message: `Unknown direct command: "${input}". Try: pause, resume, stop, kill <id>, scale <n>, focus <text>, rush <issue-id>, scout <id>, implement <id>, review <id>, process <id>, auto on, auto off, restart <id>, tell <agent-id> <msg>, tell all <msg>, add_learning <domain> <text>, reprioritize <id> <priority>, summarize` };
 }
 
 // ---------------------------------------------------------------------------
@@ -186,7 +236,8 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 // ---------------------------------------------------------------------------
 
 export function createServer(aegisInstance: Aegis, config: AegisConfig): http.Server {
-  const olympusDistDir = path.resolve("olympus", "dist");
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const olympusDistDir = path.resolve(__dirname, "..", "olympus", "dist");
 
   /** Set of active SSE response objects */
   const sseClients = new Set<http.ServerResponse>();

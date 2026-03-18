@@ -98,9 +98,15 @@ export interface AgentState {
 export type SteerAction =
   | { type: "pause" }
   | { type: "resume" }
+  | { type: "auto_on" }
+  | { type: "auto_off" }
   | { type: "scale"; concurrency: number }
   | { type: "focus"; filter: string }
   | { type: "clear_focus" }
+  | { type: "scout"; issue_id: string }
+  | { type: "implement"; issue_id: string }
+  | { type: "review"; issue_id: string }
+  | { type: "process"; issue_id: string }
   | { type: "rush"; issue_id: string }
   | { type: "kill"; agent_id: string }
   | { type: "restart"; issue_id: string }

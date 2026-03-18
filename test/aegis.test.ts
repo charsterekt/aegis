@@ -992,8 +992,13 @@ describe("concurrency enforcement", () => {
 
   it("resets failure count on successful spawn", async () => {
     const issue = makeIssue("recover-issue");
+    // beads.show must return an issue with SCOUTED comment so completion
+    // verification (aegis-qgm) considers the oracle successful.
+    const scoutedIssue = makeIssue("recover-issue", {
+      comments: [{ id: "c1", body: "SCOUTED: assessment", author: "oracle", created_at: "" }],
+    });
     vi.mocked(pollerMock.poll).mockResolvedValue([issue]);
-    vi.mocked(beadsMock.show).mockResolvedValue(issue);
+    vi.mocked(beadsMock.show).mockResolvedValue(scoutedIssue);
     vi.mocked(triageMock.triage).mockReturnValue({ type: "dispatch_oracle", issue });
 
     // First 2 ticks fail, 3rd succeeds → failure count resets → 4th tick dispatches again
@@ -1211,7 +1216,7 @@ describe("start() is idle by default (aegis-5yy)", () => {
     const events: SSEEvent[] = [];
     aegis.onEvent((e) => events.push(e));
 
-    aegis.autoOn();
+    await aegis.autoOn();
 
     // Should emit auto_on event
     expect(events.some((e) => e.type === "orchestrator.auto_on")).toBe(true);
@@ -1234,7 +1239,7 @@ describe("start() is idle by default (aegis-5yy)", () => {
     const events: SSEEvent[] = [];
     aegis.onEvent((e) => events.push(e));
 
-    aegis.autoOn();
+    await aegis.autoOn();
     aegis.autoOff();
 
     expect(events.some((e) => e.type === "orchestrator.auto_off")).toBe(true);
@@ -1247,7 +1252,7 @@ describe("start() is idle by default (aegis-5yy)", () => {
     vi.mocked(beadsMock.list).mockResolvedValue([]);
     vi.mocked(laborsMock.list).mockResolvedValue([]);
     await aegis.start();
-    aegis.autoOn();
+    await aegis.autoOn();
     expect(aegis.getState().auto_mode).toBe(true);
     aegis.autoOff();
     expect(aegis.getState().auto_mode).toBe(false);
@@ -1307,5 +1312,225 @@ describe("direct dispatch commands (aegis-chx)", () => {
 
     expect(spawnerMock.spawnOracle).toHaveBeenCalledOnce();
     expect(events.some((e) => e.type === "orchestrator.processing")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// aegis-dos: Failed agents reset issue status back to open
+// ---------------------------------------------------------------------------
+
+describe("reap: failed agents reset issue to open (aegis-dos)", () => {
+  it("calls beads.reopen() when a killed agent is reaped", async () => {
+    const issue = makeIssue("dos-001");
+    vi.mocked(pollerMock.poll).mockResolvedValue([issue]);
+    vi.mocked(beadsMock.show).mockResolvedValue(issue);
+    vi.mocked(triageMock.triage).mockReturnValueOnce({ type: "dispatch_oracle", issue });
+    mockSession.prompt.mockReturnValue(new Promise(() => {}));
+
+    const aegis = makeAegis();
+    await (aegis as unknown as { runTick: () => Promise<void> }).runTick();
+
+    const agentId = aegis.getState().agents[0]!.id;
+    await aegis.kill(agentId);
+
+    expect(beadsMock.reopen).toHaveBeenCalledWith("dos-001");
+  });
+
+  it("calls beads.reopen() when a failed agent is reaped", async () => {
+    const issue = makeIssue("dos-002");
+    vi.mocked(pollerMock.poll).mockResolvedValue([issue]);
+    vi.mocked(beadsMock.show).mockResolvedValue(issue);
+    vi.mocked(triageMock.triage).mockReturnValueOnce({ type: "dispatch_oracle", issue });
+
+    // Agent session rejects → agent fails
+    mockSession.prompt.mockRejectedValueOnce(new Error("crash"));
+
+    const aegis = makeAegis();
+    await (aegis as unknown as { runTick: () => Promise<void> }).runTick();
+
+    await vi.waitFor(() => {
+      expect(beadsMock.reopen).toHaveBeenCalledWith("dos-002");
+    }, { timeout: 1000 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// aegis-qgm: Reap verifies agent completion criteria
+// ---------------------------------------------------------------------------
+
+describe("reap: completion verification (aegis-qgm)", () => {
+  it("marks oracle as failed if no SCOUTED comment found", async () => {
+    const issue = makeIssue("qgm-001");
+    vi.mocked(pollerMock.poll).mockResolvedValue([issue]);
+    // beads.show returns issue without SCOUTED comment
+    vi.mocked(beadsMock.show).mockResolvedValue(issue);
+    vi.mocked(triageMock.triage).mockReturnValueOnce({ type: "dispatch_oracle", issue });
+    mockSession.prompt.mockResolvedValueOnce(undefined); // completes
+
+    const aegis = makeAegis();
+    await (aegis as unknown as { runTick: () => Promise<void> }).runTick();
+
+    // Wait for reap
+    await vi.waitFor(() => {
+      expect(aegis.getState().agents).toHaveLength(0);
+    }, { timeout: 1000 });
+
+    // Should have called reopen because verification failed
+    expect(beadsMock.reopen).toHaveBeenCalledWith("qgm-001");
+  });
+
+  it("does NOT mark oracle as failed if SCOUTED comment exists", async () => {
+    const issue = makeIssue("qgm-002", {
+      comments: [{ id: "c1", body: "SCOUTED: looks good", author: "oracle", created_at: "" }],
+    });
+    vi.mocked(pollerMock.poll).mockResolvedValue([issue]);
+    vi.mocked(beadsMock.show).mockResolvedValue(issue);
+    vi.mocked(triageMock.triage).mockReturnValueOnce({ type: "dispatch_oracle", issue });
+    mockSession.prompt.mockResolvedValueOnce(undefined);
+
+    const aegis = makeAegis();
+    await (aegis as unknown as { runTick: () => Promise<void> }).runTick();
+
+    await vi.waitFor(() => {
+      expect(aegis.getState().agents).toHaveLength(0);
+    }, { timeout: 1000 });
+
+    expect(beadsMock.reopen).not.toHaveBeenCalled();
+  });
+
+  it("marks titan as failed if issue not closed", async () => {
+    const issue = makeIssue("qgm-003", { status: "open" });
+    vi.mocked(pollerMock.poll).mockResolvedValue([issue]);
+    vi.mocked(beadsMock.show).mockResolvedValue(issue);
+    vi.mocked(triageMock.triage).mockReturnValueOnce({
+      type: "dispatch_titan",
+      issue,
+      scoutComment: "SCOUTED: go",
+    });
+    mockSession.prompt.mockResolvedValueOnce(undefined);
+
+    const aegis = makeAegis();
+    await (aegis as unknown as { runTick: () => Promise<void> }).runTick();
+
+    await vi.waitFor(() => {
+      expect(beadsMock.reopen).toHaveBeenCalledWith("qgm-003");
+    }, { timeout: 1000 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// aegis-4qn: Auto mode excludes pre-existing ready issues
+// ---------------------------------------------------------------------------
+
+describe("auto mode excludes pre-existing issues (aegis-4qn)", () => {
+  it("does not dispatch issues that were ready before autoOn()", async () => {
+    const preExisting = makeIssue("4qn-001");
+    vi.mocked(beadsMock.list).mockResolvedValue([]);
+    vi.mocked(laborsMock.list).mockResolvedValue([]);
+
+    // poll returns the pre-existing issue when autoOn snapshots
+    vi.mocked(pollerMock.poll).mockResolvedValue([preExisting]);
+    vi.mocked(beadsMock.show).mockResolvedValue(preExisting);
+    vi.mocked(triageMock.triage).mockReturnValue({ type: "dispatch_oracle", issue: preExisting });
+
+    const aegis = makeAegis();
+    await aegis.start();
+    await aegis.autoOn();
+
+    // Give tick a chance to run
+    await vi.waitFor(() => {
+      expect(pollerMock.poll).toHaveBeenCalled();
+    }, { timeout: 500 });
+
+    // Pre-existing issue should be filtered out
+    expect(spawnerMock.spawnOracle).not.toHaveBeenCalled();
+
+    aegis.autoOff();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// aegis-xp2: Graceful shutdown marks in_progress issues and cleans labors
+// ---------------------------------------------------------------------------
+
+describe("graceful shutdown cleanup (aegis-xp2)", () => {
+  it("marks remaining in_progress issues back to open on stop()", async () => {
+    const inProgress = makeIssue("xp2-001", { status: "in_progress" });
+    vi.mocked(beadsMock.list).mockResolvedValue([inProgress]);
+    vi.mocked(laborsMock.list).mockResolvedValue([]);
+
+    const aegis = makeAegis();
+    Object.assign(aegis, { _running: true, startedAt: Date.now() });
+    await aegis.stop();
+
+    expect(beadsMock.reopen).toHaveBeenCalledWith("xp2-001");
+  });
+
+  it("cleans up remaining labors on stop()", async () => {
+    vi.mocked(beadsMock.list).mockResolvedValue([]);
+    vi.mocked(laborsMock.list).mockResolvedValue(["xp2-labor-001"]);
+
+    const aegis = makeAegis();
+    Object.assign(aegis, { _running: true, startedAt: Date.now() });
+    await aegis.stop();
+
+    expect(laborsMock.cleanup).toHaveBeenCalledWith("xp2-labor-001", CFG, expect.any(String));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// aegis-6m8: SSE event listeners have unsubscribe mechanism
+// ---------------------------------------------------------------------------
+
+describe("onEvent() returns unsubscribe function (aegis-6m8)", () => {
+  it("returns a function that removes the handler", () => {
+    const aegis = makeAegis();
+    const handler = vi.fn();
+    const unsub = aegis.onEvent(handler);
+
+    aegis.pause(); // triggers event
+    expect(handler).toHaveBeenCalledOnce();
+
+    unsub();
+    aegis.resume(); // triggers event, but handler unsubscribed
+    expect(handler).toHaveBeenCalledOnce(); // still 1
+  });
+});
+
+// ---------------------------------------------------------------------------
+// aegis-dgs: reprioritize, summarize, addLearning methods
+// ---------------------------------------------------------------------------
+
+describe("reprioritize, summarize, addLearning (aegis-dgs)", () => {
+  it("reprioritize() calls beads.update with priority", async () => {
+    vi.mocked(beadsMock.update).mockResolvedValue(makeIssue("dgs-001"));
+    const aegis = makeAegis();
+    await aegis.reprioritize("dgs-001", 2);
+    expect(beadsMock.update).toHaveBeenCalledWith("dgs-001", { priority: 2 });
+  });
+
+  it("summarize() returns SwarmState", () => {
+    const aegis = makeAegis();
+    const state = aegis.summarize();
+    expect(state).toHaveProperty("status");
+    expect(state).toHaveProperty("agents");
+  });
+
+  it("addLearning() appends to Mnemosyne", async () => {
+    const aegis = makeAegis();
+    const mnemoMock = await import("../src/mnemosyne.js");
+    aegis.addLearning("testing", "Always mock fs");
+    expect(mnemoMock.append).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "convention", domain: "testing", text: "Always mock fs" }),
+      expect.any(String)
+    );
+  });
+
+  it("addLearning() emits mnemosyne.learning_added event", () => {
+    const aegis = makeAegis();
+    const events: SSEEvent[] = [];
+    aegis.onEvent((e) => events.push(e));
+    aegis.addLearning("auth", "Use refresh tokens");
+    expect(events.some((e) => e.type === "mnemosyne.learning_added")).toBe(true);
   });
 });

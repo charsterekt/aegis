@@ -23,11 +23,26 @@ function makeAegisMock(overrides: Partial<{
   implement: (id: string) => Promise<void>;
   review: (id: string) => Promise<void>;
   process: (id: string) => Promise<void>;
-  autoOn: () => void;
+  autoOn: () => Promise<void>;
   autoOff: () => void;
+  restart: (id: string) => Promise<void>;
+  tellAgent: (id: string, msg: string) => Promise<void>;
+  tellAll: (msg: string) => Promise<void>;
+  addLearning: (domain: string, text: string) => void;
+  reprioritize: (id: string, priority: number) => Promise<void>;
+  summarize: () => SwarmState;
   getState: () => SwarmState;
   onEvent: () => void;
 }> = {}) {
+  const defaultState: SwarmState = {
+    status: "running",
+    agents: [],
+    queue_depth: 0,
+    total_cost_usd: 0,
+    uptime_seconds: 10,
+    focus_filter: null,
+    auto_mode: false,
+  };
   return {
     stop: vi.fn().mockResolvedValue(undefined),
     pause: vi.fn(),
@@ -41,17 +56,15 @@ function makeAegisMock(overrides: Partial<{
     implement: vi.fn().mockResolvedValue(undefined),
     review: vi.fn().mockResolvedValue(undefined),
     process: vi.fn().mockResolvedValue(undefined),
-    autoOn: vi.fn(),
+    autoOn: vi.fn().mockResolvedValue(undefined),
     autoOff: vi.fn(),
-    getState: vi.fn().mockReturnValue({
-      status: "running",
-      agents: [],
-      queue_depth: 0,
-      total_cost_usd: 0,
-      uptime_seconds: 10,
-      focus_filter: null,
-      auto_mode: false,
-    } satisfies SwarmState),
+    restart: vi.fn().mockResolvedValue(undefined),
+    tellAgent: vi.fn().mockResolvedValue(undefined),
+    tellAll: vi.fn().mockResolvedValue(undefined),
+    addLearning: vi.fn(),
+    reprioritize: vi.fn().mockResolvedValue(undefined),
+    summarize: vi.fn().mockReturnValue(defaultState),
+    getState: vi.fn().mockReturnValue(defaultState),
     onEvent: vi.fn(),
     ...overrides,
   };
@@ -323,5 +336,71 @@ describe("POST /api/steer direct mode: scout/implement/review/process (aegis-chx
     expect(res.status).toBe(200);
     expect((res.body as { ok: boolean }).ok).toBe(true);
     expect(aegis.autoOff).toHaveBeenCalledOnce();
+  });
+
+  it("restart <id> calls aegis.restart() (aegis-0jw)", async () => {
+    const aegis = makeAegisMock();
+    await startServer(aegis, 19936);
+
+    const res = await post("http://localhost:19936/api/steer", { mode: "direct", input: "restart aegis-010" });
+
+    expect(res.status).toBe(200);
+    expect((res.body as { ok: boolean }).ok).toBe(true);
+    expect(aegis.restart).toHaveBeenCalledWith("aegis-010");
+  });
+
+  it("tell all <msg> calls aegis.tellAll() (aegis-0jw)", async () => {
+    const aegis = makeAegisMock();
+    await startServer(aegis, 19937);
+
+    const res = await post("http://localhost:19937/api/steer", { mode: "direct", input: "tell all Wrap up now" });
+
+    expect(res.status).toBe(200);
+    expect((res.body as { ok: boolean }).ok).toBe(true);
+    expect(aegis.tellAll).toHaveBeenCalledWith("Wrap up now");
+  });
+
+  it("tell <agent-id> <msg> calls aegis.tellAgent() (aegis-0jw)", async () => {
+    const aegis = makeAegisMock();
+    await startServer(aegis, 19938);
+
+    const res = await post("http://localhost:19938/api/steer", { mode: "direct", input: "tell agent-1 Focus on tests" });
+
+    expect(res.status).toBe(200);
+    expect((res.body as { ok: boolean }).ok).toBe(true);
+    expect(aegis.tellAgent).toHaveBeenCalledWith("agent-1", "Focus on tests");
+  });
+
+  it("add_learning <domain> <text> calls aegis.addLearning() (aegis-0jw)", async () => {
+    const aegis = makeAegisMock();
+    await startServer(aegis, 19939);
+
+    const res = await post("http://localhost:19939/api/steer", { mode: "direct", input: "add_learning testing Always mock fs" });
+
+    expect(res.status).toBe(200);
+    expect((res.body as { ok: boolean }).ok).toBe(true);
+    expect(aegis.addLearning).toHaveBeenCalledWith("testing", "Always mock fs");
+  });
+
+  it("reprioritize <id> <priority> calls aegis.reprioritize() (aegis-dgs)", async () => {
+    const aegis = makeAegisMock();
+    await startServer(aegis, 19940);
+
+    const res = await post("http://localhost:19940/api/steer", { mode: "direct", input: "reprioritize aegis-001 2" });
+
+    expect(res.status).toBe(200);
+    expect((res.body as { ok: boolean }).ok).toBe(true);
+    expect(aegis.reprioritize).toHaveBeenCalledWith("aegis-001", 2);
+  });
+
+  it("summarize calls aegis.summarize() (aegis-dgs)", async () => {
+    const aegis = makeAegisMock();
+    await startServer(aegis, 19941);
+
+    const res = await post("http://localhost:19941/api/steer", { mode: "direct", input: "summarize" });
+
+    expect(res.status).toBe(200);
+    expect((res.body as { ok: boolean }).ok).toBe(true);
+    expect(aegis.summarize).toHaveBeenCalledOnce();
   });
 });
