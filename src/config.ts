@@ -9,6 +9,9 @@ import type { AegisConfig } from "./types.js";
 export function getDefaultConfig(): AegisConfig {
   return {
     version: 1,
+    runtime: {
+      adapter: "pi",
+    },
     auth: {
       anthropic: null,
       openai: null,
@@ -144,6 +147,9 @@ export function validateConfig(raw: unknown): AegisConfig {
     );
   }
 
+  const runtime = r["runtime"] === undefined
+    ? { adapter: "pi" }
+    : requireObject(r, "runtime");
   const auth = requireObject(r, "auth");
   const models = requireObject(r, "models");
   const concurrency = requireObject(r, "concurrency");
@@ -152,9 +158,18 @@ export function validateConfig(raw: unknown): AegisConfig {
   const mnemosyne = requireObject(r, "mnemosyne");
   const labors = requireObject(r, "labors");
   const olympus = requireObject(r, "olympus");
+  const runtimeAdapter = requireString(runtime, "runtime.adapter");
+
+  if (runtimeAdapter !== "pi") {
+    throw new Error(`Config: 'runtime.adapter' must be \"pi\", got ${JSON.stringify(runtimeAdapter)}`);
+  }
 
   return {
     version: 1,
+
+    runtime: {
+      adapter: runtimeAdapter,
+    },
 
     auth: {
       anthropic: requireStringOrNull(auth, "anthropic"),

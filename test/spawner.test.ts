@@ -2,39 +2,40 @@
 // Unit tests for src/spawner.ts
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { BeadsIssue, MnemosyneRecord, AegisConfig } from "../src/types.js";
+import type { AgentHandle, BeadsIssue, MnemosyneRecord, AegisConfig } from "../src/types.js";
 
-const mockSession = { id: "mock-session", prompt: vi.fn() };
-const mockCreate = vi.fn().mockResolvedValue({ session: mockSession });
-const mockSMInMemory = vi.fn().mockReturnValue("in-memory-sm");
-const mockSetRuntimeApiKey = vi.fn();
-const mockAuthInstance = { setRuntimeApiKey: mockSetRuntimeApiKey };
-// mockAuthCtor supports the static factory methods used by spawner:
-//   AuthStorage.create(path)       — file-backed (new behaviour)
-//   AuthStorage.fromStorage(...)   — legacy / other callers
-//   AuthStorage.inMemory()         — convenience
-const mockAuthCtor = vi.fn().mockImplementation(function() { return mockAuthInstance; });
-(mockAuthCtor as unknown as Record<string, unknown>).create = vi.fn().mockReturnValue(mockAuthInstance);
-(mockAuthCtor as unknown as Record<string, unknown>).fromStorage = vi.fn().mockReturnValue(mockAuthInstance);
-(mockAuthCtor as unknown as Record<string, unknown>).inMemory = vi.fn().mockReturnValue(mockAuthInstance);
-const mockModelRegistryInstance = { models: [] };
-const mockModelRegistryCtor = vi.fn().mockImplementation(function () { return mockModelRegistryInstance; });
 const mockROTools = [{ name: "read" }];
 const mockCodingTools = [{ name: "read" }, { name: "bash" }, { name: "edit" }, { name: "write" }];
-const mockGetModel = vi.fn().mockReturnValue({ provider: "anthropic", id: "claude-haiku-4-5" });
 
-vi.mock("@mariozechner/pi-coding-agent", () => ({
-  createAgentSession: mockCreate,
-  SessionManager: { inMemory: mockSMInMemory },
-  AuthStorage: mockAuthCtor,
-  ModelRegistry: mockModelRegistryCtor,
-  readOnlyTools: mockROTools,
-  codingTools: mockCodingTools,
+const mockHandle: AgentHandle = {
+  prompt: vi.fn().mockResolvedValue(undefined),
+  steer: vi.fn().mockResolvedValue(undefined),
+  abort: vi.fn().mockResolvedValue(undefined),
+  subscribe: vi.fn().mockReturnValue(() => {}),
+  getStats: vi.fn().mockReturnValue({
+    sessionId: "mock-session",
+    cost: 0.123,
+    tokens: { total: 42, input: 30, output: 12, cacheRead: 0, cacheWrite: 0 },
+  }),
+};
+
+const mockRuntimeSpawn = vi.fn().mockResolvedValue(mockHandle);
+const mockRuntimeGetTools = vi.fn((caste: string) => (caste === "titan" ? mockCodingTools : mockROTools));
+const mockPiRuntimeCtor = vi.fn();
+class MockPiRuntime {
+  getTools = mockRuntimeGetTools;
+  spawn = mockRuntimeSpawn;
+
+  constructor(config: AegisConfig) {
+    mockPiRuntimeCtor(config);
+  }
+}
+
+vi.mock("../src/runtimes/pi-runtime.js", () => ({
+  PiRuntime: MockPiRuntime,
 }));
 
-vi.mock("@mariozechner/pi-ai", () => ({ getModel: mockGetModel }));
-
-const { spawnOracle, spawnTitan, spawnSentinel, buildSystemPrompt, casteToolFilter } = await import("../src/spawner.js");
+const { spawnOracle, spawnTitan, spawnSentinel, buildSystemPrompt } = await import("../src/spawner.js");
 
 function makeIssue(o = {}): BeadsIssue {
   return { id: "aegis-001", title: "Test issue", description: "A test description", type: "task", priority: 1, status: "open", comments: [], ...o };
@@ -46,6 +47,7 @@ function makeLearning(o = {}): MnemosyneRecord {
 
 const CFG: AegisConfig = {
   version: 1,
+  runtime: { adapter: "pi" },
   auth: { anthropic: "sk-ant-test", openai: null, google: null },
   models: { oracle: "claude-haiku-4-5", titan: "claude-sonnet-4-5", sentinel: "claude-opus-4-5", metis: "claude-haiku-4-5", prometheus: "claude-opus-4-5" },
   concurrency: { max_agents: 10, max_oracles: 3, max_titans: 3, max_sentinels: 2 },
@@ -55,12 +57,6 @@ const CFG: AegisConfig = {
   labors: { base_path: ".aegis/labors" },
   olympus: { port: 7777, open_browser: false },
 };
-
-describe("casteToolFilter()", () => {
-  it("returns readOnlyTools for oracle", () => { expect(casteToolFilter("oracle")).toBe(mockROTools); });
-  it("returns readOnlyTools for sentinel", () => { expect(casteToolFilter("sentinel")).toBe(mockROTools); });
-  it("returns codingTools for titan", () => { expect(casteToolFilter("titan")).toBe(mockCodingTools); });
-});
 
 describe("buildSystemPrompt()", () => {
   const issue = makeIssue({ id: "aegis-42", title: "My Issue", description: "Do the thing" });
@@ -87,13 +83,13 @@ describe("buildSystemPrompt()", () => {
 
   it("includes learnings in all prompts", () => {
     ["oracle", "titan", "sentinel"].forEach((c) => {
-      expect(buildSystemPrompt(c as any, issue, learnings, agentsMd)).toContain("Use strict mode");
+      expect(buildSystemPrompt(c as "oracle" | "titan" | "sentinel", issue, learnings, agentsMd)).toContain("Use strict mode");
     });
   });
 
   it("includes AGENTS.md in all prompts", () => {
     ["oracle", "titan", "sentinel"].forEach((c) => {
-      expect(buildSystemPrompt(c as any, issue, learnings, agentsMd)).toContain("Follow conventions.");
+      expect(buildSystemPrompt(c as "oracle" | "titan" | "sentinel", issue, learnings, agentsMd)).toContain("Follow conventions.");
     });
   });
 
@@ -102,89 +98,74 @@ describe("buildSystemPrompt()", () => {
   it("titan prompt references bd close", () => { expect(buildSystemPrompt("titan", issue, [], agentsMd)).toContain("bd close"); });
   it("sentinel prompt has REVIEWED: PASS and FAIL", () => {
     const p = buildSystemPrompt("sentinel", issue, [], agentsMd);
-    expect(p).toContain("REVIEWED: PASS"); expect(p).toContain("REVIEWED: FAIL");
+    expect(p).toContain("REVIEWED: PASS");
+    expect(p).toContain("REVIEWED: FAIL");
   });
 });
 
 describe("spawn functions", () => {
-  beforeEach(() => { mockCreate.mockClear(); mockGetModel.mockClear(); mockModelRegistryCtor.mockClear(); });
+  beforeEach(() => {
+    mockPiRuntimeCtor.mockClear();
+    mockRuntimeSpawn.mockClear();
+    mockRuntimeGetTools.mockClear();
+  });
 
-  it("spawnOracle uses read-only tools", async () => {
+  it("spawnOracle instantiates the configured runtime and uses read-only tools", async () => {
     await spawnOracle(makeIssue(), [], CFG, "AGENTS");
-    expect(mockCreate.mock.calls[0][0].tools).toBe(mockROTools);
+
+    expect(mockPiRuntimeCtor).toHaveBeenCalledWith(CFG);
+    expect(mockRuntimeGetTools).toHaveBeenCalledWith("oracle");
+    expect(mockRuntimeSpawn).toHaveBeenCalledWith(expect.objectContaining({
+      caste: "oracle",
+      cwd: process.cwd(),
+      tools: mockROTools,
+      model: "claude-haiku-4-5",
+    }));
   });
 
-  it("spawnOracle uses oracle model", async () => {
-    await spawnOracle(makeIssue(), [], CFG, "AGENTS");
-    expect(mockGetModel).toHaveBeenCalledWith("anthropic", "claude-haiku-4-5");
-  });
-
-  it("spawnTitan uses full coding tools", async () => {
-    await spawnTitan(makeIssue(), [], "/labor", CFG, "AGENTS");
-    expect(mockCreate.mock.calls[0][0].tools).toBe(mockCodingTools);
-  });
-
-  it("spawnTitan uses titan model", async () => {
-    await spawnTitan(makeIssue(), [], "/labor", CFG, "AGENTS");
-    expect(mockGetModel).toHaveBeenCalledWith("anthropic", "claude-sonnet-4-5");
-  });
-
-  it("spawnTitan sets labor path as cwd", async () => {
+  it("spawnTitan uses the labor path and coding tools", async () => {
     await spawnTitan(makeIssue(), [], "/the/labor", CFG, "AGENTS");
-    expect(mockCreate.mock.calls[0][0].cwd).toBe("/the/labor");
+
+    expect(mockRuntimeGetTools).toHaveBeenCalledWith("titan");
+    expect(mockRuntimeSpawn).toHaveBeenCalledWith(expect.objectContaining({
+      caste: "titan",
+      cwd: "/the/labor",
+      tools: mockCodingTools,
+      model: "claude-sonnet-4-5",
+    }));
   });
 
   it("spawnSentinel uses read-only tools", async () => {
     await spawnSentinel(makeIssue(), [], CFG, "AGENTS");
-    expect(mockCreate.mock.calls[0][0].tools).toBe(mockROTools);
+
+    expect(mockRuntimeGetTools).toHaveBeenCalledWith("sentinel");
+    expect(mockRuntimeSpawn).toHaveBeenCalledWith(expect.objectContaining({
+      caste: "sentinel",
+      cwd: process.cwd(),
+      tools: mockROTools,
+      model: "claude-opus-4-5",
+    }));
   });
 
-  it("spawnSentinel uses sentinel model", async () => {
-    await spawnSentinel(makeIssue(), [], CFG, "AGENTS");
-    expect(mockGetModel).toHaveBeenCalledWith("anthropic", "claude-opus-4-5");
+  it("passes the built system prompt to the runtime", async () => {
+    const issue = makeIssue({ id: "aegis-42", title: "My Issue", description: "Do the thing" });
+    const learnings = [makeLearning({ text: "Use strict mode" })];
+
+    await spawnOracle(issue, learnings, CFG, "AGENTS Follow conventions.");
+
+    expect(mockRuntimeSpawn).toHaveBeenCalledWith(expect.objectContaining({
+      systemPrompt: expect.stringContaining("AGENTS Follow conventions."),
+    }));
   });
 
-  it("uses in-memory session manager", async () => {
-    await spawnOracle(makeIssue(), [], CFG, "AGENTS");
-    expect(mockCreate.mock.calls[0][0].sessionManager).toBe("in-memory-sm");
+  it("returns the AgentHandle produced by the runtime", async () => {
+    const handle = await spawnOracle(makeIssue(), [], CFG, "AGENTS");
+    expect(handle).toBe(mockHandle);
   });
 
-  it("returns the session object", async () => {
-    const r = await spawnOracle(makeIssue(), [], CFG, "AGENTS");
-    expect(r).toBe(mockSession);
-  });
+  it("propagates runtime spawn failures", async () => {
+    mockRuntimeSpawn.mockRejectedValueOnce(new Error("runtime failed"));
 
-  it("handles provider:model format", async () => {
-    const cfg = { ...CFG, models: { ...CFG.models, oracle: "openai:gpt-4o" } };
-    await spawnOracle(makeIssue(), [], cfg, "AGENTS");
-    expect(mockGetModel).toHaveBeenCalledWith("openai", "gpt-4o");
-  });
-
-  it("throws if getModel returns null (unknown model ID)", async () => {
-    mockGetModel.mockReturnValueOnce(null);
-    const cfg = { ...CFG, models: { ...CFG.models, oracle: "bad-model-id" } };
-    await expect(spawnOracle(makeIssue(), [], cfg, "AGENTS")).rejects.toThrow("Model not found: bad-model-id");
-  });
-
-  it("throws if getModel returns undefined for provider:model format", async () => {
-    mockGetModel.mockReturnValueOnce(undefined);
-    const cfg = { ...CFG, models: { ...CFG.models, oracle: "openai:nonexistent" } };
-    await expect(spawnOracle(makeIssue(), [], cfg, "AGENTS")).rejects.toThrow("Model not found: openai:nonexistent");
-  });
-
-  // aegis-cqp: ModelRegistry must be created from authStorage and passed to createAgentSession
-  it("creates a ModelRegistry from authStorage and passes it to createAgentSession", async () => {
-    await spawnOracle(makeIssue(), [], CFG, "AGENTS");
-    expect(mockModelRegistryCtor).toHaveBeenCalledOnce();
-    // First arg to ModelRegistry constructor must be our authStorage instance
-    expect(mockModelRegistryCtor.mock.calls[0]?.[0]).toBe(mockAuthInstance);
-    // modelRegistry must be passed through to createAgentSession
-    expect(mockCreate.mock.calls[0]?.[0].modelRegistry).toBe(mockModelRegistryInstance);
-  });
-
-  it("each spawn creates a fresh ModelRegistry bound to its authStorage", async () => {
-    await spawnOracle(makeIssue(), [], CFG, "AGENTS");
-    await spawnSentinel(makeIssue(), [], CFG, "AGENTS");
-    expect(mockModelRegistryCtor).toHaveBeenCalledTimes(2);
+    await expect(spawnOracle(makeIssue(), [], CFG, "AGENTS")).rejects.toThrow("runtime failed");
   });
 });

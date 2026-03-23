@@ -3,8 +3,55 @@
 
 export type Caste = "oracle" | "titan" | "sentinel";
 
+export interface AgentEvent {
+  type: string;
+  toolName?: string;
+  args?: unknown;
+  [key: string]: unknown;
+}
+
+export interface AgentTokenUsage {
+  total: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite?: number;
+}
+
+export interface AgentStats {
+  sessionId: string;
+  tokens: AgentTokenUsage;
+  cost: number;
+}
+
+export interface AgentHandle {
+  prompt(text: string): Promise<void>;
+  steer(text: string): Promise<void>;
+  abort(): Promise<void>;
+  subscribe(listener: (event: AgentEvent) => void): () => void;
+  getStats(): AgentStats;
+}
+
+export interface SpawnOptions {
+  caste: Caste;
+  cwd: string;
+  tools: readonly unknown[];
+  systemPrompt: string;
+  model: string;
+}
+
+export interface AgentRuntime {
+  getTools(caste: Caste): readonly unknown[];
+  spawn(opts: SpawnOptions): Promise<AgentHandle>;
+}
+
+export type RuntimeAdapter = "pi";
+
 export interface AegisConfig {
   version: number;
+  runtime: {
+    adapter: RuntimeAdapter;
+  };
   auth: {
     anthropic: string | null;
     openai: string | null;

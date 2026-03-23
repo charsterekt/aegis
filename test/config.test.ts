@@ -38,6 +38,7 @@ describe("getDefaultConfig()", () => {
   it("returns an object with all required fields", () => {
     const cfg = getDefaultConfig();
     expect(cfg.version).toBe(1);
+    expect(cfg.runtime).toBeDefined();
     expect(cfg.auth).toBeDefined();
     expect(cfg.models).toBeDefined();
     expect(cfg.concurrency).toBeDefined();
@@ -55,6 +56,7 @@ describe("getDefaultConfig()", () => {
 
   it("has the correct default model names", () => {
     const cfg = getDefaultConfig();
+    expect(cfg.runtime.adapter).toBe("pi");
     expect(cfg.models.oracle).toBe("claude-haiku-4-5");
     expect(cfg.models.titan).toBe("claude-sonnet-4-6");
     expect(cfg.models.sentinel).toBe("claude-sonnet-4-6");
@@ -121,6 +123,18 @@ describe("validateConfig()", () => {
     const bad = getDefaultConfig() as unknown as Record<string, unknown>;
     delete bad["models"];
     expect(() => validateConfig(bad)).toThrow(/models/);
+  });
+
+  it("defaults the runtime adapter to pi when runtime is omitted", () => {
+    const bad = getDefaultConfig() as unknown as Record<string, unknown>;
+    delete bad["runtime"];
+
+    expect(validateConfig(bad).runtime.adapter).toBe("pi");
+  });
+
+  it("throws when runtime.adapter is unsupported", () => {
+    const bad = { ...getDefaultConfig(), runtime: { adapter: "cursor" } };
+    expect(() => validateConfig(bad)).toThrow(/runtime\.adapter/);
   });
 
   it("throws when a model name is empty string", () => {

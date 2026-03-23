@@ -72,6 +72,7 @@ function makeAegisMock(overrides: Partial<{
 
 const BASE_CONFIG: AegisConfig = {
   version: 1,
+  runtime: { adapter: "pi" },
   auth: { anthropic: "sk-ant-test", openai: null, google: null },
   models: {
     oracle: "claude-haiku-4-5",
