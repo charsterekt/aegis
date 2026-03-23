@@ -41,6 +41,7 @@ export interface SpawnOptions {
 }
 
 export interface AgentRuntime {
+  getTools(caste: Caste): readonly unknown[];
   spawn(opts: SpawnOptions): Promise<AgentHandle>;
 }
 

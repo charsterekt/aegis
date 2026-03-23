@@ -1,7 +1,7 @@
 // src/spawner.ts
 // Runtime-agnostic session spawner.
 
-import { PiRuntime, casteToolFilter as piCasteToolFilter } from "./runtimes/pi-runtime.js";
+import { PiRuntime } from "./runtimes/pi-runtime.js";
 import type { AgentHandle, AgentRuntime, BeadsIssue, MnemosyneRecord, AegisConfig, Caste } from "./types.js";
 
 function formatLearnings(learnings: MnemosyneRecord[]): string {
@@ -104,18 +104,12 @@ function getRuntime(config: AegisConfig): AgentRuntime {
   }
 }
 
-function getRuntimeTools(config: AegisConfig, caste: Caste): readonly unknown[] {
-  switch (config.runtime.adapter) {
-    case "pi":
-      return piCasteToolFilter(caste);
-  }
-}
-
 async function spawnSession(caste: Caste, issue: BeadsIssue, learnings: MnemosyneRecord[], config: AegisConfig, agentsMd: string, workingDir: string, modelName: string): Promise<AgentHandle> {
-  return getRuntime(config).spawn({
+  const runtime = getRuntime(config);
+  return runtime.spawn({
     caste,
     cwd: workingDir,
-    tools: getRuntimeTools(config, caste),
+    tools: runtime.getTools(caste),
     systemPrompt: buildSystemPrompt(caste, issue, learnings, agentsMd),
     model: modelName,
   });

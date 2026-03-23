@@ -105,6 +105,10 @@ export class PiAgentHandle implements AgentHandle {
 export class PiRuntime implements AgentRuntime {
   constructor(private readonly config: AegisConfig) {}
 
+  getTools(caste: Caste): readonly unknown[] {
+    return casteToolFilter(caste);
+  }
+
   async spawn(opts: SpawnOptions): Promise<AgentHandle> {
     applyWindowsSpawnFixes();
 

@@ -20,19 +20,19 @@ const mockHandle: AgentHandle = {
 };
 
 const mockRuntimeSpawn = vi.fn().mockResolvedValue(mockHandle);
+const mockRuntimeGetTools = vi.fn((caste: string) => (caste === "titan" ? mockCodingTools : mockROTools));
 const mockPiRuntimeCtor = vi.fn();
 class MockPiRuntime {
+  getTools = mockRuntimeGetTools;
   spawn = mockRuntimeSpawn;
 
   constructor(config: AegisConfig) {
     mockPiRuntimeCtor(config);
   }
 }
-const mockRuntimeToolFilter = vi.fn((caste: string) => (caste === "titan" ? mockCodingTools : mockROTools));
 
 vi.mock("../src/runtimes/pi-runtime.js", () => ({
   PiRuntime: MockPiRuntime,
-  casteToolFilter: mockRuntimeToolFilter,
 }));
 
 const { spawnOracle, spawnTitan, spawnSentinel, buildSystemPrompt } = await import("../src/spawner.js");
@@ -107,14 +107,14 @@ describe("spawn functions", () => {
   beforeEach(() => {
     mockPiRuntimeCtor.mockClear();
     mockRuntimeSpawn.mockClear();
-    mockRuntimeToolFilter.mockClear();
+    mockRuntimeGetTools.mockClear();
   });
 
   it("spawnOracle instantiates the configured runtime and uses read-only tools", async () => {
     await spawnOracle(makeIssue(), [], CFG, "AGENTS");
 
     expect(mockPiRuntimeCtor).toHaveBeenCalledWith(CFG);
-    expect(mockRuntimeToolFilter).toHaveBeenCalledWith("oracle");
+    expect(mockRuntimeGetTools).toHaveBeenCalledWith("oracle");
     expect(mockRuntimeSpawn).toHaveBeenCalledWith(expect.objectContaining({
       caste: "oracle",
       cwd: process.cwd(),
@@ -126,7 +126,7 @@ describe("spawn functions", () => {
   it("spawnTitan uses the labor path and coding tools", async () => {
     await spawnTitan(makeIssue(), [], "/the/labor", CFG, "AGENTS");
 
-    expect(mockRuntimeToolFilter).toHaveBeenCalledWith("titan");
+    expect(mockRuntimeGetTools).toHaveBeenCalledWith("titan");
     expect(mockRuntimeSpawn).toHaveBeenCalledWith(expect.objectContaining({
       caste: "titan",
       cwd: "/the/labor",
@@ -138,7 +138,7 @@ describe("spawn functions", () => {
   it("spawnSentinel uses read-only tools", async () => {
     await spawnSentinel(makeIssue(), [], CFG, "AGENTS");
 
-    expect(mockRuntimeToolFilter).toHaveBeenCalledWith("sentinel");
+    expect(mockRuntimeGetTools).toHaveBeenCalledWith("sentinel");
     expect(mockRuntimeSpawn).toHaveBeenCalledWith(expect.objectContaining({
       caste: "sentinel",
       cwd: process.cwd(),

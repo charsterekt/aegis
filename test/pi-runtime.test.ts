@@ -241,8 +241,10 @@ describe("PiRuntime.spawn()", () => {
       model: "claude-haiku-4-5",
     });
 
-    expect((mockAuthCtor as unknown as Record<string, unknown>).create).toHaveBeenCalledWith(
-      expect.stringContaining(".pi\\agent\\auth.json")
-    );
+    const createMock = (mockAuthCtor as unknown as { create: ReturnType<typeof vi.fn> }).create;
+    const authPath = createMock.mock.calls.at(-1)?.[0];
+
+    expect(typeof authPath).toBe("string");
+    expect((authPath as string).replaceAll("\\", "/")).toContain(".pi/agent/auth.json");
   });
 });
