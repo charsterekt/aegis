@@ -44,8 +44,13 @@ export interface AgentRuntime {
   spawn(opts: SpawnOptions): Promise<AgentHandle>;
 }
 
+export type RuntimeAdapter = "pi";
+
 export interface AegisConfig {
   version: number;
+  runtime: {
+    adapter: RuntimeAdapter;
+  };
   auth: {
     anthropic: string | null;
     openai: string | null;

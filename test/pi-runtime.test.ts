@@ -49,6 +49,7 @@ const { PiRuntime, PiAgentHandle, casteToolFilter } = await import("../src/runti
 
 const CFG: AegisConfig = {
   version: 1,
+  runtime: { adapter: "pi" },
   auth: { anthropic: "sk-ant-test", openai: "sk-openai-test", google: null },
   models: {
     oracle: "claude-haiku-4-5",

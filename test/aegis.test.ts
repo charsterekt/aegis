@@ -109,6 +109,7 @@ function makeIssue(id: string, overrides: Partial<BeadsIssue> = {}): BeadsIssue 
 
 const CFG: AegisConfig = {
   version: 1,
+  runtime: { adapter: "pi" },
   auth: { anthropic: "sk-ant-test", openai: null, google: null },
   models: {
     oracle: "claude-haiku-4-5",

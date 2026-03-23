@@ -1,90 +1,8 @@
 // src/spawner.ts
-// Spawner -- the ONLY module that calls createAgentSession().
+// Runtime-agnostic session spawner.
 
-import { mkdirSync } from "node:fs";
-import { homedir, platform } from "node:os";
-import { join } from "node:path";
-
-import { createAgentSession, SessionManager, AuthStorage, ModelRegistry, readOnlyTools, codingTools } from "@mariozechner/pi-coding-agent";
-import { getModel } from "@mariozechner/pi-ai";
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
-import type { AgentHandle, AgentStats, BeadsIssue, MnemosyneRecord, AegisConfig, Caste } from "./types.js";
-
-/**
- * Returns the default Pi agent config directory (~/.pi/agent).
- * AuthStorage reads auth.json from here, where /login stores subscription tokens.
- */
-function getAgentDir(): string {
-  return join(homedir(), ".pi", "agent");
-}
-
-/**
- * Windows-only pre-spawn environment fixes. Safe to call on all platforms
- * (all branches are guarded by platform checks).
- *
- * Fix 1 — aegis-l1a: Pi's bg-process extension writes logs to C:\tmp\oh-pi-bg-*.log.
- * That directory does not exist by default on Windows, causing an ENOENT crash when
- * the extension initialises. Creating it once before any spawn avoids the crash.
- *
- * Fix 2 — aegis-670: When Aegis is launched from Git Bash, MSYSTEM is set (e.g.
- * "MINGW64") and SHELL points to Git Bash's bash.  Pi agents that fork subprocesses
- * inherit these environment variables, which causes "cygheap read copy failed" errors
- * because the cygwin heap cannot be mapped at the same address in the child process.
- * Redirecting SHELL and COMSPEC to the native Windows cmd.exe prevents the fork
- * failure while leaving all Git Bash convenience intact for the user's own shell.
- */
-function applyWindowsSpawnFixes(): void {
-  if (platform() !== "win32") return;
-
-  // Fix 1: ensure C:\tmp exists for the Pi bg-process extension log sink.
-  try {
-    mkdirSync("C:\\tmp", { recursive: true });
-  } catch {
-    // best-effort — if we can't create it, the extension crash will surface on
-    // its own rather than silently breaking spawns.
-  }
-
-  // Fix 2: when running under Git Bash (MSYSTEM is set), override SHELL and
-  // COMSPEC so spawned child processes use native Windows cmd.exe, not cygwin bash.
-  if (process.env["MSYSTEM"]) {
-    process.env["SHELL"] = "cmd.exe";
-    if (!process.env["COMSPEC"]) {
-      process.env["COMSPEC"] = "C:\\Windows\\System32\\cmd.exe";
-    }
-  }
-}
-
-export function casteToolFilter(caste: Caste): typeof codingTools | typeof readOnlyTools {
-  if (caste === "titan") return codingTools;
-  return readOnlyTools;
-}
-
-function toAgentStats(session: Pick<AgentSession, "getSessionStats">): AgentStats {
-  const stats = session.getSessionStats();
-  return {
-    sessionId: stats.sessionId,
-    cost: stats.cost,
-    tokens: {
-      total: stats.tokens.total,
-      input: stats.tokens.input,
-      output: stats.tokens.output,
-      cacheRead: stats.tokens.cacheRead,
-      cacheWrite: stats.tokens.cacheWrite,
-    },
-  };
-}
-
-function toAgentHandle(
-  session: Pick<AgentSession, "prompt" | "steer" | "abort" | "subscribe" | "getSessionStats">
-): AgentHandle {
-  return {
-    prompt: (text) => session.prompt(text),
-    steer: (text) => session.steer(text),
-    abort: () => session.abort(),
-    subscribe: (listener) => session.subscribe((event) => listener(event)),
-    getStats: () => toAgentStats(session),
-  };
-}
+import { PiRuntime, casteToolFilter as piCasteToolFilter } from "./runtimes/pi-runtime.js";
+import type { AgentHandle, AgentRuntime, BeadsIssue, MnemosyneRecord, AegisConfig, Caste } from "./types.js";
 
 function formatLearnings(learnings: MnemosyneRecord[]): string {
   if (learnings.length === 0) return "(none)";
@@ -179,49 +97,28 @@ export function buildSystemPrompt(caste: Caste, issue: BeadsIssue, learnings: Mn
   ].join("\n");
 }
 
-function makeAuthStorage(config: AegisConfig): AuthStorage {
-  // Use file-backed AuthStorage so Pi subscription credentials stored at
-  // ~/.pi/agent/auth.json (written by `pi /login`) are discovered automatically.
-  const agentDir = getAgentDir();
-  const s = AuthStorage.create(join(agentDir, "auth.json"));
+function getRuntime(config: AegisConfig): AgentRuntime {
+  switch (config.runtime.adapter) {
+    case "pi":
+      return new PiRuntime(config);
+  }
+}
 
-  // Apply explicit API keys from config as runtime overrides (highest priority,
-  // not persisted to disk). If null, the file-backed storage handles auth.
-  if (config.auth.anthropic) s.setRuntimeApiKey("anthropic", config.auth.anthropic);
-  if (config.auth.openai) s.setRuntimeApiKey("openai", config.auth.openai);
-  if (config.auth.google) s.setRuntimeApiKey("google", config.auth.google);
-  return s;
+function getRuntimeTools(config: AegisConfig, caste: Caste): readonly unknown[] {
+  switch (config.runtime.adapter) {
+    case "pi":
+      return piCasteToolFilter(caste);
+  }
 }
 
 async function spawnSession(caste: Caste, issue: BeadsIssue, learnings: MnemosyneRecord[], config: AegisConfig, agentsMd: string, workingDir: string, modelName: string): Promise<AgentHandle> {
-  applyWindowsSpawnFixes();
-  const authStorage = makeAuthStorage(config);
-  const modelRegistry = new ModelRegistry(authStorage);
-  let model;
-  // getModel is generic over known literal model IDs; we use runtime config strings
-  // so we cast through unknown to bypass the strict literal check.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const getModelAny = getModel as (provider: string, id: string) => any;
-  if (modelName.includes(":")) {
-    const parts = modelName.split(":", 2);
-    const provider = parts[0] ?? "anthropic";
-    const id = parts[1] ?? modelName;
-    model = getModelAny(provider, id);
-  } else {
-    model = getModelAny("anthropic", modelName);
-  }
-  if (!model) throw new Error(`Model not found: ${modelName}`);
-  const { session } = await createAgentSession({
+  return getRuntime(config).spawn({
+    caste,
     cwd: workingDir,
-    agentDir: getAgentDir(),
-    sessionManager: SessionManager.inMemory(),
-    authStorage,
-    modelRegistry,
-    model,
-    tools: casteToolFilter(caste),
+    tools: getRuntimeTools(config, caste),
     systemPrompt: buildSystemPrompt(caste, issue, learnings, agentsMd),
-  } as Parameters<typeof createAgentSession>[0]);
-  return toAgentHandle(session);
+    model: modelName,
+  });
 }
 
 export async function spawnOracle(issue: BeadsIssue, learnings: MnemosyneRecord[], config: AegisConfig, agentsMd: string): Promise<AgentHandle> {
