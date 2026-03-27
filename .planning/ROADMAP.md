@@ -12,7 +12,7 @@ Layer 1 (the POLL → TRIAGE → DISPATCH → MONITOR → REAP loop with Oracle/
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Dispatch Store** - Persistent typed state machine replaces comment-based state; Config v2 schema
+- [x] **Phase 1: Dispatch Store** - Persistent typed state machine replaces comment-based state; Config v2 schema (completed 2026-03-27)
 - [ ] **Phase 2: Triage Pivot** - Triage reads dispatch store stages; crash recovery restores interrupted records
 - [ ] **Phase 3: Conversational Mode** - Idle-first orchestrator with direct-command dispatch and auto on/off
 - [ ] **Phase 4: Structured Outputs** - Oracle assessment and Sentinel verdict parsed and stored in dispatch state
@@ -89,7 +89,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Dispatch Store | 2/3 | In Progress|  |
+| 1. Dispatch Store | 3/3 | Complete   | 2026-03-27 |
 | 2. Triage Pivot | 0/TBD | Not started | - |
 | 3. Conversational Mode | 0/TBD | Not started | - |
 | 4. Structured Outputs | 0/TBD | Not started | - |
