@@ -790,6 +790,7 @@ export class Aegis {
     }
 
     this.registerAgent(agentId, state, session);
+    store.transition(issue.id, "scouting", { current_agent_id: agentId });
     this.emit({
       type: "agent.spawned",
       data: { id: agentId, caste: "oracle", issue_id: issue.id, issue_title: issue.title, model: state.model },
@@ -851,6 +852,7 @@ export class Aegis {
     }
 
     this.registerAgent(agentId, state, session);
+    store.transition(issue.id, "implementing", { current_agent_id: agentId });
     this.emit({
       type: "agent.spawned",
       data: {
@@ -896,6 +898,7 @@ export class Aegis {
     }
 
     this.registerAgent(agentId, state, session);
+    store.transition(issue.id, "reviewing", { current_agent_id: agentId });
     this.emit({
       type: "agent.spawned",
       data: { id: agentId, caste: "sentinel", issue_id: issue.id, issue_title: issue.title, model: state.model },
@@ -1078,8 +1081,19 @@ export class Aegis {
     // stuck-killed agents also count toward the backoff window.
     if (state.status === "killed" || state.status === "failed") {
       this.recordDispatchFailure(state.issue_id);
+      store.recordFailure(state.issue_id);
+      store.transition(state.issue_id, "failed", { current_agent_id: null });
     } else if (state.status === "completed") {
       this.resetDispatchFailures(state.issue_id);
+      store.resetFailures(state.issue_id);
+      // Transition to the stage appropriate for this caste's success
+      if (state.caste === "oracle") {
+        store.transition(state.issue_id, "scouted");
+      } else if (state.caste === "titan") {
+        store.transition(state.issue_id, "implemented");
+      } else if (state.caste === "sentinel") {
+        store.transition(state.issue_id, "complete");
+      }
     }
 
     // Mark failed/killed agent issues back to open so they re-enter the
