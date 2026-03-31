@@ -20,7 +20,6 @@ olympus/node_modules/
 .agent/
 
 # Planning artifacts
-.planning/
 plandocs/
 
 temp/
