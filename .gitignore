@@ -16,5 +16,11 @@ olympus/node_modules/
 # Coding agents
 .claude/
 .ant-colony/
+.codex/
+
+# Planning artifacts
+.planning/
+plandocs/
 
 temp/
+*.log
