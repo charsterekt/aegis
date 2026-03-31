@@ -1,7 +1,7 @@
 {
   "name": "aegis",
   "version": "0.1.0",
-  "description": "Multi-agent swarm orchestrator for Pi + Beads",
+  "description": "A strict multi-agent swarm orchestration framework",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
