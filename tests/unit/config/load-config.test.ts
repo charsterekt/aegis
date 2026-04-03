@@ -1,12 +1,20 @@
 import path from "node:path";
-import { readFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   AEGIS_CONFIG_PATH,
   AEGIS_DIRECTORY,
   DEFAULT_CONFIG_FILE,
+  loadConfig,
   resolveConfigPath,
 } from "../../../src/config/load-config.js";
 import { DEFAULT_AEGIS_CONFIG } from "../../../src/config/defaults.js";
@@ -16,6 +24,7 @@ import {
 } from "../../../src/config/schema.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..");
+const tempRoots: string[] = [];
 
 function readJsonFixture<T>(fixtureName: string) {
   return JSON.parse(
@@ -25,6 +34,27 @@ function readJsonFixture<T>(fixtureName: string) {
     ),
   ) as T;
 }
+
+function createTempProjectRoot() {
+  const tempRoot = mkdtempSync(path.join(tmpdir(), "aegis-config-"));
+  tempRoots.push(tempRoot);
+  return tempRoot;
+}
+
+function writeConfigFixture(root: string, config: unknown) {
+  mkdirSync(path.dirname(resolveConfigPath(root)), { recursive: true });
+  writeFileSync(
+    resolveConfigPath(root),
+    JSON.stringify(config, null, 2),
+    "utf8",
+  );
+}
+
+afterEach(() => {
+  for (const tempRoot of tempRoots.splice(0)) {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
 
 describe("S01 config contract seed", () => {
   it("defines the canonical config domains and default values from the spec", () => {
@@ -57,5 +87,66 @@ describe("S01 config contract seed", () => {
       ".aegis/merge-queue.json",
       ".aegis/mnemosyne.jsonl",
     ]);
+  });
+
+  it("loads a config file and fills missing domains from defaults", () => {
+    const projectRoot = createTempProjectRoot();
+
+    writeConfigFixture(projectRoot, {
+      runtime: "pi",
+      olympus: {
+        port: 4100,
+      },
+      labor: {
+        base_path: ".aegis/custom-labors",
+      },
+    });
+
+    expect(loadConfig(projectRoot)).toEqual({
+      ...DEFAULT_AEGIS_CONFIG,
+      olympus: {
+        ...DEFAULT_AEGIS_CONFIG.olympus,
+        port: 4100,
+      },
+      labor: {
+        base_path: ".aegis/custom-labors",
+      },
+    });
+  });
+
+  it("fails clearly when the config file is missing", () => {
+    const projectRoot = createTempProjectRoot();
+
+    expect(() => loadConfig(projectRoot)).toThrow(
+      `Missing Aegis config at ${resolveConfigPath(projectRoot)}`,
+    );
+  });
+
+  it("rejects unknown top-level config keys", () => {
+    const projectRoot = createTempProjectRoot();
+
+    writeConfigFixture(projectRoot, {
+      runtime: "pi",
+      unexpected: true,
+    });
+
+    expect(() => loadConfig(projectRoot)).toThrow(
+      'Unknown config key "unexpected"',
+    );
+  });
+
+  it("rejects invalid field types in nested config domains", () => {
+    const projectRoot = createTempProjectRoot();
+
+    writeConfigFixture(projectRoot, {
+      runtime: "pi",
+      olympus: {
+        port: "3847",
+      },
+    });
+
+    expect(() => loadConfig(projectRoot)).toThrow(
+      'Expected "olympus.port" to be a number',
+    );
   });
 });
