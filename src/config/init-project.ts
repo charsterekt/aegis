@@ -1,5 +1,12 @@
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 
+import { DEFAULT_AEGIS_CONFIG } from "./defaults.js";
 import {
   AEGIS_CONFIG_PATH,
   resolveProjectRelativePath,
@@ -32,6 +39,13 @@ export interface InitProjectPlan {
   gitIgnoreEntries: readonly string[];
 }
 
+export interface InitProjectResult {
+  repoRoot: string;
+  createdDirectories: string[];
+  createdFiles: string[];
+  updatedGitIgnore: boolean;
+}
+
 export function buildInitProjectPlan(root = process.cwd()): InitProjectPlan {
   const repoRoot = path.resolve(root);
 
@@ -44,5 +58,104 @@ export function buildInitProjectPlan(root = process.cwd()): InitProjectPlan {
       resolveProjectRelativePath(repoRoot, entry),
     ),
     gitIgnoreEntries: DEFAULT_GITIGNORE_ENTRIES,
+  };
+}
+
+function seedFile(targetPath: string, contents: string) {
+  if (existsSync(targetPath)) {
+    return false;
+  }
+
+  writeFileSync(targetPath, contents, "utf8");
+  return true;
+}
+
+function formatJsonFile(value: unknown) {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function updateGitIgnore(
+  repoRoot: string,
+  entries: readonly string[],
+): boolean {
+  const gitIgnorePath = path.join(repoRoot, ".gitignore");
+  const existingContents = existsSync(gitIgnorePath)
+    ? readFileSync(gitIgnorePath, "utf8")
+    : "";
+  const existingLines = existingContents
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const missingEntries = entries.filter((entry) => !existingLines.includes(entry));
+
+  if (missingEntries.length === 0) {
+    return false;
+  }
+
+  const prefix = existingContents.length > 0 && !existingContents.endsWith("\n")
+    ? "\n"
+    : "";
+  const suffix = `${missingEntries.join("\n")}\n`;
+
+  writeFileSync(gitIgnorePath, `${existingContents}${prefix}${suffix}`, "utf8");
+  return true;
+}
+
+export function initProject(root = process.cwd()): InitProjectResult {
+  const plan = buildInitProjectPlan(root);
+  const createdDirectories: string[] = [];
+  const createdFiles: string[] = [];
+
+  for (const directory of plan.directories) {
+    if (!existsSync(directory)) {
+      mkdirSync(directory, { recursive: true });
+      createdDirectories.push(directory);
+    }
+  }
+
+  if (
+    seedFile(
+      resolveProjectRelativePath(plan.repoRoot, AEGIS_CONFIG_PATH),
+      formatJsonFile(DEFAULT_AEGIS_CONFIG),
+    )
+  ) {
+    createdFiles.push(resolveProjectRelativePath(plan.repoRoot, AEGIS_CONFIG_PATH));
+  }
+  if (
+    seedFile(
+      resolveProjectRelativePath(plan.repoRoot, ".aegis/dispatch-state.json"),
+      "{}\n",
+    )
+  ) {
+    createdFiles.push(
+      resolveProjectRelativePath(plan.repoRoot, ".aegis/dispatch-state.json"),
+    );
+  }
+  if (
+    seedFile(
+      resolveProjectRelativePath(plan.repoRoot, ".aegis/merge-queue.json"),
+      "{}\n",
+    )
+  ) {
+    createdFiles.push(
+      resolveProjectRelativePath(plan.repoRoot, ".aegis/merge-queue.json"),
+    );
+  }
+  if (
+    seedFile(
+      resolveProjectRelativePath(plan.repoRoot, ".aegis/mnemosyne.jsonl"),
+      "",
+    )
+  ) {
+    createdFiles.push(
+      resolveProjectRelativePath(plan.repoRoot, ".aegis/mnemosyne.jsonl"),
+    );
+  }
+
+  return {
+    repoRoot: plan.repoRoot,
+    createdDirectories,
+    createdFiles,
+    updatedGitIgnore: updateGitIgnore(plan.repoRoot, plan.gitIgnoreEntries),
   };
 }
