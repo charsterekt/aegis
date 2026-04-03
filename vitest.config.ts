@@ -2,6 +2,9 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    include: ["tests/**/*.{test,spec}.ts"],
+    include: [
+      "tests/**/*.{test,spec}.{ts,tsx}",
+      "olympus/src/**/*.{test,spec}.{ts,tsx}",
+    ],
   },
 });

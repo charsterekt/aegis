@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "vite build"
+    "lint": "tsc --project tsconfig.json --noEmit",
+    "build": "npm run lint && vite build"
   },
   "devDependencies": {
     "vite": "^7.1.5"

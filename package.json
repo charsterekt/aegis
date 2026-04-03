@@ -11,11 +11,11 @@
     "olympus"
   ],
   "scripts": {
-    "build": "tsc --project tsconfig.json",
+    "build": "node --eval \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc --project tsconfig.json",
     "dev": "tsx src/index.ts",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
-    "lint": "tsc --noEmit --project tsconfig.json",
+    "lint": "tsc --project tsconfig.tests.json --noEmit && npm run lint --workspace olympus",
     "build:olympus": "npm run build --workspace olympus",
     "build:all": "npm run build && npm run build:olympus"
   },

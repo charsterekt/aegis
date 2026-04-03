@@ -8,9 +8,11 @@
     "olympus",
     "olympus/index.html",
     "olympus/package.json",
+    "olympus/tsconfig.json",
     "olympus/src",
     "olympus/src/main.ts",
     "olympus/vite.config.ts",
+    "tsconfig.tests.json",
     "evals",
     "evals/fixtures",
     "evals/scenarios"
