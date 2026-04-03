@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  linkSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -92,6 +100,7 @@ describe("S00 project skeleton contract", () => {
           distRoot: string;
         };
       };
+      isDirectExecution: (entrypoint?: string, moduleUrl?: string) => boolean;
     };
 
     const paths = sharedPathsModule.resolveProjectPaths(repoRoot);
@@ -121,7 +130,11 @@ describe("S00 project skeleton contract", () => {
     );
     const buildRun = spawnSync(
       process.execPath,
-      [path.join(repoRoot, "node_modules", "typescript", "bin", "tsc"), "--project", "tsconfig.json"],
+      [
+        path.join(repoRoot, "node_modules", "typescript", "bin", "tsc"),
+        "--project",
+        "tsconfig.json",
+      ],
       {
         cwd: repoRoot,
         encoding: "utf8",
@@ -132,12 +145,45 @@ describe("S00 project skeleton contract", () => {
       cwd: repoRoot,
       encoding: "utf8",
     });
+    const linkedRoot = mkdtempSync(path.join(tmpdir(), "aegis-cli-"));
+    const repoLinkPath = path.join(linkedRoot, "repo-link");
+    const linkedCliPath = path.join(linkedRoot, "aegis-linked.js");
 
     expect(cleanupRun.status).toBe(0);
     expect(buildRun.status).toBe(0);
     expect(existsSync(cliPath)).toBe(true);
     expect(cliRun.status).toBe(0);
     expect(cliRun.stdout).toContain("Aegis CLI scaffold ready");
+    expect(
+      entrypointModule.isDirectExecution(
+        path.join(repoLinkPath, "src", "index.ts"),
+        pathToFileURL(path.join(repoRoot, "src", "index.ts")).href,
+      ),
+    ).toBe(false);
+
+    try {
+      symlinkSync(
+        repoRoot,
+        repoLinkPath,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      linkSync(cliPath, linkedCliPath);
+      const linkedCliRun = spawnSync(process.execPath, [linkedCliPath], {
+        cwd: repoRoot,
+        encoding: "utf8",
+      });
+
+      expect(
+        entrypointModule.isDirectExecution(
+          path.join(repoLinkPath, "src", "index.ts"),
+          pathToFileURL(path.join(repoRoot, "src", "index.ts")).href,
+        ),
+      ).toBe(true);
+      expect(linkedCliRun.status).toBe(0);
+      expect(linkedCliRun.stdout).toContain("Aegis CLI scaffold ready");
+    } finally {
+      rmSync(linkedRoot, { recursive: true, force: true });
+    }
   });
 
   it("defines a minimal Olympus Vite build shell", async () => {
@@ -171,7 +217,7 @@ describe("S00 project skeleton contract", () => {
     expect(scripts.build).toContain("vite build");
     expect(olympusTsconfig.compilerOptions.jsx).toBe("react-jsx");
     expect((olympusTsconfig.include as string[])).toEqual(
-      expect.arrayContaining(["src/**/*.ts", "src/**/*.tsx"]),
+      expect.arrayContaining(["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]),
     );
     expect(vitestConfig.default.test?.include).toEqual(
       undefined,

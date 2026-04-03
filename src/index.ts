@@ -1,12 +1,33 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolveProjectPaths } from "./shared/paths.js";
+import type { ProjectPaths } from "./shared/paths.js";
 
 export interface BootstrapManifest {
   appName: "aegis";
-  paths: ReturnType<typeof resolveProjectPaths>;
+  paths: ProjectPaths;
+}
+
+function resolveProjectPaths(root = process.cwd()): ProjectPaths {
+  const repoRoot = path.resolve(root);
+
+  return {
+    repoRoot,
+    srcRoot: path.join(repoRoot, "src"),
+    distRoot: path.join(repoRoot, "dist"),
+  };
+}
+
+function normalizeExecutionPath(candidate: string) {
+  const resolvedPath = path.resolve(candidate);
+
+  try {
+    return realpathSync.native(resolvedPath);
+  } catch {
+    return resolvedPath;
+  }
 }
 
 export function buildBootstrapManifest(
@@ -24,14 +45,17 @@ export function runCli(root = process.cwd()): BootstrapManifest {
   return manifest;
 }
 
-function isDirectExecution() {
-  const entrypoint = process.argv[1];
+export function isDirectExecution(
+  entrypoint = process.argv[1],
+  moduleUrl = import.meta.url,
+) {
+  const resolvedEntrypoint = entrypoint ? normalizeExecutionPath(entrypoint) : "";
 
-  if (!entrypoint) {
+  if (!resolvedEntrypoint) {
     return false;
   }
 
-  return path.resolve(entrypoint) === fileURLToPath(import.meta.url);
+  return resolvedEntrypoint === normalizeExecutionPath(fileURLToPath(moduleUrl));
 }
 
 if (isDirectExecution()) {
