@@ -162,8 +162,12 @@ function validatePartialConfig(config: unknown): asserts config is PartialConfig
         "turns",
         "tokens",
       ]);
-      assertNumber(config.budgets[key].turns, `budgets.${key}.turns`);
-      assertNumber(config.budgets[key].tokens, `budgets.${key}.tokens`);
+      if ("turns" in config.budgets[key]) {
+        assertNumber(config.budgets[key].turns, `budgets.${key}.turns`);
+      }
+      if ("tokens" in config.budgets[key]) {
+        assertNumber(config.budgets[key].tokens, `budgets.${key}.tokens`);
+      }
     }
   }
 
@@ -343,6 +347,22 @@ function mergeConfig(config: PartialConfig): AegisConfig {
     budgets: {
       ...DEFAULT_AEGIS_CONFIG.budgets,
       ...config.budgets,
+      oracle: {
+        ...DEFAULT_AEGIS_CONFIG.budgets.oracle,
+        ...config.budgets?.oracle,
+      },
+      titan: {
+        ...DEFAULT_AEGIS_CONFIG.budgets.titan,
+        ...config.budgets?.titan,
+      },
+      sentinel: {
+        ...DEFAULT_AEGIS_CONFIG.budgets.sentinel,
+        ...config.budgets?.sentinel,
+      },
+      janus: {
+        ...DEFAULT_AEGIS_CONFIG.budgets.janus,
+        ...config.budgets?.janus,
+      },
     },
     thresholds: {
       ...DEFAULT_AEGIS_CONFIG.thresholds,

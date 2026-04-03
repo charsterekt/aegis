@@ -114,6 +114,23 @@ describe("S01 config contract seed", () => {
     });
   });
 
+  it("fills missing nested budget fields from defaults", () => {
+    const projectRoot = createTempProjectRoot();
+
+    writeConfigFixture(projectRoot, {
+      budgets: {
+        titan: {
+          turns: 5,
+        },
+      },
+    });
+
+    expect(loadConfig(projectRoot).budgets.titan).toEqual({
+      turns: 5,
+      tokens: DEFAULT_AEGIS_CONFIG.budgets.titan.tokens,
+    });
+  });
+
   it("fails clearly when the config file is missing", () => {
     const projectRoot = createTempProjectRoot();
 
