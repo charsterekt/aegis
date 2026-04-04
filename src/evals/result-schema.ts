@@ -176,8 +176,8 @@ export interface ScoreSummary {
   rework_loops_per_issue: number;
   /** Janus invocations per 10 issues processed. */
   janus_invocation_rate_per_10_issues: number;
-  /** Fraction of Janus invocations that succeeded (0–1). */
-  janus_success_rate: number;
+  /** Fraction of Janus invocations that succeeded (0–1).  Null if no Janus invocations occurred. */
+  janus_success_rate: number | null;
   /** Token overhead attributable to messaging, when messaging is enabled.  Null when not measured. */
   messaging_token_overhead: number | null;
   /** Human interventions per 10 completed issues. */

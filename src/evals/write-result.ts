@@ -50,7 +50,11 @@ export async function writeResult(
   result: EvalRunResult,
   resultsPath: string = EVALS_RESULTS_PATH,
 ): Promise<string> {
-  const scenarioDir = path.resolve(resultsPath, result.scenario_id);
+  const resolvedBase = path.resolve(resultsPath);
+  const scenarioDir = path.resolve(resolvedBase, result.scenario_id);
+  if (!scenarioDir.startsWith(resolvedBase + path.sep) && scenarioDir !== resolvedBase) {
+    throw new Error(`scenario_id "${result.scenario_id}" escapes the results directory`);
+  }
   fs.mkdirSync(scenarioDir, { recursive: true });
 
   const safeTimestamp = toSafeTimestamp(result.timing.started_at);

@@ -37,10 +37,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Returns true if the string is a valid ISO-8601 date (parseable and finite). */
+/** Returns true if the string is a valid ISO-8601 timestamp with time component. */
 function isIso8601(value: string): boolean {
-  const d = new Date(value);
-  return !Number.isNaN(d.getTime());
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value) && !Number.isNaN(new Date(value).getTime());
 }
 
 // ---------------------------------------------------------------------------
@@ -93,8 +92,8 @@ export function validateEvalRunResult(data: unknown): ValidationResult {
 
   // ── issue_count ───────────────────────────────────────────────────────────
 
-  if (typeof data["issue_count"] !== "number" || (data["issue_count"] as number) < 0) {
-    errors.push('"issue_count" must be a non-negative number');
+  if (typeof data["issue_count"] !== "number" || (data["issue_count"] as number) < 0 || !Number.isInteger(data["issue_count"] as number)) {
+    errors.push('"issue_count" must be a non-negative integer');
   }
 
   // ── issue_types ───────────────────────────────────────────────────────────

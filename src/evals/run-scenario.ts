@@ -104,7 +104,11 @@ function buildConfigFingerprint(projectRoot: string): string {
 }
 
 function loadFixture(projectRoot: string, fixturePath: string): Fixture {
-  const fullPath = path.join(projectRoot, "evals", "fixtures", fixturePath);
+  const base = path.resolve(projectRoot, "evals", "fixtures");
+  const fullPath = path.resolve(base, fixturePath);
+  if (!fullPath.startsWith(base + path.sep) && fullPath !== base) {
+    throw new Error(`fixture_path "${fixturePath}" escapes the fixtures directory`);
+  }
   const raw = readFileSync(fullPath, "utf8");
   return JSON.parse(raw) as Fixture;
 }

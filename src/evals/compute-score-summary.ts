@@ -52,11 +52,13 @@ export function computeScoreSummary(
   const structuredArtifactComplianceRate = 1.0;
 
   // §24.7: clarification_compliance_rate
-  // Count "paused_ambiguous" outcomes; if none expected/present default to 1.0
-  const pausedAmbiguousCount = completionValues.filter(
-    (o) => o === "paused_ambiguous",
-  ).length;
-  const clarificationComplianceRate = pausedAmbiguousCount === 0 ? 1.0 : pausedAmbiguousCount / issueCount;
+  // MVP: we have no signal for ambiguous issues that were NOT raised correctly.
+  // When the real pipeline wires in (S16A), the denominator becomes the count of
+  // issues that were actually ambiguous, and the numerator becomes the count of
+  // correctly raised clarifications. For now, any paused_ambiguous outcome is
+  // treated as a correct clarification, so the rate is always 1.0 when there are
+  // ambiguous issues (they all raised clarifications) and 1.0 when there are none.
+  const clarificationComplianceRate = 1.0;
 
   // §24.7: merge_conflict_rate_per_titan — non-clean outcomes / issue_count
   const nonCleanMergeCount = mergeValues.filter(
@@ -76,7 +78,7 @@ export function computeScoreSummary(
   ).length;
   const janusInvocationRatePer10Issues =
     issueCount === 0 ? 0 : (janusCount * 10) / issueCount;
-  const janusSuccessRate = janusCount === 0 ? 0 : janusCount / janusCount; // all invocations are "success" when recorded as conflict_resolved_janus
+  const janusSuccessRate = janusCount === 0 ? null : 1.0; // all recorded conflict_resolved_janus are successes
 
   // §24.7: messaging_token_overhead — MVP: null
   const messagingTokenOverhead: number | null = null;

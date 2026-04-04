@@ -37,6 +37,7 @@ const HIGHER_IS_BETTER = new Set<string>([
   "structured_artifact_compliance_rate",
   "clarification_compliance_rate",
   "janus_success_rate",
+  "restart_recovery_success_rate",
 ]);
 
 /**
@@ -49,6 +50,7 @@ const LOWER_IS_BETTER = new Set<string>([
   "rework_loops_per_issue",
   "janus_invocation_rate_per_10_issues",
   "human_interventions_per_10_issues",
+  "cost_per_completed_issue_usd",
 ]);
 
 type NumericMetricKey = keyof {
@@ -67,7 +69,6 @@ function extractNumericMetrics(summary: ScoreSummary): Map<string, number> {
     "merge_queue_latency_ms",
     "rework_loops_per_issue",
     "janus_invocation_rate_per_10_issues",
-    "janus_success_rate",
     "human_interventions_per_10_issues",
   ];
 
@@ -78,7 +79,11 @@ function extractNumericMetrics(summary: ScoreSummary): Map<string, number> {
     }
   }
 
-  // Include nullable numeric metrics when both runs have a value
+  // Include nullable numeric metrics when the run has a value.
+  // messaging_token_overhead is omitted from direction sets — not yet classifiable.
+  if (typeof summary.janus_success_rate === "number") {
+    result.set("janus_success_rate", summary.janus_success_rate);
+  }
   if (typeof summary.messaging_token_overhead === "number") {
     result.set("messaging_token_overhead", summary.messaging_token_overhead);
   }
