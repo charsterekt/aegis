@@ -1,0 +1,17 @@
+{
+  "fixture_type": "polling_only",
+  "reset_rules": "noop",
+  "scenario_tags": ["polling", "no-hooks", "correctness", "phase1"],
+  "issues": [
+    {
+      "id": "poll-001",
+      "type": "task",
+      "expected_completion": "completed",
+      "expected_merge": "merged_clean"
+    }
+  ],
+  "human_interventions": [],
+  "config_overrides": {
+    "hooks_enabled": false
+  }
+}

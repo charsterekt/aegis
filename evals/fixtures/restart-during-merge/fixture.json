@@ -1,0 +1,15 @@
+{
+  "fixture_type": "restart",
+  "reset_rules": "file_copy",
+  "scenario_tags": ["restart", "recovery", "merge", "phase1"],
+  "issues": [
+    {
+      "id": "restart-merge-001",
+      "type": "task",
+      "expected_completion": "completed",
+      "expected_merge": "merged_clean"
+    }
+  ],
+  "human_interventions": [],
+  "config_overrides": {}
+}
