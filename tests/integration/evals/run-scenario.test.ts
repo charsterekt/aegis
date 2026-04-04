@@ -14,6 +14,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import { runScenario } from "../../../src/evals/run-scenario.js";
 import { writeResult, readResult } from "../../../src/evals/write-result.js";
 import type { EvalRunResult, EvalScenario } from "../../../src/evals/result-schema.js";
+import { computeScoreSummary } from "../../../src/evals/compute-score-summary.js";
+import { compareScoreSummaries } from "../../../src/evals/compare-runs.js";
 
 // ---------------------------------------------------------------------------
 // Shared fixtures / helpers
@@ -371,27 +373,117 @@ describe("S02 result persistence — lane A (writeResult / readResult)", () => {
 // ---------------------------------------------------------------------------
 
 describe("S02 score summary — lane B acceptance criteria", () => {
-  it.todo(
-    "computeScoreSummary returns a ScoreSummary with issue_completion_rate equal to completed_count / issue_count",
-  );
+  it("computeScoreSummary returns a ScoreSummary with issue_completion_rate equal to completed_count / issue_count", () => {
+    const result = makeMinimalResult({
+      issue_count: 4,
+      completion_outcomes: {
+        "issue-1": "completed",
+        "issue-2": "completed",
+        "issue-3": "failed",
+        "issue-4": "skipped",
+      },
+      merge_outcomes: {
+        "issue-1": "merged_clean",
+        "issue-2": "merged_clean",
+        "issue-3": "not_attempted",
+        "issue-4": "not_attempted",
+      },
+    });
 
-  it.todo(
-    "computeScoreSummary sets gates.issue_completion_rate_80pct to true when completion rate >= 0.8",
-  );
+    const summary = computeScoreSummary(result);
 
-  it.todo(
-    "computeScoreSummary sets gates.issue_completion_rate_80pct to false when completion rate < 0.8",
-  );
+    // 2 completed / 4 total = 0.5
+    expect(summary.issue_completion_rate).toBeCloseTo(2 / 4);
+  });
 
-  it.todo(
-    "computeScoreSummary sets gates.human_interventions_within_threshold to false when rate exceeds config default of 2 per 10 issues",
-  );
+  it("computeScoreSummary sets gates.issue_completion_rate_80pct to true when completion rate >= 0.8", () => {
+    const result = makeMinimalResult({
+      issue_count: 5,
+      completion_outcomes: {
+        "issue-1": "completed",
+        "issue-2": "completed",
+        "issue-3": "completed",
+        "issue-4": "completed",
+        "issue-5": "failed",
+      },
+      merge_outcomes: {
+        "issue-1": "merged_clean",
+        "issue-2": "merged_clean",
+        "issue-3": "merged_clean",
+        "issue-4": "merged_clean",
+        "issue-5": "not_attempted",
+      },
+    });
 
-  it.todo(
-    "computeScoreSummary sets cost_per_completed_issue_usd to null when cost_totals is null",
-  );
+    const summary = computeScoreSummary(result);
 
-  it.todo(
-    "comparing two ScoreSummary artifacts from consecutive runs detects a regression in issue_completion_rate",
-  );
+    expect(summary.issue_completion_rate).toBeCloseTo(0.8);
+    expect(summary.gates.issue_completion_rate_80pct).toBe(true);
+  });
+
+  it("computeScoreSummary sets gates.issue_completion_rate_80pct to false when completion rate < 0.8", () => {
+    const result = makeMinimalResult({
+      issue_count: 5,
+      completion_outcomes: {
+        "issue-1": "completed",
+        "issue-2": "completed",
+        "issue-3": "completed",
+        "issue-4": "failed",
+        "issue-5": "failed",
+      },
+      merge_outcomes: {
+        "issue-1": "merged_clean",
+        "issue-2": "merged_clean",
+        "issue-3": "merged_clean",
+        "issue-4": "not_attempted",
+        "issue-5": "not_attempted",
+      },
+    });
+
+    const summary = computeScoreSummary(result);
+
+    expect(summary.issue_completion_rate).toBeCloseTo(0.6);
+    expect(summary.gates.issue_completion_rate_80pct).toBe(false);
+  });
+
+  it("computeScoreSummary sets gates.human_interventions_within_threshold to false when rate exceeds config default of 2 per 10 issues", () => {
+    // 1 completed issue, 1 intervention → 10 per 10 → exceeds threshold of 2
+    const result = makeMinimalResult({
+      human_intervention_issue_ids: ["test-001"],
+    });
+
+    const summary = computeScoreSummary(result);
+
+    expect(summary.human_interventions_per_10_issues).toBe(10);
+    expect(summary.gates.human_interventions_within_threshold).toBe(false);
+  });
+
+  it("computeScoreSummary sets cost_per_completed_issue_usd to null when cost_totals is null", () => {
+    const result = makeMinimalResult({ cost_totals: null });
+
+    const summary = computeScoreSummary(result);
+
+    expect(summary.cost_per_completed_issue_usd).toBeNull();
+  });
+
+  it("comparing two ScoreSummary artifacts from consecutive runs detects a regression in issue_completion_rate", () => {
+    const baselineResult = makeMinimalResult({
+      issue_count: 1,
+      completion_outcomes: { "test-001": "completed" },
+      merge_outcomes: { "test-001": "merged_clean" },
+    });
+    const currentResult = makeMinimalResult({
+      issue_count: 2,
+      completion_outcomes: { "test-001": "completed", "test-002": "failed" },
+      merge_outcomes: { "test-001": "merged_clean", "test-002": "not_attempted" },
+    });
+
+    const baselineSummary = computeScoreSummary(baselineResult);
+    const currentSummary = computeScoreSummary(currentResult);
+
+    const report = compareScoreSummaries(baselineSummary, currentSummary);
+
+    expect(report.has_regressions).toBe(true);
+    expect(report.regressions.some((r) => r.metric === "issue_completion_rate")).toBe(true);
+  });
 });

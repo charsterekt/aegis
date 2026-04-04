@@ -23,6 +23,9 @@ import {
   type ScoreSummary,
 } from "../../../src/evals/result-schema.js";
 import { DEFAULT_AEGIS_CONFIG } from "../../../src/config/defaults.js";
+import { computeScoreSummary } from "../../../src/evals/compute-score-summary.js";
+import { validateEvalRunResult } from "../../../src/evals/validate-result.js";
+import { compareScoreSummaries } from "../../../src/evals/compare-runs.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..");
 
@@ -331,5 +334,438 @@ describe("S02 eval result schema — scenario manifest (evals/scenarios/index.js
 
     const ids = manifest.scenarios.map((s) => s.id);
     expect(ids).toContain("single-clean-issue");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeScoreSummary (lane B)
+// ---------------------------------------------------------------------------
+
+describe("S02 lane B — computeScoreSummary", () => {
+  it("all completed issues → completion_rate 1.0 and gate passes", () => {
+    const result = makeMinimalResult(); // 1 issue, "completed"
+    const summary = computeScoreSummary(result);
+
+    expect(summary.issue_completion_rate).toBe(1.0);
+    expect(summary.gates.issue_completion_rate_80pct).toBe(true);
+  });
+
+  it("mixed outcomes → correct completion rate", () => {
+    const result = makeMinimalResult();
+    result.issue_count = 4;
+    result.completion_outcomes = {
+      "issue-1": "completed",
+      "issue-2": "completed",
+      "issue-3": "failed",
+      "issue-4": "paused_complex",
+    };
+    result.merge_outcomes = {
+      "issue-1": "merged_clean",
+      "issue-2": "merged_clean",
+      "issue-3": "not_attempted",
+      "issue-4": "not_attempted",
+    };
+
+    const summary = computeScoreSummary(result);
+
+    expect(summary.issue_completion_rate).toBeCloseTo(0.5);
+    expect(summary.gates.issue_completion_rate_80pct).toBe(false);
+  });
+
+  it("zero issue_count → handles division by zero gracefully (returns 0 / safe defaults)", () => {
+    const result = makeMinimalResult();
+    result.issue_count = 0;
+    result.completion_outcomes = {};
+    result.merge_outcomes = {};
+
+    const summary = computeScoreSummary(result);
+
+    expect(summary.issue_completion_rate).toBe(0);
+    expect(summary.merge_conflict_rate_per_titan).toBe(0);
+    expect(summary.janus_invocation_rate_per_10_issues).toBe(0);
+    expect(summary.human_interventions_per_10_issues).toBe(0);
+    expect(summary.cost_per_completed_issue_usd).toBeNull();
+  });
+
+  it("gate edge case: completion_rate exactly 0.8 → issue_completion_rate_80pct is true", () => {
+    const result = makeMinimalResult();
+    result.issue_count = 5;
+    result.completion_outcomes = {
+      "issue-1": "completed",
+      "issue-2": "completed",
+      "issue-3": "completed",
+      "issue-4": "completed",
+      "issue-5": "failed",
+    };
+    result.merge_outcomes = {
+      "issue-1": "merged_clean",
+      "issue-2": "merged_clean",
+      "issue-3": "merged_clean",
+      "issue-4": "merged_clean",
+      "issue-5": "not_attempted",
+    };
+
+    const summary = computeScoreSummary(result);
+
+    expect(summary.issue_completion_rate).toBeCloseTo(0.8);
+    expect(summary.gates.issue_completion_rate_80pct).toBe(true);
+  });
+
+  it("cost_per_completed_issue_usd is null when cost_totals is null", () => {
+    const result = makeMinimalResult();
+    result.cost_totals = null;
+
+    const summary = computeScoreSummary(result);
+
+    expect(summary.cost_per_completed_issue_usd).toBeNull();
+  });
+
+  it("cost_per_completed_issue_usd computed correctly when cost_totals is present", () => {
+    const result = makeMinimalResult();
+    result.issue_count = 2;
+    result.completion_outcomes = {
+      "issue-1": "completed",
+      "issue-2": "completed",
+    };
+    result.merge_outcomes = {
+      "issue-1": "merged_clean",
+      "issue-2": "merged_clean",
+    };
+    result.cost_totals = { total_usd: 1.0, per_agent: { titan: 0.6, oracle: 0.4 } };
+
+    const summary = computeScoreSummary(result);
+
+    expect(summary.cost_per_completed_issue_usd).toBeCloseTo(0.5);
+  });
+
+  it("human intervention rate calculation: 1 intervention / 1 completed → 10 per 10", () => {
+    const result = makeMinimalResult();
+    result.human_intervention_issue_ids = ["issue-1"];
+
+    const summary = computeScoreSummary(result);
+
+    expect(summary.human_interventions_per_10_issues).toBe(10);
+    expect(summary.gates.human_interventions_within_threshold).toBe(false);
+  });
+
+  it("human_interventions_within_threshold passes when rate is within config default of 2 per 10", () => {
+    const result = makeMinimalResult();
+    result.issue_count = 10;
+    // 10 completed issues, 2 interventions → exactly 2 per 10
+    const outcomes: Record<string, "completed"> = {};
+    const merges: Record<string, "merged_clean"> = {};
+    for (let i = 1; i <= 10; i++) {
+      outcomes[`issue-${i}`] = "completed";
+      merges[`issue-${i}`] = "merged_clean";
+    }
+    result.completion_outcomes = outcomes;
+    result.merge_outcomes = merges;
+    result.human_intervention_issue_ids = ["issue-1", "issue-2"];
+
+    const summary = computeScoreSummary(result);
+
+    expect(summary.human_interventions_per_10_issues).toBeCloseTo(2);
+    expect(summary.gates.human_interventions_within_threshold).toBe(true);
+  });
+
+  it("janus_minority_path gate passes when fewer than 5 per 10 issues use Janus", () => {
+    const result = makeMinimalResult();
+    result.issue_count = 10;
+    const outcomes: Record<string, "completed"> = {};
+    const merges: Record<string, "merged_clean" | "conflict_resolved_janus"> = {};
+    for (let i = 1; i <= 10; i++) {
+      outcomes[`issue-${i}`] = "completed";
+      merges[`issue-${i}`] = i <= 4 ? "conflict_resolved_janus" : "merged_clean";
+    }
+    result.completion_outcomes = outcomes;
+    result.merge_outcomes = merges;
+
+    const summary = computeScoreSummary(result);
+
+    // 4 janus out of 10 → 4 per 10, which is < 5
+    expect(summary.janus_invocation_rate_per_10_issues).toBeCloseTo(4);
+    expect(summary.gates.janus_minority_path).toBe(true);
+  });
+
+  it("MVP MVP fields have expected defaults: merge_queue_latency_ms=0, rework_loops_per_issue=0", () => {
+    const result = makeMinimalResult();
+    const summary = computeScoreSummary(result);
+
+    expect(summary.merge_queue_latency_ms).toBe(0);
+    expect(summary.rework_loops_per_issue).toBe(0);
+    expect(summary.messaging_token_overhead).toBeNull();
+    expect(summary.restart_recovery_success_rate).toBeNull();
+  });
+
+  it("structured_artifact_compliance_100pct gate always true for MVP", () => {
+    const result = makeMinimalResult();
+    const summary = computeScoreSummary(result);
+
+    expect(summary.structured_artifact_compliance_rate).toBe(1.0);
+    expect(summary.gates.structured_artifact_compliance_100pct).toBe(true);
+  });
+
+  it("restart_recovery_100pct gate is true when restart_recovery_success_rate is null", () => {
+    const result = makeMinimalResult();
+    const summary = computeScoreSummary(result);
+
+    expect(summary.restart_recovery_success_rate).toBeNull();
+    expect(summary.gates.restart_recovery_100pct).toBe(true);
+  });
+
+  it("no_direct_to_main_bypasses gate always true for MVP", () => {
+    const result = makeMinimalResult();
+    const summary = computeScoreSummary(result);
+
+    expect(summary.gates.no_direct_to_main_bypasses).toBe(true);
+  });
+
+  it("config threshold override affects human_interventions_within_threshold gate", () => {
+    const result = makeMinimalResult();
+    // 1 intervention / 1 completed → 10 per 10
+    result.human_intervention_issue_ids = ["issue-1"];
+
+    const summaryStrict = computeScoreSummary(result, {
+      max_human_interventions_per_10_issues: 5,
+    });
+    // 10 > 5 → still fails
+    expect(summaryStrict.gates.human_interventions_within_threshold).toBe(false);
+
+    const summaryLoose = computeScoreSummary(result, {
+      max_human_interventions_per_10_issues: 10,
+    });
+    // 10 <= 10 → passes
+    expect(summaryLoose.gates.human_interventions_within_threshold).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateEvalRunResult (lane B)
+// ---------------------------------------------------------------------------
+
+describe("S02 lane B — validateEvalRunResult", () => {
+  it("valid minimal result passes without errors", () => {
+    const result = validateEvalRunResult(makeMinimalResult());
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("non-object input is rejected immediately", () => {
+    const result = validateEvalRunResult("not an object");
+    expect(result.valid).toBe(false);
+    expect(result.errors.length).toBeGreaterThan(0);
+  });
+
+  it("missing top-level field 'scenario_id' is detected", () => {
+    const data = makeMinimalResult() as Record<string, unknown>;
+    delete data["scenario_id"];
+
+    const result = validateEvalRunResult(data);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("scenario_id"))).toBe(true);
+  });
+
+  it("missing 'timing' object is detected", () => {
+    const data = makeMinimalResult() as Record<string, unknown>;
+    delete data["timing"];
+
+    const result = validateEvalRunResult(data);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("timing"))).toBe(true);
+  });
+
+  it("invalid completion_outcome enum value is detected", () => {
+    const data = makeMinimalResult() as Record<string, unknown>;
+    data["completion_outcomes"] = { "issue-1": "totally_invalid_outcome" };
+
+    const result = validateEvalRunResult(data);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("completion_outcomes"))).toBe(true);
+  });
+
+  it("invalid merge_outcome enum value is detected", () => {
+    const data = makeMinimalResult() as Record<string, unknown>;
+    data["merge_outcomes"] = { "issue-1": "bad_merge" };
+
+    const result = validateEvalRunResult(data);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("merge_outcomes"))).toBe(true);
+  });
+
+  it("invalid ISO-8601 timestamp in timing.started_at is detected", () => {
+    const data = makeMinimalResult() as Record<string, unknown>;
+    data["timing"] = {
+      started_at: "not-a-date",
+      finished_at: "2026-04-04T18:05:00.000Z",
+      elapsed_ms: 300_000,
+    };
+
+    const result = validateEvalRunResult(data);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("timing.started_at"))).toBe(true);
+  });
+
+  it("invalid ISO-8601 timestamp in timing.finished_at is detected", () => {
+    const data = makeMinimalResult() as Record<string, unknown>;
+    data["timing"] = {
+      started_at: "2026-04-04T18:00:00.000Z",
+      finished_at: "garbage",
+      elapsed_ms: 300_000,
+    };
+
+    const result = validateEvalRunResult(data);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("timing.finished_at"))).toBe(true);
+  });
+
+  it("negative issue_count is detected", () => {
+    const data = makeMinimalResult() as Record<string, unknown>;
+    data["issue_count"] = -1;
+
+    const result = validateEvalRunResult(data);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("issue_count"))).toBe(true);
+  });
+
+  it("empty scenario_id string is detected", () => {
+    const data = makeMinimalResult() as Record<string, unknown>;
+    data["scenario_id"] = "";
+
+    const result = validateEvalRunResult(data);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("scenario_id"))).toBe(true);
+  });
+
+  it("valid result with cost_totals present also passes", () => {
+    const data = makeMinimalResult();
+    data.cost_totals = { total_usd: 0.5, per_agent: { titan: 0.5 } };
+
+    const result = validateEvalRunResult(data);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("all valid CompletionOutcome values are accepted", () => {
+    const validOutcomes = [
+      "completed",
+      "failed",
+      "paused_complex",
+      "paused_ambiguous",
+      "killed_budget",
+      "killed_stuck",
+      "skipped",
+    ] as const;
+
+    for (const outcome of validOutcomes) {
+      const data = makeMinimalResult();
+      data.completion_outcomes["issue-1"] = outcome;
+      const result = validateEvalRunResult(data);
+      expect(result.valid).toBe(true);
+    }
+  });
+
+  it("all valid MergeOutcome values are accepted", () => {
+    const validOutcomes = [
+      "merged_clean",
+      "merged_after_rework",
+      "conflict_resolved_janus",
+      "conflict_unresolved",
+      "not_attempted",
+    ] as const;
+
+    for (const outcome of validOutcomes) {
+      const data = makeMinimalResult();
+      data.merge_outcomes["issue-1"] = outcome;
+      const result = validateEvalRunResult(data);
+      expect(result.valid).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// compareScoreSummaries (lane B)
+// ---------------------------------------------------------------------------
+
+describe("S02 lane B — compareScoreSummaries", () => {
+  it("identical summaries produce no regressions and no improvements", () => {
+    const summary = makeMinimalScoreSummary();
+    const report = compareScoreSummaries(summary, summary);
+
+    expect(report.has_regressions).toBe(false);
+    expect(report.regressions).toHaveLength(0);
+    expect(report.improvements).toHaveLength(0);
+  });
+
+  it("regression detected when completion rate drops", () => {
+    const baseline = makeMinimalScoreSummary();
+    baseline.issue_completion_rate = 1.0;
+
+    const current = makeMinimalScoreSummary();
+    current.issue_completion_rate = 0.6;
+
+    const report = compareScoreSummaries(baseline, current);
+
+    expect(report.has_regressions).toBe(true);
+    const reg = report.regressions.find((r) => r.metric === "issue_completion_rate");
+    expect(reg).toBeDefined();
+    expect(reg!.baseline_value).toBe(1.0);
+    expect(reg!.current_value).toBe(0.6);
+    expect(reg!.delta).toBeCloseTo(-0.4);
+  });
+
+  it("improvement detected when completion rate rises", () => {
+    const baseline = makeMinimalScoreSummary();
+    baseline.issue_completion_rate = 0.7;
+
+    const current = makeMinimalScoreSummary();
+    current.issue_completion_rate = 1.0;
+
+    const report = compareScoreSummaries(baseline, current);
+
+    expect(report.has_regressions).toBe(false);
+    expect(report.improvements.length).toBeGreaterThan(0);
+    const imp = report.improvements.find((i) => i.metric === "issue_completion_rate");
+    expect(imp).toBeDefined();
+    expect(imp!.delta).toBeGreaterThan(0);
+  });
+
+  it("regression detected when merge_conflict_rate_per_titan increases", () => {
+    const baseline = makeMinimalScoreSummary();
+    baseline.merge_conflict_rate_per_titan = 0.1;
+
+    const current = makeMinimalScoreSummary();
+    current.merge_conflict_rate_per_titan = 0.5;
+
+    const report = compareScoreSummaries(baseline, current);
+
+    expect(report.has_regressions).toBe(true);
+    expect(report.regressions.some((r) => r.metric === "merge_conflict_rate_per_titan")).toBe(true);
+  });
+
+  it("improvement detected when human interventions per 10 issues decreases", () => {
+    const baseline = makeMinimalScoreSummary();
+    baseline.human_interventions_per_10_issues = 3;
+
+    const current = makeMinimalScoreSummary();
+    current.human_interventions_per_10_issues = 1;
+
+    const report = compareScoreSummaries(baseline, current);
+
+    expect(report.improvements.some((i) => i.metric === "human_interventions_per_10_issues")).toBe(true);
+  });
+
+  it("has_regressions is false when there are only improvements", () => {
+    const baseline = makeMinimalScoreSummary();
+    baseline.issue_completion_rate = 0.5;
+    baseline.clarification_compliance_rate = 0.8;
+
+    const current = makeMinimalScoreSummary();
+    current.issue_completion_rate = 1.0;
+    current.clarification_compliance_rate = 1.0;
+
+    const report = compareScoreSummaries(baseline, current);
+
+    expect(report.has_regressions).toBe(false);
+    expect(report.improvements.length).toBeGreaterThan(0);
   });
 });
