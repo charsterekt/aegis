@@ -9,10 +9,10 @@
  *   - failure counters and cooldown windows
  *   - cumulative spend where exact dollar pricing is available
  *   - session-local provenance about which issues were dispatched by this instance
- *
- * Lane B (aegis-fjm.5.3) will fill in the load/save/reconcile implementations.
  */
 
+import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import type { DispatchStage } from "./stage-transition.js";
 
 // ---------------------------------------------------------------------------
@@ -117,55 +117,159 @@ export interface DispatchState {
 }
 
 // ---------------------------------------------------------------------------
-// Load / save stubs — Lane B (aegis-fjm.5.3) implements these
+// In-progress stage set — used by reconcileDispatchState
+// ---------------------------------------------------------------------------
+
+/**
+ * Stages in which an agent is actively executing.
+ *
+ * Records in these stages may have a stale `runningAgent` after a crash and
+ * must be reconciled on restart (SPECv2 §6.3).
+ */
+const IN_PROGRESS_STAGES: ReadonlySet<string> = new Set([
+  "scouting",
+  "implementing",
+  "merging",
+  "reviewing",
+  "resolving_integration",
+]);
+
+// ---------------------------------------------------------------------------
+// Paths
+// ---------------------------------------------------------------------------
+
+function aegisDir(projectRoot: string): string {
+  return join(projectRoot, ".aegis");
+}
+
+function dispatchStatePath(projectRoot: string): string {
+  return join(aegisDir(projectRoot), "dispatch-state.json");
+}
+
+function dispatchStateTmpPath(projectRoot: string): string {
+  return join(aegisDir(projectRoot), "dispatch-state.json.tmp");
+}
+
+// ---------------------------------------------------------------------------
+// Load / save / reconcile — Lane B (aegis-fjm.5.3)
 // ---------------------------------------------------------------------------
 
 /**
  * Load the dispatch state from disk.
  *
+ * - Returns `emptyDispatchState()` when the file does not exist (first run).
+ * - Throws with context when the file exists but is malformed or has an
+ *   unexpected `schemaVersion`.
+ *
  * @param projectRoot - Absolute path to the project root (where `.aegis/` lives).
  * @returns The persisted DispatchState.
- * @throws If the file is missing or malformed.
  */
-export function loadDispatchState(_projectRoot: string): DispatchState {
-  throw new Error(
-    "loadDispatchState: not implemented — Lane B (aegis-fjm.5.3) will implement this",
-  );
+export function loadDispatchState(projectRoot: string): DispatchState {
+  const filePath = dispatchStatePath(projectRoot);
+
+  if (!existsSync(filePath)) {
+    return emptyDispatchState();
+  }
+
+  let raw: string;
+  try {
+    raw = readFileSync(filePath, "utf-8");
+  } catch (err) {
+    throw new Error(
+      `loadDispatchState: failed to read ${filePath}: ${(err as Error).message}`,
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `loadDispatchState: malformed JSON in ${filePath}: ${(err as Error).message}`,
+    );
+  }
+
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    (parsed as Record<string, unknown>)["schemaVersion"] !== 1
+  ) {
+    throw new Error(
+      `loadDispatchState: invalid or unsupported schemaVersion in ${filePath} ` +
+        `(expected 1, got ${(parsed as Record<string, unknown>)?.["schemaVersion"]})`,
+    );
+  }
+
+  const obj = parsed as Record<string, unknown>;
+  if (typeof obj["records"] !== "object" || obj["records"] === null) {
+    throw new Error(
+      `loadDispatchState: missing or invalid 'records' field in ${filePath}`,
+    );
+  }
+
+  return parsed as DispatchState;
 }
 
 /**
  * Atomically persist the dispatch state to disk.
  *
+ * Uses write-to-tmp then rename so a mid-write crash cannot corrupt the
+ * existing file.  The `.aegis` directory is created if it does not exist.
+ *
  * @param projectRoot - Absolute path to the project root.
  * @param state - The state to write.
  */
-export function saveDispatchState(
-  _projectRoot: string,
-  _state: DispatchState,
-): void {
-  throw new Error(
-    "saveDispatchState: not implemented — Lane B (aegis-fjm.5.3) will implement this",
-  );
+export function saveDispatchState(projectRoot: string, state: DispatchState): void {
+  const dir = aegisDir(projectRoot);
+  mkdirSync(dir, { recursive: true });
+
+  const tmpPath = dispatchStateTmpPath(projectRoot);
+  const finalPath = dispatchStatePath(projectRoot);
+
+  const json = JSON.stringify(state, null, 2);
+  writeFileSync(tmpPath, json, "utf-8");
+  renameSync(tmpPath, finalPath);
 }
 
 /**
  * Reconcile the dispatch state after a restart.
  *
- * Scans all records for in-progress stages whose agent sessions may have died
- * during a previous process lifetime, and applies the configured recovery
- * policy (e.g. keep the stage, mark agent assignment null, allow re-dispatch).
+ * Scans all records for in-progress stages.  For each record whose
+ * `sessionProvenanceId` differs from `liveSessionId`, the `runningAgent` is
+ * cleared to `null` so the orchestrator can re-dispatch.  The `stage` is
+ * intentionally preserved (SPECv2 §6.3).
+ *
+ * Records in terminal or waiting stages (pending, scouted, implemented,
+ * queued_for_merge, merged, complete, failed) are left entirely unchanged.
  *
  * @param state - The state loaded from disk.
  * @param liveSessionId - The current process session identifier.
- * @returns A reconciled copy of the state.
+ * @returns A reconciled **copy** of the state (original is never mutated).
  */
 export function reconcileDispatchState(
-  _state: DispatchState,
-  _liveSessionId: string,
+  state: DispatchState,
+  liveSessionId: string,
 ): DispatchState {
-  throw new Error(
-    "reconcileDispatchState: not implemented — Lane B (aegis-fjm.5.3) will implement this",
-  );
+  const reconciledRecords: Record<string, DispatchRecord> = {};
+
+  for (const [issueId, record] of Object.entries(state.records)) {
+    if (
+      IN_PROGRESS_STAGES.has(record.stage) &&
+      record.sessionProvenanceId !== liveSessionId
+    ) {
+      reconciledRecords[issueId] = {
+        ...record,
+        runningAgent: null,
+      };
+    } else {
+      reconciledRecords[issueId] = { ...record };
+    }
+  }
+
+  return {
+    schemaVersion: state.schemaVersion,
+    records: reconciledRecords,
+  };
 }
 
 /**
