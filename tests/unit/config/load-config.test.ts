@@ -60,20 +60,7 @@ describe("S01 config contract seed", () => {
   it("defines the canonical config domains and default values from the spec", () => {
     const fixture = readJsonFixture<Record<string, unknown>>("default-config.json");
 
-    expect(CONFIG_TOP_LEVEL_KEYS).toEqual([
-      "runtime",
-      "auth",
-      "models",
-      "concurrency",
-      "budgets",
-      "thresholds",
-      "economics",
-      "janus",
-      "mnemosyne",
-      "labor",
-      "olympus",
-      "evals",
-    ]);
+    expect(CONFIG_TOP_LEVEL_KEYS).toEqual(Object.keys(fixture));
     expect(DEFAULT_AEGIS_CONFIG).toEqual(fixture);
   });
 

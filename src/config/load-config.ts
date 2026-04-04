@@ -4,7 +4,19 @@ import { readFileSync } from "node:fs";
 import { DEFAULT_AEGIS_CONFIG } from "./defaults.js";
 import { AEGIS_DIRECTORY } from "./schema.js";
 import type { AegisConfig } from "./schema.js";
+import { AUTH_KEYS } from "./schema.js";
+import { BUDGET_KEYS } from "./schema.js";
+import { BUDGET_LIMIT_KEYS } from "./schema.js";
+import { CONCURRENCY_KEYS } from "./schema.js";
 import { CONFIG_TOP_LEVEL_KEYS } from "./schema.js";
+import { ECONOMICS_KEYS } from "./schema.js";
+import { EVAL_KEYS } from "./schema.js";
+import { JANUS_KEYS } from "./schema.js";
+import { LABOR_KEYS } from "./schema.js";
+import { MNEMOSYNE_KEYS } from "./schema.js";
+import { MODEL_KEYS } from "./schema.js";
+import { OLYMPUS_KEYS } from "./schema.js";
+import { THRESHOLD_KEYS } from "./schema.js";
 
 export { AEGIS_DIRECTORY } from "./schema.js";
 
@@ -126,7 +138,7 @@ function validatePartialConfig(config: unknown): asserts config is PartialConfig
 
   if ("auth" in config) {
     assertRecord(config.auth, "auth");
-    validateKnownKeys(config.auth, "auth", ["provider", "mode", "plan"]);
+    validateKnownKeys(config.auth, "auth", AUTH_KEYS);
     if ("provider" in config.auth) {
       assertString(config.auth.provider, "auth.provider");
     }
@@ -144,14 +156,7 @@ function validatePartialConfig(config: unknown): asserts config is PartialConfig
 
   if ("models" in config) {
     assertRecord(config.models, "models");
-    validateKnownKeys(config.models, "models", [
-      "oracle",
-      "titan",
-      "sentinel",
-      "janus",
-      "metis",
-      "prometheus",
-    ]);
+    validateKnownKeys(config.models, "models", MODEL_KEYS);
     for (const key of Object.keys(config.models)) {
       assertString(config.models[key], `models.${key}`);
     }
@@ -159,13 +164,7 @@ function validatePartialConfig(config: unknown): asserts config is PartialConfig
 
   if ("concurrency" in config) {
     assertRecord(config.concurrency, "concurrency");
-    validateKnownKeys(config.concurrency, "concurrency", [
-      "max_agents",
-      "max_oracles",
-      "max_titans",
-      "max_sentinels",
-      "max_janus",
-    ]);
+    validateKnownKeys(config.concurrency, "concurrency", CONCURRENCY_KEYS);
     for (const key of Object.keys(config.concurrency)) {
       assertNumberAtLeast(config.concurrency[key], `concurrency.${key}`, 1);
     }
@@ -173,18 +172,10 @@ function validatePartialConfig(config: unknown): asserts config is PartialConfig
 
   if ("budgets" in config) {
     assertRecord(config.budgets, "budgets");
-    validateKnownKeys(config.budgets, "budgets", [
-      "oracle",
-      "titan",
-      "sentinel",
-      "janus",
-    ]);
+    validateKnownKeys(config.budgets, "budgets", BUDGET_KEYS);
     for (const key of Object.keys(config.budgets)) {
       assertRecord(config.budgets[key], `budgets.${key}`);
-      validateKnownKeys(config.budgets[key], `budgets.${key}`, [
-        "turns",
-        "tokens",
-      ]);
+      validateKnownKeys(config.budgets[key], `budgets.${key}`, BUDGET_LIMIT_KEYS);
       if ("turns" in config.budgets[key]) {
         assertNumberAtLeast(config.budgets[key].turns, `budgets.${key}.turns`, 1);
       }
@@ -196,14 +187,7 @@ function validatePartialConfig(config: unknown): asserts config is PartialConfig
 
   if ("thresholds" in config) {
     assertRecord(config.thresholds, "thresholds");
-    validateKnownKeys(config.thresholds, "thresholds", [
-      "poll_interval_seconds",
-      "stuck_warning_seconds",
-      "stuck_kill_seconds",
-      "allow_complex_auto_dispatch",
-      "scope_overlap_threshold",
-      "janus_retry_threshold",
-    ]);
+    validateKnownKeys(config.thresholds, "thresholds", THRESHOLD_KEYS);
 
     for (const key of [
       "poll_interval_seconds",
@@ -227,17 +211,7 @@ function validatePartialConfig(config: unknown): asserts config is PartialConfig
 
   if ("economics" in config) {
     assertRecord(config.economics, "economics");
-    validateKnownKeys(config.economics, "economics", [
-      "metering_fallback",
-      "per_issue_cost_warning_usd",
-      "daily_cost_warning_usd",
-      "daily_hard_stop_usd",
-      "quota_warning_floor_pct",
-      "quota_hard_stop_floor_pct",
-      "credit_warning_floor",
-      "credit_hard_stop_floor",
-      "allow_exact_cost_estimation",
-    ]);
+    validateKnownKeys(config.economics, "economics", ECONOMICS_KEYS);
     if ("metering_fallback" in config.economics) {
       assertEnumValue(config.economics.metering_fallback, "economics.metering_fallback", [
         "stats_only",
@@ -281,10 +255,7 @@ function validatePartialConfig(config: unknown): asserts config is PartialConfig
 
   if ("janus" in config) {
     assertRecord(config.janus, "janus");
-    validateKnownKeys(config.janus, "janus", [
-      "enabled",
-      "max_invocations_per_issue",
-    ]);
+    validateKnownKeys(config.janus, "janus", JANUS_KEYS);
     if ("enabled" in config.janus) {
       assertBoolean(config.janus.enabled, "janus.enabled");
     }
@@ -299,10 +270,7 @@ function validatePartialConfig(config: unknown): asserts config is PartialConfig
 
   if ("mnemosyne" in config) {
     assertRecord(config.mnemosyne, "mnemosyne");
-    validateKnownKeys(config.mnemosyne, "mnemosyne", [
-      "max_records",
-      "prompt_token_budget",
-    ]);
+    validateKnownKeys(config.mnemosyne, "mnemosyne", MNEMOSYNE_KEYS);
     if ("max_records" in config.mnemosyne) {
       assertNumberAtLeast(config.mnemosyne.max_records, "mnemosyne.max_records", 1);
     }
@@ -317,7 +285,7 @@ function validatePartialConfig(config: unknown): asserts config is PartialConfig
 
   if ("labor" in config) {
     assertRecord(config.labor, "labor");
-    validateKnownKeys(config.labor, "labor", ["base_path"]);
+    validateKnownKeys(config.labor, "labor", LABOR_KEYS);
     if ("base_path" in config.labor) {
       assertString(config.labor.base_path, "labor.base_path");
     }
@@ -325,7 +293,7 @@ function validatePartialConfig(config: unknown): asserts config is PartialConfig
 
   if ("olympus" in config) {
     assertRecord(config.olympus, "olympus");
-    validateKnownKeys(config.olympus, "olympus", ["port", "open_browser"]);
+    validateKnownKeys(config.olympus, "olympus", OLYMPUS_KEYS);
     if ("port" in config.olympus) {
       assertNumberInRange(config.olympus.port, "olympus.port", 1, 65535);
     }
@@ -336,13 +304,7 @@ function validatePartialConfig(config: unknown): asserts config is PartialConfig
 
   if ("evals" in config) {
     assertRecord(config.evals, "evals");
-    validateKnownKeys(config.evals, "evals", [
-      "enabled",
-      "results_path",
-      "benchmark_suite",
-      "minimum_pass_rate",
-      "max_human_interventions_per_10_issues",
-    ]);
+    validateKnownKeys(config.evals, "evals", EVAL_KEYS);
     if ("enabled" in config.evals) {
       assertBoolean(config.evals.enabled, "evals.enabled");
     }

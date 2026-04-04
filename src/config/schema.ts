@@ -15,6 +15,55 @@ export const CONFIG_TOP_LEVEL_KEYS = [
   "evals",
 ] as const;
 
+export const AUTH_KEYS = ["provider", "mode", "plan"] as const;
+export const MODEL_KEYS = [
+  "oracle",
+  "titan",
+  "sentinel",
+  "janus",
+  "metis",
+  "prometheus",
+] as const;
+export const CONCURRENCY_KEYS = [
+  "max_agents",
+  "max_oracles",
+  "max_titans",
+  "max_sentinels",
+  "max_janus",
+] as const;
+export const BUDGET_KEYS = ["oracle", "titan", "sentinel", "janus"] as const;
+export const BUDGET_LIMIT_KEYS = ["turns", "tokens"] as const;
+export const THRESHOLD_KEYS = [
+  "poll_interval_seconds",
+  "stuck_warning_seconds",
+  "stuck_kill_seconds",
+  "allow_complex_auto_dispatch",
+  "scope_overlap_threshold",
+  "janus_retry_threshold",
+] as const;
+export const ECONOMICS_KEYS = [
+  "metering_fallback",
+  "per_issue_cost_warning_usd",
+  "daily_cost_warning_usd",
+  "daily_hard_stop_usd",
+  "quota_warning_floor_pct",
+  "quota_hard_stop_floor_pct",
+  "credit_warning_floor",
+  "credit_hard_stop_floor",
+  "allow_exact_cost_estimation",
+] as const;
+export const JANUS_KEYS = ["enabled", "max_invocations_per_issue"] as const;
+export const MNEMOSYNE_KEYS = ["max_records", "prompt_token_budget"] as const;
+export const LABOR_KEYS = ["base_path"] as const;
+export const OLYMPUS_KEYS = ["port", "open_browser"] as const;
+export const EVAL_KEYS = [
+  "enabled",
+  "results_path",
+  "benchmark_suite",
+  "minimum_pass_rate",
+  "max_human_interventions_per_10_issues",
+] as const;
+
 export const RUNTIME_STATE_FILES = [
   ".aegis/dispatch-state.json",
   ".aegis/merge-queue.json",
