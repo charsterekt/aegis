@@ -2,6 +2,7 @@ import type {
   OrchestrationMode,
   ServerLifecycleState,
 } from "../server/routes.js";
+import { isProcessRunning, readRuntimeState } from "./runtime-state.js";
 
 export const STATUS_COMMAND_NAME = "status";
 
@@ -18,6 +19,23 @@ export interface StatusCommandContract {
   snapshot_fields: readonly (keyof StatusSnapshot)[];
 }
 
+const DEFAULT_SNAPSHOT: StatusSnapshot = {
+  server_state: "stopped",
+  mode: "conversational",
+  active_agents: 0,
+  queue_depth: 0,
+  uptime_ms: 0,
+};
+
+function calculateUptimeMs(startedAt: string) {
+  const startedEpoch = Date.parse(startedAt);
+  if (Number.isNaN(startedEpoch)) {
+    return 0;
+  }
+
+  return Math.max(0, Date.now() - startedEpoch);
+}
+
 export function createStatusCommandContract(): StatusCommandContract {
   return {
     command: STATUS_COMMAND_NAME,
@@ -29,4 +47,34 @@ export function createStatusCommandContract(): StatusCommandContract {
       "uptime_ms",
     ],
   };
+}
+
+export function getAegisStatus(root = process.cwd()): StatusSnapshot {
+  const recoveredRuntime = readRuntimeState(root);
+
+  if (!recoveredRuntime) {
+    return DEFAULT_SNAPSHOT;
+  }
+
+  if (
+    recoveredRuntime.server_state !== "stopped"
+    && isProcessRunning(recoveredRuntime.pid)
+  ) {
+    return {
+      server_state: "running",
+      mode: recoveredRuntime.mode,
+      active_agents: 0,
+      queue_depth: 0,
+      uptime_ms: calculateUptimeMs(recoveredRuntime.started_at),
+    };
+  }
+
+  return {
+    ...DEFAULT_SNAPSHOT,
+    mode: recoveredRuntime.mode,
+  };
+}
+
+export function formatStatusSnapshot(snapshot: StatusSnapshot) {
+  return JSON.stringify(snapshot);
 }
