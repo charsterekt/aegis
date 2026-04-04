@@ -79,8 +79,10 @@ export function runCli(
   }
 
   if (command === "status") {
-    console.log(formatStatusSnapshot(getAegisStatus(root)));
-    return Promise.resolve(manifest);
+    return getAegisStatus(root).then((snapshot) => {
+      console.log(formatStatusSnapshot(snapshot));
+      return manifest;
+    });
   }
 
   if (command === "stop") {

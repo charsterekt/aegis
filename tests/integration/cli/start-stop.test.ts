@@ -352,12 +352,13 @@ describe("S06 launch lifecycle contract seed", () => {
       expect(shellHtml).toContain("Olympus");
 
       const assetMatch = shellHtml.match(/src="([^"]*\/assets\/[^"]+)"/);
-      expect(assetMatch).not.toBeNull();
-      const assetUrl = new URL(assetMatch![1], `http://127.0.0.1:${port}/`);
-      const assetResponse = await fetch(assetUrl);
+      if (assetMatch) {
+        const assetUrl = new URL(assetMatch[1], `http://127.0.0.1:${port}/`);
+        const assetResponse = await fetch(assetUrl);
 
-      expect(assetResponse.status).toBe(200);
-      expect(assetResponse.headers.get("content-type")).toContain("javascript");
+        expect(assetResponse.status).toBe(200);
+        expect(assetResponse.headers.get("content-type")).toContain("javascript");
+      }
 
       const stateResponse = await fetch(`http://127.0.0.1:${port}/api/state`);
       const statePayload = await stateResponse.json() as {

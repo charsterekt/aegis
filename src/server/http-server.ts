@@ -37,6 +37,7 @@ export interface HttpServerStartOptions {
   root?: string;
   host?: string;
   port: number;
+  serverToken?: string;
 }
 
 export interface HttpServerController {
@@ -91,6 +92,7 @@ function resolveOlympusShell() {
     return readFileSync(shellPath, "utf8");
   }
 
+  console.warn("[aegis] olympus/dist/ not found — serving fallback shell. Run 'npm run build:olympus' for full UI.");
   return OLYMPUS_FALLBACK_SHELL;
 }
 
@@ -195,7 +197,9 @@ export function createHttpServerController(
   let lifecycleState: ServerLifecycleState = HTTP_SERVER_INITIAL_STATE;
   let activeServer: ReturnType<typeof createServer> | null = null;
   let startedAt: number | null = null;
+  let serverToken: string | undefined;
   let nextEventSequence = 1;
+  const activeSseConnections = new Set<ServerResponse>();
   const replayBus = createInMemoryLiveEventBus();
   const sseTransport = createSsePublishReplayTransport(replayBus, {
     retry: SSE_RETRY_MS,
@@ -230,6 +234,7 @@ export function createHttpServerController(
         server_state: lifecycleState,
         mode: DEFAULT_ORCHESTRATION_MODE,
         uptime_ms: startedAt === null ? 0 : Math.max(0, Date.now() - startedAt),
+        ...(serverToken ? { server_token: serverToken } : {}),
       },
       agents: {
         active: 0,
@@ -328,8 +333,13 @@ export function createHttpServerController(
         response.write(frame);
       });
 
-      response.on("close", unsubscribe);
-      request.on("close", unsubscribe);
+      activeSseConnections.add(response);
+      const cleanup = () => {
+        activeSseConnections.delete(response);
+        unsubscribe();
+      };
+      response.on("close", cleanup);
+      request.on("close", cleanup);
       return;
     }
 
@@ -353,6 +363,7 @@ export function createHttpServerController(
       }
 
       lifecycleState = "starting";
+      serverToken = options.serverToken;
       const host = options.host ?? "127.0.0.1";
       const server = createServer((request, response) => {
         void handleRequest(request, response).catch((error: Error) => {
@@ -404,20 +415,32 @@ export function createHttpServerController(
       lifecycleState = "stopping";
       publishOrchestratorStateEvent();
 
+      for (const sseResponse of activeSseConnections) {
+        sseResponse.end();
+      }
+      activeSseConnections.clear();
+
       const serverToClose = activeServer;
-      await new Promise<void>((resolve, reject) => {
-        serverToClose.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
-        });
-      });
+      const CLOSE_TIMEOUT_MS = 5_000;
+      await Promise.race([
+        new Promise<void>((resolve, reject) => {
+          serverToClose.close((error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          });
+        }),
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, CLOSE_TIMEOUT_MS);
+        }),
+      ]);
 
       activeServer = null;
       lifecycleState = "stopped";
       startedAt = null;
+      serverToken = undefined;
       publishOrchestratorStateEvent();
     },
     status() {

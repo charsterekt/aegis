@@ -1,5 +1,6 @@
 import {
   clearStopRequest,
+  isAegisOwned,
   isProcessRunning,
   readRuntimeState,
   writeStopRequest,
@@ -74,7 +75,7 @@ export async function stopAegis(
     };
   }
 
-  if (!isProcessRunning(recoveredRuntime.pid)) {
+  if (!(await isAegisOwned(recoveredRuntime))) {
     clearStopRequest(root);
     writeRuntimeState(
       {

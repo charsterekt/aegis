@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { loadConfig } from "../config/load-config.js";
@@ -7,7 +8,7 @@ import type { OrchestrationMode } from "../server/routes.js";
 import { STOP_COMMAND_REASONS } from "./stop.js";
 import {
   clearStopRequest,
-  isProcessRunning,
+  isAegisOwned,
   readStopRequest,
   readRuntimeState,
   writeRuntimeState,
@@ -18,10 +19,7 @@ export const START_COMMAND_NAME = "start";
 
 export const START_OVERRIDE_FLAGS = [
   "--port",
-  "--concurrency",
-  "--model",
   "--no-browser",
-  "--verbose",
 ] as const;
 
 export const CANONICAL_LAUNCH_SEQUENCE = [
@@ -62,10 +60,7 @@ export type ShutdownSequenceStep = (typeof CANONICAL_SHUTDOWN_SEQUENCE)[number];
 
 export interface StartCommandOverrides {
   port?: number;
-  concurrency?: number;
-  model?: string;
   noBrowser?: boolean;
-  verbose?: boolean;
 }
 
 export interface StartCommandContract {
@@ -123,14 +118,6 @@ function parseNumberFlag(flagName: string, value: string | undefined) {
   return parsed;
 }
 
-function parseStringFlag(flagName: string, value: string | undefined) {
-  if (!value) {
-    throw new Error(`Missing value for ${flagName}`);
-  }
-
-  return value;
-}
-
 export function parseStartOverrides(argv: readonly string[]): StartCommandOverrides {
   const overrides: StartCommandOverrides = {};
 
@@ -142,19 +129,8 @@ export function parseStartOverrides(argv: readonly string[]): StartCommandOverri
         overrides.port = parseNumberFlag("--port", argv[index + 1]);
         index += 1;
         break;
-      case "--concurrency":
-        overrides.concurrency = parseNumberFlag("--concurrency", argv[index + 1]);
-        index += 1;
-        break;
-      case "--model":
-        overrides.model = parseStringFlag("--model", argv[index + 1]);
-        index += 1;
-        break;
       case "--no-browser":
         overrides.noBrowser = true;
-        break;
-      case "--verbose":
-        overrides.verbose = true;
         break;
       default:
         throw new Error(`Unknown start override flag: ${token}`);
@@ -188,10 +164,12 @@ function toRunningRuntimeState(
   host: string,
   port: number,
   browserOpened: boolean,
+  token: string,
 ): RuntimeStateRecord {
   return {
     schema_version: 1,
     pid,
+    server_token: token,
     host,
     port,
     server_state: "running",
@@ -290,19 +268,21 @@ export async function startAegis(
   if (
     recoveredState
     && recoveredState.server_state !== "stopped"
-    && isProcessRunning(recoveredState.pid)
+    && await isAegisOwned(recoveredState)
   ) {
     throw new Error(
       `Aegis is already running on pid ${recoveredState.pid} (port ${recoveredState.port}).`,
     );
   }
 
+  const token = randomUUID();
   const controller = createHttpServerController();
   const requestedPort = overrides.port ?? config.olympus.port;
   const server = await controller.start({
     root: repoRoot,
     host: DEFAULT_HOST,
     port: requestedPort,
+    serverToken: token,
   });
   const shouldOpenBrowser = !overrides.noBrowser && config.olympus.open_browser;
   const openedBrowser = shouldOpenBrowser ? openBrowser(server.url) : false;
@@ -311,6 +291,7 @@ export async function startAegis(
     server.host,
     server.port,
     openedBrowser,
+    token,
   );
   let hasStopped = false;
   let stopRequestPoller: NodeJS.Timeout | null = null;

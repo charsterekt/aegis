@@ -4,10 +4,7 @@
   "stopCommand": "stop",
   "startOverrides": [
     "--port",
-    "--concurrency",
-    "--model",
-    "--no-browser",
-    "--verbose"
+    "--no-browser"
   ],
   "launchSequenceSteps": [
     "load_config",

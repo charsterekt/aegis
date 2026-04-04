@@ -18,6 +18,7 @@ export const STOP_REQUEST_FILE = ".aegis/runtime-stop-request.json";
 export interface RuntimeStateRecord {
   schema_version: 1;
   pid: number;
+  server_token?: string;
   host: string;
   port: number;
   server_state: ServerLifecycleState;
@@ -123,6 +124,38 @@ export function clearStopRequest(root = process.cwd()) {
 
   if (existsSync(stopRequestPath)) {
     unlinkSync(stopRequestPath);
+  }
+}
+
+export async function isAegisOwned(
+  record: RuntimeStateRecord,
+  timeoutMs = 2_000,
+): Promise<boolean> {
+  if (!isProcessRunning(record.pid)) {
+    return false;
+  }
+
+  if (!record.server_token) {
+    return false;
+  }
+
+  try {
+    const response = await fetch(
+      `http://${record.host}:${record.port}/api/state`,
+      { signal: AbortSignal.timeout(timeoutMs) },
+    );
+
+    if (!response.ok) {
+      return false;
+    }
+
+    const body = (await response.json()) as {
+      orchestrator?: { server_token?: string };
+    };
+
+    return body.orchestrator?.server_token === record.server_token;
+  } catch {
+    return false;
   }
 }
 
