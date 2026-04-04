@@ -2,7 +2,7 @@ import type {
   OrchestrationMode,
   ServerLifecycleState,
 } from "../server/routes.js";
-import { isAegisOwned, readRuntimeState } from "./runtime-state.js";
+import { isAegisOwned, isProcessRunning, readRuntimeState } from "./runtime-state.js";
 
 export const STATUS_COMMAND_NAME = "status";
 
@@ -56,10 +56,11 @@ export async function getAegisStatus(root = process.cwd()): Promise<StatusSnapsh
     return DEFAULT_SNAPSHOT;
   }
 
-  if (
-    recoveredRuntime.server_state !== "stopped"
-    && await isAegisOwned(recoveredRuntime)
-  ) {
+  const isRunning = recoveredRuntime.server_token
+    ? await isAegisOwned(recoveredRuntime)
+    : isProcessRunning(recoveredRuntime.pid);
+
+  if (recoveredRuntime.server_state !== "stopped" && isRunning) {
     return {
       server_state: "running",
       mode: recoveredRuntime.mode,

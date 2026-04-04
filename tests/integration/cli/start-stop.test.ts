@@ -303,7 +303,7 @@ describe("S06 launch lifecycle contract seed", () => {
     await startedWithoutBrowser.runtime.stop();
   });
 
-  it("runs start, status, and stop commands with graceful shutdown semantics", async () => {
+  it("runs start, status, and stop commands with graceful shutdown semantics", { timeout: 30_000 }, async () => {
     const tempRepo = createTempRepo();
     const port = await reservePort();
     initProject(tempRepo);

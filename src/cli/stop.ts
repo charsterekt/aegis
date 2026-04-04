@@ -75,7 +75,11 @@ export async function stopAegis(
     };
   }
 
-  if (!(await isAegisOwned(recoveredRuntime))) {
+  const owned = recoveredRuntime.server_token
+    ? await isAegisOwned(recoveredRuntime)
+    : isProcessRunning(recoveredRuntime.pid);
+
+  if (!owned) {
     clearStopRequest(root);
     writeRuntimeState(
       {
@@ -103,15 +107,23 @@ export async function stopAegis(
   let stoppedGracefully = await waitForExit(recoveredRuntime.pid, gracefulTimeoutMs);
 
   if (!stoppedGracefully && isProcessRunning(recoveredRuntime.pid)) {
-    process.kill(recoveredRuntime.pid, "SIGTERM");
-    stoppedGracefully = await waitForExit(recoveredRuntime.pid, 5_000);
+    if (recoveredRuntime.server_token && !(await isAegisOwned(recoveredRuntime))) {
+      stoppedGracefully = true;
+    } else {
+      process.kill(recoveredRuntime.pid, "SIGTERM");
+      stoppedGracefully = await waitForExit(recoveredRuntime.pid, 5_000);
+    }
   }
   let forced = false;
 
   if (!stoppedGracefully && isProcessRunning(recoveredRuntime.pid)) {
-    forced = true;
-    process.kill(recoveredRuntime.pid, "SIGKILL");
-    await waitForExit(recoveredRuntime.pid, 2_000);
+    if (recoveredRuntime.server_token && !(await isAegisOwned(recoveredRuntime))) {
+      stoppedGracefully = true;
+    } else {
+      forced = true;
+      process.kill(recoveredRuntime.pid, "SIGKILL");
+      await waitForExit(recoveredRuntime.pid, 2_000);
+    }
   }
 
   clearStopRequest(root);

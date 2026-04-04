@@ -334,7 +334,10 @@ export function createHttpServerController(
       });
 
       activeSseConnections.add(response);
+      let cleaned = false;
       const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
         activeSseConnections.delete(response);
         unsubscribe();
       };
@@ -422,7 +425,8 @@ export function createHttpServerController(
 
       const serverToClose = activeServer;
       const CLOSE_TIMEOUT_MS = 5_000;
-      await Promise.race([
+      const TIMED_OUT = Symbol("timed-out");
+      const result = await Promise.race([
         new Promise<void>((resolve, reject) => {
           serverToClose.close((error) => {
             if (error) {
@@ -432,10 +436,14 @@ export function createHttpServerController(
             resolve();
           });
         }),
-        new Promise<void>((resolve) => {
-          setTimeout(resolve, CLOSE_TIMEOUT_MS);
+        new Promise<typeof TIMED_OUT>((resolve) => {
+          setTimeout(() => resolve(TIMED_OUT), CLOSE_TIMEOUT_MS);
         }),
       ]);
+
+      if (result === TIMED_OUT) {
+        serverToClose.closeAllConnections();
+      }
 
       activeServer = null;
       lifecycleState = "stopped";

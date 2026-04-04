@@ -69,6 +69,7 @@ describe("SSE connection drain during shutdown", () => {
     ]);
 
     expect(result).toBe("stopped");
+    expect(controller.status()).toBe("stopped");
 
     for (const ac of abortControllers) {
       ac.abort();

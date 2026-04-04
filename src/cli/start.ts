@@ -9,6 +9,7 @@ import { STOP_COMMAND_REASONS } from "./stop.js";
 import {
   clearStopRequest,
   isAegisOwned,
+  isProcessRunning,
   readStopRequest,
   readRuntimeState,
   writeRuntimeState,
@@ -265,11 +266,13 @@ export async function startAegis(
   verifyGitRepo();
 
   const recoveredState = readRuntimeState(repoRoot);
-  if (
-    recoveredState
+  const isAlreadyRunning = recoveredState
     && recoveredState.server_state !== "stopped"
-    && await isAegisOwned(recoveredState)
-  ) {
+    && (recoveredState.server_token
+      ? await isAegisOwned(recoveredState)
+      : isProcessRunning(recoveredState.pid));
+
+  if (isAlreadyRunning) {
     throw new Error(
       `Aegis is already running on pid ${recoveredState.pid} (port ${recoveredState.port}).`,
     );
