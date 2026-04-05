@@ -20,6 +20,7 @@ import type {
   AegisIssue,
   AegisIssue as CreatedIssue,
   CreateIssueInput,
+  ReadyIssue,
 } from "../tracker/issue-model.js";
 import { createDerivedIssueInputs } from "../tracker/create-derived-issues.js";
 import type { OperatingMode } from "./operating-mode.js";
@@ -31,7 +32,9 @@ export type OracleComplexityDisposition =
 
 export interface OracleIssueCreator {
   getIssue(id: string): Promise<AegisIssue>;
+  getReadyQueue(): Promise<ReadyIssue[]>;
   createIssue(input: CreateIssueInput): Promise<CreatedIssue>;
+  linkIssue(parentId: string, childId: string): Promise<void>;
   addBlocker(blockedId: string, blockerId: string): Promise<void>;
   removeBlocker(blockedId: string, blockerId: string): Promise<void>;
   closeIssue(id: string, reason?: string): Promise<CreatedIssue>;
@@ -232,16 +235,55 @@ function groupReusableDerivedIssues(
   return grouped;
 }
 
+async function loadExistingIssues(
+  issueIds: readonly string[],
+  tracker: OracleIssueCreator,
+): Promise<CreatedIssue[]> {
+  const results = await Promise.allSettled(
+    issueIds.map((issueId) => tracker.getIssue(issueId)),
+  );
+  return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+}
+
+async function loadRecoverableOrphanedIssues(
+  issueId: string,
+  tracker: OracleIssueCreator,
+  derivedIssues: readonly CreateIssueInput[],
+): Promise<Map<string, CreatedIssue[]>> {
+  if (derivedIssues.length === 0) {
+    return new Map();
+  }
+
+  const desiredTitles = new Set(derivedIssues.map((derivedIssue) => derivedIssue.title));
+  const readyCandidates = await tracker.getReadyQueue();
+  const matchingReadyIssues = readyCandidates.filter(
+    (readyIssue) =>
+      readyIssue.issueClass === "sub" &&
+      desiredTitles.has(readyIssue.title),
+  );
+  const loadedIssues = await loadExistingIssues(
+    matchingReadyIssues.map((readyIssue) => readyIssue.id),
+    tracker,
+  );
+
+  return groupReusableDerivedIssues(loadedIssues.filter(
+    (loadedIssue) =>
+      loadedIssue.status !== "closed" &&
+      loadedIssue.parentId === null &&
+      loadedIssue.description === `Derived from Oracle assessment for ${issueId}.`,
+  ));
+}
+
 async function loadReusableDerivedIssues(
   issue: AegisIssue,
   tracker: OracleIssueCreator,
+  derivedIssues: readonly CreateIssueInput[],
 ): Promise<{
   blockerIds: Set<string>;
   derivedIssuesByTitle: Map<string, CreatedIssue[]>;
+  orphanedIssuesByTitle: Map<string, CreatedIssue[]>;
 }> {
-  const openChildIssues = (
-    await Promise.all(issue.childIds.map((childId) => tracker.getIssue(childId)))
-  ).filter(
+  const openChildIssues = (await loadExistingIssues(issue.childIds, tracker)).filter(
     (childIssue) =>
       childIssue.status !== "closed" &&
       childIssue.parentId === issue.id &&
@@ -251,6 +293,11 @@ async function loadReusableDerivedIssues(
   return {
     blockerIds: new Set(issue.blockers),
     derivedIssuesByTitle: groupReusableDerivedIssues(openChildIssues),
+    orphanedIssuesByTitle: await loadRecoverableOrphanedIssues(
+      issue.id,
+      tracker,
+      derivedIssues,
+    ),
   };
 }
 
@@ -265,7 +312,8 @@ async function materializeDerivedIssues(
   const {
     blockerIds,
     derivedIssuesByTitle,
-  } = await loadReusableDerivedIssues(issue, tracker);
+    orphanedIssuesByTitle,
+  } = await loadReusableDerivedIssues(issue, tracker, derivedIssues);
   if (derivedIssues.length === 0) {
     return {
       liveIssues: [],
@@ -290,6 +338,19 @@ async function materializeDerivedIssues(
           blockerIds.add(reusableIssue.id);
           reusedIssuesWithAddedBlockers.push(reusableIssue);
         }
+        continue;
+      }
+
+      const orphanedIssues = orphanedIssuesByTitle.get(derivedIssue.title);
+      const orphanedIssue =
+        orphanedIssues && orphanedIssues.length > 0 ? orphanedIssues.shift() ?? null : null;
+
+      if (orphanedIssue) {
+        newlyCreatedIssues.push(orphanedIssue);
+        liveIssues.push(orphanedIssue);
+        await tracker.linkIssue(issue.id, orphanedIssue.id);
+        await tracker.addBlocker(issue.id, orphanedIssue.id);
+        blockerIds.add(orphanedIssue.id);
         continue;
       }
 
@@ -352,7 +413,7 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
     );
   }
 
-  const prompt = buildOraclePrompt(issueToOraclePromptIssue(input.issue));
+  let prompt = buildOraclePrompt(issueToOraclePromptIssue(input.issue));
   let assessment: OracleAssessment | null = null;
   let derivedIssues: CreateIssueInput[] = [];
   let createdIssues: CreatedIssue[] = [];
@@ -360,6 +421,8 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
   let oracleAssessmentRef: string | null = null;
 
   try {
+    const promptIssue = await input.tracker.getIssue(input.issue.id);
+    prompt = buildOraclePrompt(issueToOraclePromptIssue(promptIssue));
     const raw = await collectOracleResponse(
       input.runtime,
       input.issue.id,
@@ -374,7 +437,7 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
       assessment,
     );
     const trackedIssue = await input.tracker.getIssue(input.issue.id);
-    derivedIssues = createDerivedIssueInputs(input.issue, assessment);
+    derivedIssues = createDerivedIssueInputs(trackedIssue, assessment);
     const materialization = await materializeDerivedIssues(
       trackedIssue,
       input.tracker,

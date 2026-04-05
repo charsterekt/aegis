@@ -152,6 +152,15 @@ function makeTracker(overrides: TrackerOverrides = {}): OracleIssueCreator {
   };
 
   const getIssue = vi.fn(async (id: string) => cloneIssue(getTrackedIssue(id)));
+  const getReadyQueue = vi.fn(async () =>
+    Array.from(issueStore.values())
+      .filter((issue) => issue.status !== "closed" && issue.blockers.length === 0)
+      .map((issue) => ({
+        id: issue.id,
+        title: issue.title,
+        issueClass: issue.issueClass,
+        priority: issue.priority,
+      })));
   const createIssue = vi.fn(async (input) => {
     createdCount += 1;
     const createdIssue = makeIssue({
@@ -170,6 +179,17 @@ function makeTracker(overrides: TrackerOverrides = {}): OracleIssueCreator {
       parentIssue.childIds = [...parentIssue.childIds, createdIssue.id];
     }
     return cloneIssue(createdIssue);
+  });
+  const linkIssue = vi.fn(async (parentId: string, childId: string) => {
+    const parentIssue = getTrackedIssue(parentId);
+    const childIssue = getTrackedIssue(childId);
+    if (!parentIssue.childIds.includes(childId)) {
+      parentIssue.childIds = [...parentIssue.childIds, childId];
+    }
+    issueStore.set(childId, cloneIssue({
+      ...childIssue,
+      parentId,
+    }));
   });
   const addBlocker = vi.fn(async (blockedId: string, blockerId: string) => {
     const blockedIssue = getTrackedIssue(blockedId);
@@ -198,7 +218,9 @@ function makeTracker(overrides: TrackerOverrides = {}): OracleIssueCreator {
 
   return {
     getIssue: methodOverrides.getIssue ?? getIssue,
+    getReadyQueue: methodOverrides.getReadyQueue ?? getReadyQueue,
     createIssue: methodOverrides.createIssue ?? createIssue,
+    linkIssue: methodOverrides.linkIssue ?? linkIssue,
     addBlocker: methodOverrides.addBlocker ?? addBlocker,
     removeBlocker: methodOverrides.removeBlocker ?? removeBlocker,
     closeIssue: methodOverrides.closeIssue ?? closeIssue,
@@ -389,7 +411,7 @@ describe("runOracle", () => {
     tracker.getIssue = vi.fn(async (id: string) => {
       if (id === "aegis-fjm.9.3") {
         parentReadCount += 1;
-        if (parentReadCount > 1) {
+        if (parentReadCount > 2) {
           throw new Error("late readiness refresh failed");
         }
       }
@@ -414,7 +436,7 @@ describe("runOracle", () => {
 
     expect(result.updatedRecord.stage).toBe(DispatchStage.Scouted);
     expect(result.failureReason).toBeNull();
-    expect(parentReadCount).toBe(1);
+    expect(parentReadCount).toBe(2);
   });
 
   it("fails closed when Oracle reports blockers even if it also marks the issue ready", async () => {
@@ -437,6 +459,43 @@ describe("runOracle", () => {
 
     expect(result.updatedRecord.stage).toBe(DispatchStage.Scouted);
     expect(result.readyForImplementation).toBe(false);
+  });
+
+  it("ignores stale child lookup failures when the assessment does not decompose", async () => {
+    const tracker = makeTracker({
+      issues: [
+        makeIssue({
+          childIds: ["stale-child"],
+        }),
+      ],
+    });
+    const baseGetIssue = tracker.getIssue;
+    tracker.getIssue = vi.fn(async (id: string) => {
+      if (id === "stale-child") {
+        throw new Error("stale child lookup failed");
+      }
+      return baseGetIssue(id);
+    });
+
+    const result = await runOracle({
+      issue: makeIssue(),
+      record: makeRecord(),
+      runtime: makeRuntime(JSON.stringify({
+        files_affected: ["src/core/run-oracle.ts"],
+        estimated_complexity: "moderate",
+        decompose: false,
+        ready: true,
+      })),
+      tracker,
+      budget,
+      projectRoot,
+      operatingMode: "conversational",
+      allowComplexAutoDispatch: false,
+    });
+
+    expect(result.updatedRecord.stage).toBe(DispatchStage.Scouted);
+    expect(result.failureReason).toBeNull();
+    expect(result.readyForImplementation).toBe(true);
   });
 
   it("skips auto dispatch for complex work unless the config explicitly allows it", async () => {
@@ -673,6 +732,45 @@ describe("runOracle", () => {
       "aegis-fjm.30.1",
       "aegis-fjm.30.2",
     ]);
+  });
+
+  it("recovers orphaned ready derived issues by linking them back to the parent", async () => {
+    const tracker = makeTracker({
+      issues: [
+        makeIssue({
+          id: "aegis-fjm.30.1",
+          title: "Split prompt",
+          description: "Derived from Oracle assessment for aegis-fjm.9.3.",
+          issueClass: "sub",
+          parentId: null,
+          labels: [],
+        }),
+      ],
+    });
+
+    const result = await runOracle({
+      issue: makeIssue(),
+      record: makeRecord(),
+      runtime: makeRuntime(JSON.stringify({
+        files_affected: ["src/core/run-oracle.ts"],
+        estimated_complexity: "moderate",
+        decompose: true,
+        sub_issues: ["Split prompt"],
+        ready: false,
+      })),
+      tracker,
+      budget,
+      projectRoot,
+      operatingMode: "conversational",
+      allowComplexAutoDispatch: false,
+    });
+
+    expect(tracker.createIssue).not.toHaveBeenCalled();
+    expect(tracker.linkIssue).toHaveBeenCalledWith("aegis-fjm.9.3", "aegis-fjm.30.1");
+    expect(tracker.addBlocker).toHaveBeenCalledWith("aegis-fjm.9.3", "aegis-fjm.30.1");
+    expect(result.updatedRecord.stage).toBe(DispatchStage.Scouted);
+    expect(result.createdIssues.map((issue) => issue.id)).toEqual(["aegis-fjm.30.1"]);
+    expect((await tracker.getIssue("aegis-fjm.30.1")).parentId).toBe("aegis-fjm.9.3");
   });
 
   it("removes blockers added to reused children when a later retry step fails", async () => {
