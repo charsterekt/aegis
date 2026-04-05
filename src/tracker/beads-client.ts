@@ -282,9 +282,11 @@ export class BeadsCliClient implements BeadsClient {
           cleanupError = rollbackError as Error;
         }
         if (cleanupError) {
-          throw new Error(
+          const surfacedError = new Error(
             `Failed to link ${created.id} to origin ${input.originId}: ${(error as Error).message}; rollback failed to close ${created.id}: ${cleanupError.message}`,
-          );
+          ) as Error & { createdIssue?: AegisIssue };
+          surfacedError.createdIssue = created;
+          throw surfacedError;
         }
         throw error;
       }

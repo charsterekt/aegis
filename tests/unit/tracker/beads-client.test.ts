@@ -392,6 +392,9 @@ describe("BeadsCliClient.createIssue", () => {
 
     await expect(promise).rejects.toThrow(/link failed/i);
     await expect(promise).rejects.toThrow(/close failed/i);
+    await expect(promise).rejects.toMatchObject({
+      createdIssue: expect.objectContaining({ id: "aegis-fjm.99" }),
+    });
     expect(exec).toHaveBeenCalledTimes(3);
     expect(exec.mock.calls[2][0]).toEqual([
       "close",

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { BudgetLimit } from "../config/schema.js";
@@ -76,6 +76,10 @@ class DerivedIssueMaterializationError extends Error {
   }
 }
 
+type CreatedIssueCarrier = Error & {
+  createdIssue?: CreatedIssue;
+};
+
 function buildOracleAssessmentRef(issueId: string): string {
   return join(".aegis", "oracle", `${issueId}.json`);
 }
@@ -86,26 +90,23 @@ function persistOracleAssessment(
   assessment: OracleAssessment,
 ): string {
   const assessmentRef = buildOracleAssessmentRef(issueId);
+  const assessmentDirectory = join(projectRoot, ".aegis", "oracle");
   const absolutePath = join(projectRoot, assessmentRef);
-  mkdirSync(join(projectRoot, ".aegis", "oracle"), { recursive: true });
-  writeFileSync(absolutePath, `${JSON.stringify(assessment, null, 2)}\n`, "utf8");
+  const temporaryPath = `${absolutePath}.tmp`;
+  mkdirSync(assessmentDirectory, { recursive: true });
+  writeFileSync(temporaryPath, `${JSON.stringify(assessment, null, 2)}\n`, "utf8");
+  rmSync(absolutePath, { force: true });
+  renameSync(temporaryPath, absolutePath);
   return assessmentRef;
 }
 
-function loadPersistedOracleAssessment(
-  projectRoot: string,
-  issueId: string,
-): { assessment: OracleAssessment; assessmentRef: string } | null {
-  const assessmentRef = buildOracleAssessmentRef(issueId);
-  const absolutePath = join(projectRoot, assessmentRef);
-  if (!existsSync(absolutePath)) {
+function getCreatedIssueFromError(error: unknown): CreatedIssue | null {
+  if (!(error instanceof Error)) {
     return null;
   }
 
-  return {
-    assessment: parseOracleAssessment(readFileSync(absolutePath, "utf8")),
-    assessmentRef,
-  };
+  const createdIssue = (error as CreatedIssueCarrier).createdIssue;
+  return createdIssue ?? null;
 }
 
 function determineComplexityDisposition(
@@ -292,6 +293,14 @@ async function materializeDerivedIssues(
       blockerIds.add(createdIssue.id);
     }
   } catch (error) {
+    const createdIssue = getCreatedIssueFromError(error);
+    if (
+      createdIssue &&
+      !newlyCreatedIssues.some((existingIssue) => existingIssue.id === createdIssue.id)
+    ) {
+      newlyCreatedIssues.push(createdIssue);
+      liveIssues.push(createdIssue);
+    }
     const rollbackOutcome = await rollbackDerivedIssues(issue.id, tracker, newlyCreatedIssues);
     const reusedIssues = liveIssues.filter(
       (liveIssue) => !newlyCreatedIssues.some((createdIssue) => createdIssue.id === liveIssue.id),
@@ -327,28 +336,19 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
   let oracleAssessmentRef: string | null = null;
 
   try {
-    const persistedAssessment = loadPersistedOracleAssessment(
+    const raw = await collectOracleResponse(
+      input.runtime,
+      input.issue.id,
+      input.projectRoot,
+      input.budget,
+      prompt,
+    );
+    assessment = parseOracleAssessment(raw);
+    oracleAssessmentRef = persistOracleAssessment(
       input.projectRoot,
       input.issue.id,
+      assessment,
     );
-    if (persistedAssessment) {
-      assessment = persistedAssessment.assessment;
-      oracleAssessmentRef = persistedAssessment.assessmentRef;
-    } else {
-      const raw = await collectOracleResponse(
-        input.runtime,
-        input.issue.id,
-        input.projectRoot,
-        input.budget,
-        prompt,
-      );
-      assessment = parseOracleAssessment(raw);
-      oracleAssessmentRef = persistOracleAssessment(
-        input.projectRoot,
-        input.issue.id,
-        assessment,
-      );
-    }
     derivedIssues = createDerivedIssueInputs(input.issue, assessment);
     createdIssues = await materializeDerivedIssues(
       input.issue,
@@ -361,10 +361,12 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
       input.allowComplexAutoDispatch,
     );
     const requiresComplexityGate = complexityDisposition !== "allow";
+    const refreshedIssue = await input.tracker.getIssue(input.issue.id);
     const readyForImplementation =
       assessment.ready &&
       !requiresComplexityGate &&
-      createdIssues.length === 0;
+      refreshedIssue.blockers.length === 0 &&
+      (assessment.blockers?.length ?? 0) === 0;
 
     return {
       prompt,
