@@ -36,7 +36,7 @@ describe("buildOraclePrompt", () => {
 
     expect(prompt).toContain("aegis-fjm.9");
     expect(prompt).toContain("[S08] Oracle Scouting Pipeline");
-    expect(prompt).toContain("files_affected");
+    expect(prompt).toContain("tracker commands");
     expect(prompt).toContain("estimated_complexity");
     expect(prompt).toContain("decompose");
     expect(prompt).toContain("ready");
