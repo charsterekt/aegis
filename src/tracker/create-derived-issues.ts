@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Derived-issue scaffolding for Oracle decomposition.
  *
  * Oracle can request decomposition via sub_issues. This helper converts that
@@ -19,8 +19,14 @@ export function createDerivedIssueInputs(
   originIssue: Pick<AegisIssue, "id" | "priority">,
   assessment: OracleAssessment,
 ): CreateIssueInput[] {
-  if (!assessment.decompose || !assessment.sub_issues?.length) {
+  if (!assessment.decompose) {
     return [];
+  }
+
+  if (!assessment.sub_issues?.length) {
+    throw new Error(
+      "Oracle assessment with decompose=true must include at least one sub_issues entry.",
+    );
   }
 
   return assessment.sub_issues.map((title) => ({

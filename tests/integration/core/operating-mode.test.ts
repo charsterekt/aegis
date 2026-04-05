@@ -62,18 +62,25 @@ describe("S07 operating mode contract seed", () => {
 
     const auto = module.enableAutoMode(initial);
     expect(auto).toEqual({ mode: "auto", paused: false });
+    expect(auto).not.toBe(initial);
     expect(initial).toEqual({ mode: "conversational", paused: false });
 
     const paused = module.pauseOperatingMode(auto);
     expect(paused).toEqual({ mode: "auto", paused: true });
+    expect(paused).not.toBe(auto);
+    expect(auto).toEqual({ mode: "auto", paused: false });
     expect(module.isAutoModeActive(paused)).toBe(false);
 
     const resumed = module.resumeOperatingMode(paused);
     expect(resumed).toEqual({ mode: "auto", paused: false });
+    expect(resumed).not.toBe(paused);
+    expect(paused).toEqual({ mode: "auto", paused: true });
     expect(module.isAutoModeActive(resumed)).toBe(true);
 
     const conversational = module.disableAutoMode(resumed);
     expect(conversational).toEqual({ mode: "conversational", paused: false });
+    expect(conversational).not.toBe(resumed);
+    expect(resumed).toEqual({ mode: "auto", paused: false });
   });
 
   it("tracks new-ready-only auto dispatch semantics", async () => {
@@ -134,6 +141,29 @@ describe("S07 operating mode contract seed", () => {
     expect(autoLoopModule.isNewReadyIssue(fixture.freshReadyIssue, enabled)).toBe(
       true,
     );
+    expect(
+      autoLoopModule.isNewReadyIssue(
+        {
+          id: "aegis-fjm.8.same-boundary",
+          readyAt: fixture.autoEnabledAt,
+        },
+        enabled,
+      ),
+    ).toBe(false);
+    expect(() =>
+      autoLoopModule.isNewReadyIssue(
+        {
+          id: "aegis-fjm.8.bad-ready-at",
+          readyAt: "not-a-timestamp",
+        },
+        enabled,
+      ),
+    ).toThrow(/issue.readyAt/i);
+    expect(() =>
+      autoLoopModule.isNewReadyIssue(fixture.freshReadyIssue, {
+        enabledAt: "not-a-timestamp",
+      }),
+    ).toThrow(/state.enabledAt/i);
 
     expect(autoLoopModule.disableAutoLoop()).toEqual({ enabledAt: null });
   });

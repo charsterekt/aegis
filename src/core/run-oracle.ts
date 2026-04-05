@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Oracle execution contract.
  *
  * This module composes the Oracle prompt, parses the assessment, and derives
@@ -30,7 +30,7 @@ export interface RunOracleOutcome {
   prompt: string;
   assessment: OracleAssessment;
   derivedIssues: CreateIssueInput[];
-  requiresHumanApproval: boolean;
+  requiresComplexityGate: boolean;
 }
 
 /**
@@ -39,7 +39,8 @@ export interface RunOracleOutcome {
  * The caller supplies the Oracle transport via `askOracle`. The function
  * builds the canonical prompt, parses the strict assessment, and derives any
  * sub-issue creation inputs. A complex assessment is surfaced through the
- * `requiresHumanApproval` flag so the caller can pause Titan dispatch.
+ * mode-neutral `requiresComplexityGate` flag so later orchestration can apply
+ * conversational or auto-mode policy without re-parsing the assessment.
  */
 export async function runOracle(input: RunOracleInput): Promise<RunOracleOutcome> {
   const prompt = buildOraclePrompt(issueToOraclePromptIssue(input.issue));
@@ -51,6 +52,6 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleOutcome
     prompt,
     assessment,
     derivedIssues,
-    requiresHumanApproval: assessment.estimated_complexity === "complex",
+    requiresComplexityGate: assessment.estimated_complexity === "complex",
   };
 }

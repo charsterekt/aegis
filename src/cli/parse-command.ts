@@ -5,6 +5,8 @@
  * It does not execute anything; it only classifies input for later routing.
  */
 
+import { isSafeIssueId } from "../shared/issue-id.js";
+
 export const DIRECT_COMMAND_NAMES = [
   "scout",
   "implement",
@@ -137,6 +139,10 @@ export function parseCommand(input: string): ParsedCommand {
   if (ISSUE_SCOPED_COMMANDS.has(commandName as DirectCommandName)) {
     if (parts.length !== 2 || parts[1] === "") {
       return unsupported(input, `${commandName} requires an issue id.`);
+    }
+
+    if (!isSafeIssueId(parts[1])) {
+      return unsupported(input, `Invalid issue id: ${parts[1]}.`);
     }
 
     return {

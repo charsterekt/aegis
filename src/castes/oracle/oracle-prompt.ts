@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Oracle prompt contract.
  *
  * The prompt is intentionally declarative: it gives Oracle the issue context

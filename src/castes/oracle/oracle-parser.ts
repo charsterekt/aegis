@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Oracle assessment parsing contract.
  *
  * SPECv2 §10.1.1 defines the machine-parseable OracleAssessment shape. This
@@ -146,9 +146,27 @@ export function parseOracleAssessment(raw: string): OracleAssessment {
     ready: assertBoolean(ready, "ready"),
   };
 
-  if ("sub_issues" in obj) {
+  if (assessment.decompose) {
+    if (!("sub_issues" in obj)) {
+      throw new OracleAssessmentParseError(
+        "invalid_shape",
+        "Oracle assessment with 'decompose=true' must include 'sub_issues'.",
+      );
+    }
+
+    const subIssues = assertStringArray(obj["sub_issues"], "sub_issues");
+    if (subIssues.length === 0) {
+      throw new OracleAssessmentParseError(
+        "invalid_shape",
+        "Oracle assessment with 'decompose=true' must include at least one 'sub_issues' entry.",
+      );
+    }
+
+    assessment.sub_issues = subIssues;
+  } else if ("sub_issues" in obj) {
     assessment.sub_issues = assertStringArray(obj["sub_issues"], "sub_issues");
   }
+
   if ("blockers" in obj) {
     assessment.blockers = assertStringArray(obj["blockers"], "blockers");
   }

@@ -131,4 +131,27 @@ describe("S07 direct command contract seed", () => {
       kind: "unsupported",
     });
   });
+
+  it.each([
+    "scout aegis-fjm.8.123 extra",
+    "status now",
+    "auto maybe",
+    "auto on now",
+    "process ../outside",
+    "review aegis/fjm.9.1",
+    "implement aegis-fjm\\9.1",
+  ])("rejects malformed deterministic command: %s", async (input) => {
+    const module = (await import(
+      pathToFileURL(path.join(repoRoot, "src", "cli", "parse-command.ts")).href
+    )) as {
+      parseCommand: (value: string) => {
+        kind: string;
+        reason?: string;
+      };
+    };
+
+    expect(module.parseCommand(input)).toMatchObject({
+      kind: "unsupported",
+    });
+  });
 });

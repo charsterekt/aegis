@@ -1,4 +1,4 @@
-﻿/**
+/**
  * S08 contract seed â€” Oracle parser contract tests.
  *
  * These tests define the strict machine-parseable shape for OracleAssessment
@@ -56,6 +56,18 @@ describe("parseOracleAssessment", () => {
   });
 
   it.each([
+    ["sub_issues", makeAssessment({ sub_issues: "Split Oracle prompt" })],
+    ["sub_issues", makeAssessment({ sub_issues: ["Split Oracle prompt", 42] })],
+    ["blockers", makeAssessment({ blockers: "src/core/run-oracle.ts" })],
+    ["blockers", makeAssessment({ blockers: ["src/core/run-oracle.ts", 42] })],
+  ])("rejects malformed optional %s arrays", (field, payload) => {
+    const raw = JSON.stringify(payload);
+
+    expect(() => parseOracleAssessment(raw)).toThrow(OracleAssessmentParseError);
+    expect(() => parseOracleAssessment(raw)).toThrow(new RegExp(field, "i"));
+  });
+
+  it.each([
     ["files_affected", { estimated_complexity: "moderate", decompose: false, ready: true }],
     ["estimated_complexity", { files_affected: [], decompose: false, ready: true }],
     ["decompose", { files_affected: [], estimated_complexity: "trivial", ready: true }],
@@ -88,5 +100,24 @@ describe("parseOracleAssessment", () => {
   it("rejects malformed JSON", () => {
     expect(() => parseOracleAssessment("{ not json")).toThrow(OracleAssessmentParseError);
     expect(() => parseOracleAssessment("{ not json")).toThrow(/JSON/i);
+  });
+
+  it.each([
+    makeAssessment({
+      estimated_complexity: "complex",
+      decompose: true,
+      ready: false,
+    }),
+    makeAssessment({
+      estimated_complexity: "complex",
+      decompose: true,
+      sub_issues: [],
+      ready: false,
+    }),
+  ])("rejects decompose=true without usable sub_issues", (payload) => {
+    const raw = JSON.stringify(payload);
+
+    expect(() => parseOracleAssessment(raw)).toThrow(OracleAssessmentParseError);
+    expect(() => parseOracleAssessment(raw)).toThrow(/sub_issues/i);
   });
 });

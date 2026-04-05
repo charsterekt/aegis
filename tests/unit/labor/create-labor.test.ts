@@ -44,6 +44,25 @@ describe("S09 labor contract seed", () => {
     expect(LABOR_BRANCH_PREFIX).toBe("aegis/");
   });
 
+  it.each([
+    "../escape",
+    "aegis/fjm.10.1",
+    "aegis-fjm.10.1^",
+    "aegis-fjm 10.1",
+  ])("rejects unsafe issue ids in labor planning: %s", (issueId) => {
+    const projectRoot = path.resolve("C:/dev/aegis");
+
+    expect(() => resolveLaborPath(projectRoot, issueId)).toThrow(/Invalid issue id/i);
+    expect(() => buildLaborBranchName(issueId)).toThrow(/Invalid issue id/i);
+    expect(() =>
+      planLaborCreation({
+        issueId,
+        projectRoot,
+        baseBranch: "main",
+      }),
+    ).toThrow(/Invalid issue id/i);
+  });
+
   it("preserves the labor and branch after failure or conflict, but removes both after merge success", () => {
     const issueId = "aegis-fjm.10.1";
     const laborPath = path.join("C:/dev/aegis", ".aegis", "labors", "labor-aegis-fjm.10.1");

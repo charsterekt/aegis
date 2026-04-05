@@ -33,6 +33,15 @@ export function disableAutoLoop(): AutoLoopState {
   };
 }
 
+function parseTimestamp(value: string, fieldName: string): number {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    throw new Error(`Invalid timestamp for ${fieldName}: ${value}`);
+  }
+
+  return parsed;
+}
+
 export function isNewReadyIssue(
   issue: ReadyIssueObservation,
   state: AutoLoopState,
@@ -41,5 +50,6 @@ export function isNewReadyIssue(
     return false;
   }
 
-  return Date.parse(issue.readyAt) > Date.parse(state.enabledAt);
+  return parseTimestamp(issue.readyAt, "issue.readyAt") >
+    parseTimestamp(state.enabledAt, "state.enabledAt");
 }

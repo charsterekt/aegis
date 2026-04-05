@@ -1,4 +1,4 @@
-﻿/**
+/**
  * S08 contract seed - Oracle orchestration contract tests.
  *
  * These tests lock the prompt shape, strict parsing flow, complexity pause
@@ -82,10 +82,21 @@ describe("createDerivedIssueInputs", () => {
 
     expect(createDerivedIssueInputs(makeIssue(), assessment)).toEqual([]);
   });
+
+  it("fails closed when decompose=true arrives without usable sub_issues", () => {
+    expect(() =>
+      createDerivedIssueInputs(makeIssue(), {
+        files_affected: ["src/core/run-oracle.ts"],
+        estimated_complexity: "complex",
+        decompose: true,
+        ready: false,
+      }),
+    ).toThrow(/sub_issues/i);
+  });
 });
 
 describe("runOracle", () => {
-  it("parses the Oracle reply, surfaces the prompt, and marks complex assessments for approval", async () => {
+  it("parses the Oracle reply, surfaces the prompt, and marks complex assessments for the complexity gate", async () => {
     const issue = makeIssue();
     const assessment = {
       files_affected: ["src/core/run-oracle.ts", "src/tracker/create-derived-issues.ts"],
@@ -106,7 +117,7 @@ describe("runOracle", () => {
     expect(askOracle).toHaveBeenCalledTimes(1);
     expect(result.prompt).toContain(issue.title);
     expect(result.assessment).toEqual(assessment);
-    expect(result.requiresHumanApproval).toBe(true);
+    expect(result.requiresComplexityGate).toBe(true);
     expect(result.derivedIssues).toHaveLength(2);
     expect(result.derivedIssues[0]).toEqual(
       expect.objectContaining({
@@ -131,7 +142,7 @@ describe("runOracle", () => {
     });
 
     expect(result.assessment).toEqual(assessment);
-    expect(result.requiresHumanApproval).toBe(false);
+    expect(result.requiresComplexityGate).toBe(false);
     expect(result.derivedIssues).toEqual([]);
   });
 
@@ -142,6 +153,21 @@ describe("runOracle", () => {
         askOracle: async () => "{ nope }",
       }),
     ).rejects.toThrow(/JSON/i);
+  });
+
+  it("rejects malformed decomposition output instead of failing open", async () => {
+    await expect(
+      runOracle({
+        issue: makeIssue(),
+        askOracle: async () =>
+          JSON.stringify({
+            files_affected: ["src/core/run-oracle.ts"],
+            estimated_complexity: "complex",
+            decompose: true,
+            ready: false,
+          }),
+      }),
+    ).rejects.toThrow(/sub_issues/i);
   });
 });
 
