@@ -1,3 +1,6 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
 import type { BudgetLimit } from "../config/schema.js";
 import type { DispatchRecord } from "./dispatch-state.js";
 import { DispatchStage, transitionStage } from "./stage-transition.js";
@@ -53,6 +56,32 @@ export interface RunOracleResult {
   requiresComplexityGate: boolean;
   readyForImplementation: boolean;
   failureReason: string | null;
+}
+
+class DerivedIssueMaterializationError extends Error {
+  readonly createdIssues: CreatedIssue[];
+
+  constructor(message: string, createdIssues: CreatedIssue[]) {
+    super(message);
+    this.name = "DerivedIssueMaterializationError";
+    this.createdIssues = createdIssues;
+  }
+}
+
+function buildOracleAssessmentRef(issueId: string): string {
+  return join(".aegis", "oracle", `${issueId}.json`);
+}
+
+function persistOracleAssessment(
+  projectRoot: string,
+  issueId: string,
+  assessment: OracleAssessment,
+): string {
+  const assessmentRef = buildOracleAssessmentRef(issueId);
+  const absolutePath = join(projectRoot, assessmentRef);
+  mkdirSync(join(projectRoot, ".aegis", "oracle"), { recursive: true });
+  writeFileSync(absolutePath, `${JSON.stringify(assessment, null, 2)}\n`, "utf8");
+  return assessmentRef;
 }
 
 function determineComplexityDisposition(
@@ -143,25 +172,63 @@ async function collectOracleResponse(
   return findLastOraclePayloadMessage(messages);
 }
 
+async function rollbackDerivedIssues(
+  issueId: string,
+  tracker: OracleIssueCreator,
+  createdIssues: readonly CreatedIssue[],
+): Promise<CreatedIssue[]> {
+  const cleanupErrors: string[] = [];
+  const rolledBackIssues: CreatedIssue[] = [];
+
+  for (const createdIssue of createdIssues) {
+    try {
+      const closedIssue = await tracker.closeIssue(
+        createdIssue.id,
+        `Failed to materialize derived issues for ${issueId}`,
+      );
+      rolledBackIssues.push(closedIssue);
+    } catch (error) {
+      cleanupErrors.push((error as Error).message);
+      rolledBackIssues.push(createdIssue);
+    }
+  }
+
+  if (cleanupErrors.length > 0) {
+    throw new Error(
+      `Failed to materialize derived issues for ${issueId}; cleanup errors: ${cleanupErrors.join("; ")}`,
+    );
+  }
+
+  return rolledBackIssues;
+}
+
 async function materializeDerivedIssues(
   issue: AegisIssue,
   tracker: OracleIssueCreator,
   derivedIssues: readonly CreateIssueInput[],
-): Promise<CreatedIssue[]> {
+) : Promise<CreatedIssue[]> {
   const createdIssues: CreatedIssue[] = [];
 
-  for (const derivedIssue of derivedIssues) {
-    const createdIssue = await tracker.createIssue(derivedIssue);
-    try {
+  try {
+    for (const derivedIssue of derivedIssues) {
+      const createdIssue = await tracker.createIssue(derivedIssue);
+      createdIssues.push(createdIssue);
       await tracker.addBlocker(issue.id, createdIssue.id);
-    } catch (error) {
-      await tracker.closeIssue(
-        createdIssue.id,
-        `Failed to block ${issue.id} on derived issue ${createdIssue.id}`,
-      );
-      throw error;
     }
-    createdIssues.push(createdIssue);
+  } catch (error) {
+    let rolledBackIssues = createdIssues;
+    try {
+      rolledBackIssues = await rollbackDerivedIssues(issue.id, tracker, createdIssues);
+    } catch (cleanupError) {
+      throw new DerivedIssueMaterializationError(
+        `${(error as Error).message}; ${(cleanupError as Error).message}`,
+        rolledBackIssues,
+      );
+    }
+    throw new DerivedIssueMaterializationError(
+      (error as Error).message,
+      rolledBackIssues,
+    );
   }
 
   return createdIssues;
@@ -175,6 +242,10 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
   }
 
   const prompt = buildOraclePrompt(issueToOraclePromptIssue(input.issue));
+  let assessment: OracleAssessment | null = null;
+  let derivedIssues: CreateIssueInput[] = [];
+  let createdIssues: CreatedIssue[] = [];
+  let oracleAssessmentRef: string | null = null;
 
   try {
     const raw = await collectOracleResponse(
@@ -184,9 +255,14 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
       input.budget,
       prompt,
     );
-    const assessment = parseOracleAssessment(raw);
-    const derivedIssues = createDerivedIssueInputs(input.issue, assessment);
-    const createdIssues = await materializeDerivedIssues(
+    assessment = parseOracleAssessment(raw);
+    oracleAssessmentRef = persistOracleAssessment(
+      input.projectRoot,
+      input.issue.id,
+      assessment,
+    );
+    derivedIssues = createDerivedIssueInputs(input.issue, assessment);
+    createdIssues = await materializeDerivedIssues(
       input.issue,
       input.tracker,
       derivedIssues,
@@ -210,7 +286,7 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
       updatedRecord: {
         ...transitionStage(input.record, DispatchStage.Scouted),
         runningAgent: null,
-        oracleAssessmentRef: `oracle/${input.issue.id}.json`,
+        oracleAssessmentRef,
       },
       complexityDisposition,
       requiresComplexityGate,
@@ -218,14 +294,19 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
       failureReason: null,
     };
   } catch (error) {
+    if (error instanceof DerivedIssueMaterializationError) {
+      createdIssues = error.createdIssues;
+    }
+
     return {
       prompt,
-      assessment: null,
-      derivedIssues: [],
-      createdIssues: [],
+      assessment,
+      derivedIssues,
+      createdIssues,
       updatedRecord: {
         ...transitionStage(input.record, DispatchStage.Failed),
         runningAgent: null,
+        oracleAssessmentRef,
       },
       complexityDisposition: "allow",
       requiresComplexityGate: false,

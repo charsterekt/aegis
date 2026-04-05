@@ -1,6 +1,8 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { BudgetLimit } from "../../../src/config/schema.js";
 import { buildOraclePrompt } from "../../../src/castes/oracle/oracle-prompt.js";
@@ -202,8 +204,17 @@ describe("createDerivedIssueInputs", () => {
 });
 
 describe("runOracle", () => {
-  const projectRoot = path.resolve("C:/dev/aegis");
   const budget: BudgetLimit = { turns: 4, tokens: 8000 };
+  const assessmentRef = path.join(".aegis", "oracle", "aegis-fjm.9.3.json");
+  let projectRoot: string;
+
+  beforeEach(() => {
+    projectRoot = mkdtempSync(path.join(tmpdir(), "aegis-s08-"));
+  });
+
+  afterEach(() => {
+    rmSync(projectRoot, { recursive: true, force: true });
+  });
 
   it("runs Oracle in the project root, creates decomposition issues, blocks the parent, and transitions to scouted", async () => {
     const spawn = vi.fn(makeRuntime(JSON.stringify({
@@ -237,11 +248,20 @@ describe("runOracle", () => {
     });
     expect(result.updatedRecord.stage).toBe(DispatchStage.Scouted);
     expect(result.updatedRecord.runningAgent).toBeNull();
-    expect(result.updatedRecord.oracleAssessmentRef).toBe("oracle/aegis-fjm.9.3.json");
+    expect(result.updatedRecord.oracleAssessmentRef).toBe(assessmentRef);
     expect(result.assessment).not.toBeNull();
+    expect(result.updatedRecord.oracleAssessmentRef).not.toBeNull();
     if (!result.assessment) {
       throw new Error("Expected Oracle assessment to be present");
     }
+    if (!result.updatedRecord.oracleAssessmentRef) {
+      throw new Error("Expected Oracle assessment ref to be present");
+    }
+    expect(
+      JSON.parse(
+        readFileSync(path.join(projectRoot, result.updatedRecord.oracleAssessmentRef), "utf8"),
+      ),
+    ).toEqual(result.assessment);
     expect(result.assessment.estimated_complexity).toBe("complex");
     expect(result.complexityDisposition).toBe("needs_human_approval");
     expect(result.requiresComplexityGate).toBe(true);
@@ -332,7 +352,7 @@ describe("runOracle", () => {
     expect(result.createdIssues).toEqual([]);
   });
 
-  it("rolls back a created decomposition issue when parent blocker linkage fails", async () => {
+  it("rolls back all created decomposition issues when parent blocker linkage fails", async () => {
     const tracker = makeTracker({
       addBlocker: vi.fn(async (_blockedId, blockerId) => {
         if (blockerId === "aegis-fjm.30.2") {
@@ -359,10 +379,29 @@ describe("runOracle", () => {
     });
 
     expect(result.updatedRecord.stage).toBe(DispatchStage.Failed);
+    expect(result.updatedRecord.oracleAssessmentRef).toBe(assessmentRef);
     expect(result.failureReason).toMatch(/dep add failed/i);
+    expect(result.assessment).not.toBeNull();
+    expect(result.updatedRecord.oracleAssessmentRef).not.toBeNull();
+    expect(result.createdIssues.map((issue) => issue.id)).toEqual([
+      "aegis-fjm.30.1",
+      "aegis-fjm.30.2",
+    ]);
+    if (!result.updatedRecord.oracleAssessmentRef) {
+      throw new Error("Expected Oracle assessment ref to be present");
+    }
+    expect(
+      JSON.parse(
+        readFileSync(path.join(projectRoot, result.updatedRecord.oracleAssessmentRef), "utf8"),
+      ),
+    ).toEqual(result.assessment);
+    expect(tracker.closeIssue).toHaveBeenCalledWith(
+      "aegis-fjm.30.1",
+      expect.stringContaining("Failed to materialize"),
+    );
     expect(tracker.closeIssue).toHaveBeenCalledWith(
       "aegis-fjm.30.2",
-      expect.stringContaining("Failed to block"),
+      expect.stringContaining("Failed to materialize"),
     );
   });
 

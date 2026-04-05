@@ -62,17 +62,6 @@ function assertStringArray(value: unknown, key: string): string[] {
   return value.slice();
 }
 
-function assertNonEmptyStringArray(value: unknown, key: string): string[] {
-  const result = assertStringArray(value, key);
-  if (result.length === 0) {
-    throw new OracleAssessmentParseError(
-      "invalid_shape",
-      `Oracle assessment field '${key}' must contain at least one entry.`,
-    );
-  }
-  return result;
-}
-
 function assertBoolean(value: unknown, key: string): boolean {
   if (typeof value !== "boolean") {
     throw new OracleAssessmentParseError(
@@ -151,7 +140,7 @@ export function parseOracleAssessment(raw: string): OracleAssessment {
   }
 
   const assessment: OracleAssessment = {
-    files_affected: assertNonEmptyStringArray(filesAffected, "files_affected"),
+    files_affected: assertStringArray(filesAffected, "files_affected"),
     estimated_complexity: assertComplexity(estimatedComplexity),
     decompose: assertBoolean(decompose, "decompose"),
     ready: assertBoolean(ready, "ready"),

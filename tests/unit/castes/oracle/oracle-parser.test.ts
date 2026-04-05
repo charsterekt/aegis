@@ -86,11 +86,15 @@ describe("parseOracleAssessment", () => {
     expect(() => parseOracleAssessment(raw)).toThrow(/estimated_complexity/i);
   });
 
-  it("rejects an empty files_affected scope", () => {
+  it("accepts an empty files_affected scope", () => {
     const raw = JSON.stringify(makeAssessment({ files_affected: [] }));
 
-    expect(() => parseOracleAssessment(raw)).toThrow(OracleAssessmentParseError);
-    expect(() => parseOracleAssessment(raw)).toThrow(/files_affected/i);
+    expect(parseOracleAssessment(raw)).toEqual({
+      files_affected: [],
+      estimated_complexity: "moderate",
+      decompose: false,
+      ready: true,
+    });
   });
 
   it("rejects extra top-level keys to keep the contract strict", () => {
