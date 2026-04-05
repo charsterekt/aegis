@@ -1,4 +1,4 @@
-import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { BudgetLimit } from "../config/schema.js";
@@ -33,6 +33,7 @@ export interface OracleIssueCreator {
   getIssue(id: string): Promise<AegisIssue>;
   createIssue(input: CreateIssueInput): Promise<CreatedIssue>;
   addBlocker(blockedId: string, blockerId: string): Promise<void>;
+  removeBlocker(blockedId: string, blockerId: string): Promise<void>;
   closeIssue(id: string, reason?: string): Promise<CreatedIssue>;
 }
 
@@ -95,7 +96,6 @@ function persistOracleAssessment(
   const temporaryPath = `${absolutePath}.tmp`;
   mkdirSync(assessmentDirectory, { recursive: true });
   writeFileSync(temporaryPath, `${JSON.stringify(assessment, null, 2)}\n`, "utf8");
-  rmSync(absolutePath, { force: true });
   renameSync(temporaryPath, absolutePath);
   return assessmentRef;
 }
@@ -233,24 +233,23 @@ function groupReusableDerivedIssues(
 }
 
 async function loadReusableDerivedIssues(
-  issueId: string,
+  issue: AegisIssue,
   tracker: OracleIssueCreator,
 ): Promise<{
   blockerIds: Set<string>;
   derivedIssuesByTitle: Map<string, CreatedIssue[]>;
 }> {
-  const refreshedIssue = await tracker.getIssue(issueId);
   const openChildIssues = (
-    await Promise.all(refreshedIssue.childIds.map((childId) => tracker.getIssue(childId)))
+    await Promise.all(issue.childIds.map((childId) => tracker.getIssue(childId)))
   ).filter(
     (childIssue) =>
       childIssue.status !== "closed" &&
-      childIssue.parentId === issueId &&
+      childIssue.parentId === issue.id &&
       childIssue.issueClass === "sub",
   );
 
   return {
-    blockerIds: new Set(refreshedIssue.blockers),
+    blockerIds: new Set(issue.blockers),
     derivedIssuesByTitle: groupReusableDerivedIssues(openChildIssues),
   };
 }
@@ -259,17 +258,24 @@ async function materializeDerivedIssues(
   issue: AegisIssue,
   tracker: OracleIssueCreator,
   derivedIssues: readonly CreateIssueInput[],
-) : Promise<CreatedIssue[]> {
-  if (derivedIssues.length === 0) {
-    return [];
-  }
-
+) : Promise<{
+  liveIssues: CreatedIssue[];
+  blockerIds: Set<string>;
+}> {
   const {
     blockerIds,
     derivedIssuesByTitle,
-  } = await loadReusableDerivedIssues(issue.id, tracker);
+  } = await loadReusableDerivedIssues(issue, tracker);
+  if (derivedIssues.length === 0) {
+    return {
+      liveIssues: [],
+      blockerIds,
+    };
+  }
+
   const liveIssues: CreatedIssue[] = [];
   const newlyCreatedIssues: CreatedIssue[] = [];
+  const reusedIssuesWithAddedBlockers: CreatedIssue[] = [];
 
   try {
     for (const derivedIssue of derivedIssues) {
@@ -282,6 +288,7 @@ async function materializeDerivedIssues(
         if (!blockerIds.has(reusableIssue.id)) {
           await tracker.addBlocker(issue.id, reusableIssue.id);
           blockerIds.add(reusableIssue.id);
+          reusedIssuesWithAddedBlockers.push(reusableIssue);
         }
         continue;
       }
@@ -293,6 +300,15 @@ async function materializeDerivedIssues(
       blockerIds.add(createdIssue.id);
     }
   } catch (error) {
+    const blockerCleanupErrors: string[] = [];
+    for (const reusedIssue of reusedIssuesWithAddedBlockers) {
+      try {
+        await tracker.removeBlocker(issue.id, reusedIssue.id);
+        blockerIds.delete(reusedIssue.id);
+      } catch (cleanupError) {
+        blockerCleanupErrors.push((cleanupError as Error).message);
+      }
+    }
     const createdIssue = getCreatedIssueFromError(error);
     if (
       createdIssue &&
@@ -311,6 +327,11 @@ async function materializeDerivedIssues(
         `cleanup errors: ${rollbackOutcome.cleanupErrors.join("; ")}`,
       );
     }
+    if (blockerCleanupErrors.length > 0) {
+      failureParts.push(
+        `blocker cleanup errors: ${blockerCleanupErrors.join("; ")}`,
+      );
+    }
     throw new DerivedIssueMaterializationError(
       failureParts.join("; "),
       rollbackOutcome.rolledBackIssues,
@@ -318,7 +339,10 @@ async function materializeDerivedIssues(
     );
   }
 
-  return liveIssues;
+  return {
+    liveIssues,
+    blockerIds,
+  };
 }
 
 export async function runOracle(input: RunOracleInput): Promise<RunOracleResult> {
@@ -349,23 +373,24 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
       input.issue.id,
       assessment,
     );
+    const trackedIssue = await input.tracker.getIssue(input.issue.id);
     derivedIssues = createDerivedIssueInputs(input.issue, assessment);
-    createdIssues = await materializeDerivedIssues(
-      input.issue,
+    const materialization = await materializeDerivedIssues(
+      trackedIssue,
       input.tracker,
       derivedIssues,
     );
+    createdIssues = materialization.liveIssues;
     const complexityDisposition = determineComplexityDisposition(
       assessment.estimated_complexity,
       input.operatingMode,
       input.allowComplexAutoDispatch,
     );
     const requiresComplexityGate = complexityDisposition !== "allow";
-    const refreshedIssue = await input.tracker.getIssue(input.issue.id);
     const readyForImplementation =
       assessment.ready &&
       !requiresComplexityGate &&
-      refreshedIssue.blockers.length === 0 &&
+      materialization.blockerIds.size === 0 &&
       (assessment.blockers?.length ?? 0) === 0;
 
     return {

@@ -86,6 +86,11 @@ export interface BeadsClient {
    * until `blockerId` is resolved.
    */
   addBlocker(blockedId: string, blockerId: string): Promise<void>;
+
+  /**
+   * Remove a blocker dependency previously created with `addBlocker`.
+   */
+  removeBlocker(blockedId: string, blockerId: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +354,10 @@ export class BeadsCliClient implements BeadsClient {
 
   async addBlocker(blockedId: string, blockerId: string): Promise<void> {
     await this._exec(["dep", "add", blockedId, blockerId]);
+  }
+
+  async removeBlocker(blockedId: string, blockerId: string): Promise<void> {
+    await this._exec(["dep", "remove", blockedId, blockerId]);
   }
 }
 

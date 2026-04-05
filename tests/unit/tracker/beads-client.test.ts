@@ -532,4 +532,13 @@ describe("BeadsCliClient.linkIssue", () => {
       "dep", "add", "origin-1", "clarification-2",
     ]);
   });
+
+  it("removes a blocker dependency when rollback must restore ready-queue truth", async () => {
+    exec.mockResolvedValue("");
+
+    await client.removeBlocker("origin-1", "clarification-2");
+    expect(exec).toHaveBeenCalledWith([
+      "dep", "remove", "origin-1", "clarification-2",
+    ]);
+  });
 });
