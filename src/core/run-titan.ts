@@ -5,7 +5,7 @@ import {
 } from "../castes/titan/titan-prompt.js";
 import type { BudgetLimit } from "../config/schema.js";
 import type { DispatchRecord } from "./dispatch-state.js";
-import { DispatchStage, transitionStage, validateTransition } from "./stage-transition.js";
+import { DispatchStage, transitionStage } from "./stage-transition.js";
 import type { LaborCreationPlan } from "../labor/create-labor.js";
 import type { AgentRuntime, AgentEvent } from "../runtime/agent-runtime.js";
 import type { AegisIssue, AegisIssue as CreatedIssue, CreateIssueInput } from "../tracker/issue-model.js";
@@ -85,6 +85,7 @@ interface TitanExecutionPayload {
 export interface TitanIssueCreator {
   createIssue(input: CreateIssueInput): Promise<CreatedIssue>;
   addBlocker(blockedId: string, blockerId: string): Promise<void>;
+  closeIssue(id: string, reason?: string): Promise<CreatedIssue>;
 }
 
 export interface RunTitanInput {
@@ -155,6 +156,23 @@ function parseTitanExecutionPayload(raw: string): TitanExecutionPayload {
   }
 
   const candidate = parsed as Record<string, unknown>;
+  const allowedKeys = new Set([
+    "outcome",
+    "summary",
+    "files_changed",
+    "tests_and_checks_run",
+    "known_risks",
+    "follow_up_work",
+    "learnings_written_to_mnemosyne",
+    "blocking_question",
+    "handoff_note",
+  ]);
+  const unexpectedKeys = Object.keys(candidate).filter((key) => !allowedKeys.has(key));
+  if (unexpectedKeys.length > 0) {
+    throw new Error(
+      `Titan output contains unexpected keys: ${unexpectedKeys.join(", ")}`,
+    );
+  }
   const outcome = candidate["outcome"];
   if (
     outcome !== "success" &&
@@ -223,17 +241,17 @@ function buildClarificationIssueInput(
   };
 }
 
-function findLastJsonMessage(messages: readonly string[]): string {
+function findLastTitanPayloadMessage(messages: readonly string[]): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const candidate = messages[index].trim();
     if (candidate === "") {
       continue;
     }
     try {
-      JSON.parse(candidate);
+      parseTitanExecutionPayload(candidate);
       return messages[index];
     } catch {
-      // Keep scanning for the latest valid JSON artifact.
+      // Keep scanning for the latest valid Titan artifact payload.
     }
   }
 
@@ -242,21 +260,6 @@ function findLastJsonMessage(messages: readonly string[]): string {
     throw new Error("Titan did not return a final message payload");
   }
   return fallback;
-}
-
-function transitionOrRetain(
-  record: DispatchRecord,
-  to: DispatchStage,
-): DispatchRecord {
-  if (validateTransition(record.stage, to)) {
-    return transitionStage(record, to);
-  }
-
-  return {
-    ...record,
-    runningAgent: null,
-    updatedAt: new Date().toISOString(),
-  };
 }
 
 async function collectTitanResponse(
@@ -303,10 +306,15 @@ async function collectTitanResponse(
     });
   });
 
-  return findLastJsonMessage(messages);
+  return findLastTitanPayloadMessage(messages);
 }
 
 export async function runTitan(input: RunTitanInput): Promise<RunTitanResult> {
+  if (input.record.stage !== DispatchStage.Implementing) {
+    throw new Error(
+      `runTitan requires a dispatch record in stage=${DispatchStage.Implementing}`,
+    );
+  }
   const promptContract = createTitanPromptContract({
     issueId: input.issue.id,
     issueTitle: input.issue.title,
@@ -364,7 +372,15 @@ export async function runTitan(input: RunTitanInput): Promise<RunTitanResult> {
       clarificationIssue = await input.tracker.createIssue(
         buildClarificationIssueInput(input.issue, payload),
       );
-      await input.tracker.addBlocker(input.issue.id, clarificationIssue.id);
+      try {
+        await input.tracker.addBlocker(input.issue.id, clarificationIssue.id);
+      } catch (error) {
+        await input.tracker.closeIssue(
+          clarificationIssue.id,
+          `Failed to block ${input.issue.id} on clarification issue`,
+        );
+        throw error;
+      }
       clarificationArtifact = {
         ...contract.clarificationArtifact,
         blockingQuestion,
@@ -379,7 +395,7 @@ export async function runTitan(input: RunTitanInput): Promise<RunTitanResult> {
       prompt,
       outcome: payload.outcome,
       updatedRecord: {
-        ...transitionOrRetain(input.record, DispatchStage.Failed),
+        ...transitionStage(input.record, DispatchStage.Failed),
         runningAgent: null,
       },
       handoffArtifact,
@@ -392,7 +408,7 @@ export async function runTitan(input: RunTitanInput): Promise<RunTitanResult> {
       prompt,
       outcome: "failure",
       updatedRecord: {
-        ...transitionOrRetain(input.record, DispatchStage.Failed),
+        ...transitionStage(input.record, DispatchStage.Failed),
         runningAgent: null,
       },
       handoffArtifact: contract.handoffArtifact,

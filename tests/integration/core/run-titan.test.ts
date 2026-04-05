@@ -19,6 +19,7 @@ import type { AegisIssue } from "../../../src/tracker/issue-model.js";
 import type { AgentEvent, AgentHandle, AgentRuntime, SpawnOptions } from "../../../src/runtime/agent-runtime.js";
 import type { BudgetLimit } from "../../../src/config/schema.js";
 import type { LaborCreationPlan } from "../../../src/labor/create-labor.js";
+import type { TitanIssueCreator } from "../../../src/core/run-titan.js";
 
 function makeIssue(overrides: Partial<AegisIssue> = {}): AegisIssue {
   return {
@@ -128,6 +129,28 @@ function makeRuntime(rawResponse: string | string[]): AgentRuntime {
         },
       };
     },
+  };
+}
+
+function makeTracker(overrides: Partial<TitanIssueCreator> = {}): TitanIssueCreator {
+  return {
+    createIssue: vi.fn(async (input) => ({
+      ...makeIssue({
+        id: "aegis-fjm.30",
+        title: input.title,
+        description: input.description,
+        issueClass: input.issueClass,
+      }),
+    })),
+    addBlocker: vi.fn(async () => undefined),
+    closeIssue: vi.fn(async (id) =>
+      makeIssue({
+        id,
+        title: "Closed clarification issue",
+        status: "closed",
+        issueClass: "clarification",
+      })),
+    ...overrides,
   };
 }
 
@@ -260,7 +283,7 @@ describe("S09 Titan contract seed", () => {
       learnings_written_to_mnemosyne: [],
     })).spawn);
     const runtime: AgentRuntime = { spawn };
-    const tracker = { createIssue: vi.fn(), addBlocker: vi.fn() };
+    const tracker = makeTracker();
     const budget: BudgetLimit = { turns: 4, tokens: 8000 };
 
     const result = await runTitan({
@@ -293,7 +316,7 @@ describe("S09 Titan contract seed", () => {
   });
 
   it("creates a clarification issue and maps the Titan attempt to failed when the response is ambiguous", async () => {
-    const tracker = {
+    const tracker = makeTracker({
       createIssue: vi.fn(async () => ({
         ...makeIssue({
           id: "aegis-fjm.30",
@@ -301,8 +324,7 @@ describe("S09 Titan contract seed", () => {
           issueClass: "clarification",
         }),
       })),
-      addBlocker: vi.fn(async () => undefined),
-    };
+    });
 
     const result = await runTitan({
       issue: makeIssue(),
@@ -348,7 +370,7 @@ describe("S09 Titan contract seed", () => {
   });
 
   it("rejects clarification output that omits the required handoff note", async () => {
-    const tracker = { createIssue: vi.fn(), addBlocker: vi.fn() };
+    const tracker = makeTracker();
 
     const result = await runTitan({
       issue: makeIssue(),
@@ -375,7 +397,7 @@ describe("S09 Titan contract seed", () => {
   });
 
   it("maps explicit Titan failure output to a failed attempt without creating clarification work", async () => {
-    const tracker = { createIssue: vi.fn(), addBlocker: vi.fn() };
+    const tracker = makeTracker();
 
     const result = await runTitan({
       issue: makeIssue(),
@@ -405,7 +427,7 @@ describe("S09 Titan contract seed", () => {
   });
 
   it("uses the latest valid JSON message when Titan emits extra non-JSON chatter after the artifact", async () => {
-    const tracker = { createIssue: vi.fn(), addBlocker: vi.fn() };
+    const tracker = makeTracker();
 
     const result = await runTitan({
       issue: makeIssue(),
@@ -421,7 +443,9 @@ describe("S09 Titan contract seed", () => {
           follow_up_work: [],
           learnings_written_to_mnemosyne: [],
         }),
-        "Titan finished work and is waiting.",
+        JSON.stringify({
+          status: "done",
+        }),
       ]),
       tracker,
       budget: { turns: 4, tokens: 8000 },
@@ -436,12 +460,90 @@ describe("S09 Titan contract seed", () => {
       record: makeRecord(),
       labor: makeLaborPlan(),
       runtime: makeRuntime("{ nope }"),
-      tracker: { createIssue: vi.fn(), addBlocker: vi.fn() },
+      tracker: makeTracker(),
       budget: { turns: 4, tokens: 8000 },
     });
 
     expect(result.outcome).toBe("failure");
     expect(result.updatedRecord.stage).toBe(DispatchStage.Failed);
     expect(result.failureReason).toMatch(/Titan output/i);
+  });
+
+  it("rejects Titan output with unexpected top-level keys", async () => {
+    const result = await runTitan({
+      issue: makeIssue(),
+      record: makeRecord(),
+      labor: makeLaborPlan(),
+      runtime: makeRuntime(JSON.stringify({
+        outcome: "success",
+        summary: "Implemented Titan execution.",
+        files_changed: ["src/core/run-titan.ts"],
+        tests_and_checks_run: ["npm run test -- tests/integration/core/run-titan.test.ts"],
+        known_risks: [],
+        follow_up_work: [],
+        learnings_written_to_mnemosyne: [],
+        unexpected: true,
+      })),
+      tracker: makeTracker(),
+      budget: { turns: 4, tokens: 8000 },
+    });
+
+    expect(result.outcome).toBe("failure");
+    expect(result.failureReason).toMatch(/unexpected/i);
+  });
+
+  it("rolls back a clarification issue when blocker creation fails", async () => {
+    const tracker = makeTracker({
+      addBlocker: vi.fn(async () => {
+        throw new Error("dep add failed");
+      }),
+    });
+
+    const result = await runTitan({
+      issue: makeIssue(),
+      record: makeRecord(),
+      labor: makeLaborPlan(),
+      runtime: makeRuntime(JSON.stringify({
+        outcome: "clarification",
+        summary: "Need explicit acceptance criteria before proceeding.",
+        files_changed: [],
+        tests_and_checks_run: [],
+        known_risks: [],
+        follow_up_work: [],
+        learnings_written_to_mnemosyne: [],
+        blocking_question: "Should Titan emit one handoff artifact per issue or per merge candidate?",
+        handoff_note: "Preserved labor for follow-up after clarification.",
+      })),
+      tracker,
+      budget: { turns: 4, tokens: 8000 },
+    });
+
+    expect(result.outcome).toBe("failure");
+    expect(result.failureReason).toMatch(/dep add failed/i);
+    expect(tracker.closeIssue).toHaveBeenCalledWith(
+      "aegis-fjm.30",
+      expect.stringContaining("Failed to block"),
+    );
+  });
+
+  it("rejects non-implementing dispatch records", async () => {
+    await expect(
+      runTitan({
+        issue: makeIssue(),
+        record: makeRecord(DispatchStage.Scouted),
+        labor: makeLaborPlan(),
+        runtime: makeRuntime(JSON.stringify({
+          outcome: "success",
+          summary: "Implemented Titan execution.",
+          files_changed: ["src/core/run-titan.ts"],
+          tests_and_checks_run: ["npm run test -- tests/integration/core/run-titan.test.ts"],
+          known_risks: [],
+          follow_up_work: [],
+          learnings_written_to_mnemosyne: [],
+        })),
+        tracker: makeTracker(),
+        budget: { turns: 4, tokens: 8000 },
+      }),
+    ).rejects.toThrow(/implementing/i);
   });
 });
