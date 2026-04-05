@@ -374,6 +374,34 @@ describe("BeadsCliClient.createIssue", () => {
     ]);
   });
 
+  it("surfaces rollback failure if closing the created issue also fails", async () => {
+    const created = makeBdIssue({ id: "aegis-fjm.99" });
+    exec
+      .mockResolvedValueOnce(JSON.stringify([created]))
+      .mockRejectedValueOnce(new Error("link failed"))
+      .mockRejectedValueOnce(new Error("close failed"));
+
+    const promise = client.createIssue({
+      title: "Fix issue",
+      description: "fix details",
+      issueClass: "fix",
+      priority: 1,
+      originId: "aegis-fjm.5",
+      labels: ["fix"],
+    });
+
+    await expect(promise).rejects.toThrow(/link failed/i);
+    await expect(promise).rejects.toThrow(/close failed/i);
+    expect(exec).toHaveBeenCalledTimes(3);
+    expect(exec.mock.calls[2][0]).toEqual([
+      "close",
+      "aegis-fjm.99",
+      "--reason",
+      "Failed to link aegis-fjm.99 to origin aegis-fjm.5",
+      "--json",
+    ]);
+  });
+
   it("does not call link when originId is null", async () => {
     const created = makeBdIssue({ id: "aegis-fjm.99" });
     exec.mockResolvedValue(JSON.stringify([created]));

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -112,28 +112,85 @@ function makeRuntime(rawResponse: string | string[]): AgentRuntime {
   };
 }
 
-function makeTracker(overrides: Partial<OracleIssueCreator> = {}): OracleIssueCreator {
+function cloneIssue(issue: AegisIssue): AegisIssue {
+  return {
+    ...issue,
+    blockers: [...issue.blockers],
+    childIds: [...issue.childIds],
+    labels: [...issue.labels],
+  };
+}
+
+type TrackerOverrides = Partial<OracleIssueCreator> & {
+  issues?: AegisIssue[];
+};
+
+function makeTracker(overrides: TrackerOverrides = {}): OracleIssueCreator {
+  const { issues = [], ...methodOverrides } = overrides;
   let createdCount = 0;
+  const issueStore = new Map<string, AegisIssue>();
+  const seededIssues = issues.some((issue) => issue.id === "aegis-fjm.9.3")
+    ? issues
+    : [makeIssue(), ...issues];
+
+  for (const issue of seededIssues) {
+    issueStore.set(issue.id, cloneIssue(issue));
+  }
+
+  const getTrackedIssue = (id: string): AegisIssue => {
+    const issue = issueStore.get(id);
+    if (!issue) {
+      throw new Error(`Issue not found: ${id}`);
+    }
+    return issue;
+  };
+
+  const getIssue = vi.fn(async (id: string) => cloneIssue(getTrackedIssue(id)));
+  const createIssue = vi.fn(async (input) => {
+    createdCount += 1;
+    const createdIssue = makeIssue({
+      id: `aegis-fjm.30.${createdCount}`,
+      title: input.title,
+      description: input.description,
+      issueClass: input.issueClass,
+      parentId: input.originId,
+      childIds: [],
+      blockers: [],
+      labels: [...input.labels],
+    });
+    issueStore.set(createdIssue.id, cloneIssue(createdIssue));
+    if (input.originId) {
+      const parentIssue = getTrackedIssue(input.originId);
+      parentIssue.childIds = [...parentIssue.childIds, createdIssue.id];
+    }
+    return cloneIssue(createdIssue);
+  });
+  const addBlocker = vi.fn(async (blockedId: string, blockerId: string) => {
+    const blockedIssue = getTrackedIssue(blockedId);
+    if (!blockedIssue.blockers.includes(blockerId)) {
+      blockedIssue.blockers = [...blockedIssue.blockers, blockerId];
+    }
+  });
+  const closeIssue = vi.fn(async (id: string, reason?: string) => {
+    const closedIssue = makeIssue({
+      ...getTrackedIssue(id),
+      title: reason ?? "Closed derived issue",
+      status: "closed",
+    });
+    issueStore.set(id, cloneIssue(closedIssue));
+    for (const issue of issueStore.values()) {
+      if (issue.blockers.includes(id)) {
+        issue.blockers = issue.blockers.filter((blockerId) => blockerId !== id);
+      }
+    }
+    return cloneIssue(closedIssue);
+  });
 
   return {
-    createIssue: vi.fn(async (input) => {
-      createdCount += 1;
-      return makeIssue({
-        id: `aegis-fjm.30.${createdCount}`,
-        title: input.title,
-        description: input.description,
-        issueClass: input.issueClass,
-      });
-    }),
-    addBlocker: vi.fn(async () => undefined),
-    closeIssue: vi.fn(async (id, reason) =>
-      makeIssue({
-        id,
-        title: reason ?? "Closed derived issue",
-        status: "closed",
-        issueClass: "sub",
-      })),
-    ...overrides,
+    getIssue: methodOverrides.getIssue ?? getIssue,
+    createIssue: methodOverrides.createIssue ?? createIssue,
+    addBlocker: methodOverrides.addBlocker ?? addBlocker,
+    closeIssue: methodOverrides.closeIssue ?? closeIssue,
   };
 }
 
@@ -406,6 +463,120 @@ describe("runOracle", () => {
       "aegis-fjm.30.2",
       expect.stringContaining("Failed to materialize"),
     );
+  });
+
+  it("reuses the persisted Oracle assessment and existing derived children on restart", async () => {
+    const persistedAssessment = {
+      files_affected: ["src/core/run-oracle.ts", "src/tracker/create-derived-issues.ts"],
+      estimated_complexity: "complex" as const,
+      decompose: true,
+      sub_issues: ["Split prompt", "Add linker"],
+      blockers: ["src/tracker/create-derived-issues.ts"],
+      ready: false,
+    };
+    mkdirSync(path.join(projectRoot, ".aegis", "oracle"), { recursive: true });
+    writeFileSync(
+      path.join(projectRoot, assessmentRef),
+      `${JSON.stringify(persistedAssessment, null, 2)}\n`,
+      "utf8",
+    );
+    const tracker = makeTracker({
+      issues: [
+        makeIssue({
+          blockers: ["aegis-fjm.30.1"],
+          childIds: ["aegis-fjm.30.1", "aegis-fjm.30.2"],
+        }),
+        makeIssue({
+          id: "aegis-fjm.30.1",
+          title: "Split prompt",
+          description: "Derived from Oracle assessment for aegis-fjm.9.3.",
+          issueClass: "sub",
+          parentId: "aegis-fjm.9.3",
+          labels: [],
+        }),
+        makeIssue({
+          id: "aegis-fjm.30.2",
+          title: "Add linker",
+          description: "Derived from Oracle assessment for aegis-fjm.9.3.",
+          issueClass: "sub",
+          parentId: "aegis-fjm.9.3",
+          labels: [],
+        }),
+      ],
+    });
+    const spawn = vi.fn(async () => {
+      throw new Error("Oracle should not rerun when the assessment artifact already exists");
+    });
+    const runtime: AgentRuntime = { spawn };
+
+    const result = await runOracle({
+      issue: makeIssue(),
+      record: makeRecord(),
+      runtime,
+      tracker,
+      budget,
+      projectRoot,
+      operatingMode: "conversational",
+      allowComplexAutoDispatch: false,
+    });
+
+    expect(spawn).not.toHaveBeenCalled();
+    expect(tracker.createIssue).not.toHaveBeenCalled();
+    expect(tracker.addBlocker).toHaveBeenCalledTimes(1);
+    expect(tracker.addBlocker).toHaveBeenCalledWith("aegis-fjm.9.3", "aegis-fjm.30.2");
+    expect(result.updatedRecord.stage).toBe(DispatchStage.Scouted);
+    expect(result.updatedRecord.oracleAssessmentRef).toBe(assessmentRef);
+    expect(result.createdIssues.map((issue) => issue.id)).toEqual([
+      "aegis-fjm.30.1",
+      "aegis-fjm.30.2",
+    ]);
+    expect(result.rolledBackIssues).toEqual([]);
+  });
+
+  it("reports only successfully closed derived issues as rolled back when cleanup partially fails", async () => {
+    const tracker = makeTracker({
+      addBlocker: vi.fn(async (_blockedId, blockerId) => {
+        if (blockerId === "aegis-fjm.30.2") {
+          throw new Error("dep add failed");
+        }
+      }),
+      closeIssue: vi.fn(async (id, reason) => {
+        if (id === "aegis-fjm.30.2") {
+          throw new Error("close failed");
+        }
+        return makeIssue({
+          id,
+          title: reason ?? "Closed derived issue",
+          status: "closed",
+          issueClass: "sub",
+          parentId: "aegis-fjm.9.3",
+          labels: [],
+        });
+      }),
+    });
+
+    const result = await runOracle({
+      issue: makeIssue(),
+      record: makeRecord(),
+      runtime: makeRuntime(JSON.stringify({
+        files_affected: ["src/core/run-oracle.ts", "src/tracker/create-derived-issues.ts"],
+        estimated_complexity: "moderate",
+        decompose: true,
+        sub_issues: ["Split prompt", "Add linker"],
+        ready: false,
+      })),
+      tracker,
+      budget,
+      projectRoot,
+      operatingMode: "conversational",
+      allowComplexAutoDispatch: false,
+    });
+
+    expect(result.updatedRecord.stage).toBe(DispatchStage.Failed);
+    expect(result.failureReason).toMatch(/dep add failed/i);
+    expect(result.failureReason).toMatch(/close failed/i);
+    expect(result.createdIssues.map((issue) => issue.id)).toEqual(["aegis-fjm.30.2"]);
+    expect(result.rolledBackIssues.map((issue) => issue.id)).toEqual(["aegis-fjm.30.1"]);
   });
 
   it("fails closed when Oracle emits a malformed final message after an earlier valid assessment", async () => {

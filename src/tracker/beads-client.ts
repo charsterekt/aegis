@@ -272,13 +272,19 @@ export class BeadsCliClient implements BeadsClient {
       try {
         await this.linkIssue(input.originId, created.id);
       } catch (error) {
+        let cleanupError: Error | null = null;
         try {
           await this.closeIssue(
             created.id,
             `Failed to link ${created.id} to origin ${input.originId}`,
           );
-        } catch {
-          // Prefer the original link failure when rollback also fails.
+        } catch (rollbackError) {
+          cleanupError = rollbackError as Error;
+        }
+        if (cleanupError) {
+          throw new Error(
+            `Failed to link ${created.id} to origin ${input.originId}: ${(error as Error).message}; rollback failed to close ${created.id}: ${cleanupError.message}`,
+          );
         }
         throw error;
       }

@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { BudgetLimit } from "../config/schema.js";
@@ -30,6 +30,7 @@ export type OracleComplexityDisposition =
   | "skip_auto_dispatch";
 
 export interface OracleIssueCreator {
+  getIssue(id: string): Promise<AegisIssue>;
   createIssue(input: CreateIssueInput): Promise<CreatedIssue>;
   addBlocker(blockedId: string, blockerId: string): Promise<void>;
   closeIssue(id: string, reason?: string): Promise<CreatedIssue>;
@@ -61,11 +62,17 @@ export interface RunOracleResult {
 
 class DerivedIssueMaterializationError extends Error {
   readonly rolledBackIssues: CreatedIssue[];
+  readonly survivingIssues: CreatedIssue[];
 
-  constructor(message: string, rolledBackIssues: CreatedIssue[]) {
+  constructor(
+    message: string,
+    rolledBackIssues: CreatedIssue[],
+    survivingIssues: CreatedIssue[],
+  ) {
     super(message);
     this.name = "DerivedIssueMaterializationError";
     this.rolledBackIssues = rolledBackIssues;
+    this.survivingIssues = survivingIssues;
   }
 }
 
@@ -83,6 +90,22 @@ function persistOracleAssessment(
   mkdirSync(join(projectRoot, ".aegis", "oracle"), { recursive: true });
   writeFileSync(absolutePath, `${JSON.stringify(assessment, null, 2)}\n`, "utf8");
   return assessmentRef;
+}
+
+function loadPersistedOracleAssessment(
+  projectRoot: string,
+  issueId: string,
+): { assessment: OracleAssessment; assessmentRef: string } | null {
+  const assessmentRef = buildOracleAssessmentRef(issueId);
+  const absolutePath = join(projectRoot, assessmentRef);
+  if (!existsSync(absolutePath)) {
+    return null;
+  }
+
+  return {
+    assessment: parseOracleAssessment(readFileSync(absolutePath, "utf8")),
+    assessmentRef,
+  };
 }
 
 function determineComplexityDisposition(
@@ -168,9 +191,14 @@ async function rollbackDerivedIssues(
   issueId: string,
   tracker: OracleIssueCreator,
   createdIssues: readonly CreatedIssue[],
-): Promise<CreatedIssue[]> {
+): Promise<{
+  rolledBackIssues: CreatedIssue[];
+  survivingIssues: CreatedIssue[];
+  cleanupErrors: string[];
+}> {
   const cleanupErrors: string[] = [];
   const rolledBackIssues: CreatedIssue[] = [];
+  const survivingIssues: CreatedIssue[] = [];
 
   for (const createdIssue of createdIssues) {
     try {
@@ -181,17 +209,49 @@ async function rollbackDerivedIssues(
       rolledBackIssues.push(closedIssue);
     } catch (error) {
       cleanupErrors.push((error as Error).message);
-      rolledBackIssues.push(createdIssue);
+      survivingIssues.push(createdIssue);
     }
   }
 
-  if (cleanupErrors.length > 0) {
-    throw new Error(
-      `Failed to materialize derived issues for ${issueId}; cleanup errors: ${cleanupErrors.join("; ")}`,
-    );
-  }
+  return {
+    rolledBackIssues,
+    survivingIssues,
+    cleanupErrors,
+  };
+}
 
-  return rolledBackIssues;
+function groupReusableDerivedIssues(
+  issues: readonly CreatedIssue[],
+): Map<string, CreatedIssue[]> {
+  const grouped = new Map<string, CreatedIssue[]>();
+  for (const issue of issues) {
+    const existing = grouped.get(issue.title) ?? [];
+    grouped.set(issue.title, [...existing, issue]);
+  }
+  return grouped;
+}
+
+async function loadReusableDerivedIssues(
+  issueId: string,
+  tracker: OracleIssueCreator,
+): Promise<{
+  blockerIds: Set<string>;
+  derivedIssuesByTitle: Map<string, CreatedIssue[]>;
+}> {
+  const refreshedIssue = await tracker.getIssue(issueId);
+  const openChildIssues = (
+    await Promise.all(refreshedIssue.childIds.map((childId) => tracker.getIssue(childId)))
+  ).filter(
+    (childIssue) =>
+      childIssue.status !== "closed" &&
+      childIssue.parentId === issueId &&
+      childIssue.issueClass === "sub",
+  );
+
+  return {
+    blockerIds: new Set(refreshedIssue.blockers),
+    derivedIssuesByTitle: groupReusableDerivedIssues(openChildIssues),
+  };
 }
 
 async function materializeDerivedIssues(
@@ -199,31 +259,57 @@ async function materializeDerivedIssues(
   tracker: OracleIssueCreator,
   derivedIssues: readonly CreateIssueInput[],
 ) : Promise<CreatedIssue[]> {
-  const createdIssues: CreatedIssue[] = [];
+  if (derivedIssues.length === 0) {
+    return [];
+  }
+
+  const {
+    blockerIds,
+    derivedIssuesByTitle,
+  } = await loadReusableDerivedIssues(issue.id, tracker);
+  const liveIssues: CreatedIssue[] = [];
+  const newlyCreatedIssues: CreatedIssue[] = [];
 
   try {
     for (const derivedIssue of derivedIssues) {
+      const reusableIssues = derivedIssuesByTitle.get(derivedIssue.title);
+      const reusableIssue =
+        reusableIssues && reusableIssues.length > 0 ? reusableIssues.shift() ?? null : null;
+
+      if (reusableIssue) {
+        liveIssues.push(reusableIssue);
+        if (!blockerIds.has(reusableIssue.id)) {
+          await tracker.addBlocker(issue.id, reusableIssue.id);
+          blockerIds.add(reusableIssue.id);
+        }
+        continue;
+      }
+
       const createdIssue = await tracker.createIssue(derivedIssue);
-      createdIssues.push(createdIssue);
+      newlyCreatedIssues.push(createdIssue);
+      liveIssues.push(createdIssue);
       await tracker.addBlocker(issue.id, createdIssue.id);
+      blockerIds.add(createdIssue.id);
     }
   } catch (error) {
-    let rolledBackIssues = createdIssues;
-    try {
-      rolledBackIssues = await rollbackDerivedIssues(issue.id, tracker, createdIssues);
-    } catch (cleanupError) {
-      throw new DerivedIssueMaterializationError(
-        `${(error as Error).message}; ${(cleanupError as Error).message}`,
-        rolledBackIssues,
+    const rollbackOutcome = await rollbackDerivedIssues(issue.id, tracker, newlyCreatedIssues);
+    const reusedIssues = liveIssues.filter(
+      (liveIssue) => !newlyCreatedIssues.some((createdIssue) => createdIssue.id === liveIssue.id),
+    );
+    const failureParts = [(error as Error).message];
+    if (rollbackOutcome.cleanupErrors.length > 0) {
+      failureParts.push(
+        `cleanup errors: ${rollbackOutcome.cleanupErrors.join("; ")}`,
       );
     }
     throw new DerivedIssueMaterializationError(
-      (error as Error).message,
-      rolledBackIssues,
+      failureParts.join("; "),
+      rollbackOutcome.rolledBackIssues,
+      [...reusedIssues, ...rollbackOutcome.survivingIssues],
     );
   }
 
-  return createdIssues;
+  return liveIssues;
 }
 
 export async function runOracle(input: RunOracleInput): Promise<RunOracleResult> {
@@ -241,19 +327,28 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
   let oracleAssessmentRef: string | null = null;
 
   try {
-    const raw = await collectOracleResponse(
-      input.runtime,
-      input.issue.id,
-      input.projectRoot,
-      input.budget,
-      prompt,
-    );
-    assessment = parseOracleAssessment(raw);
-    oracleAssessmentRef = persistOracleAssessment(
+    const persistedAssessment = loadPersistedOracleAssessment(
       input.projectRoot,
       input.issue.id,
-      assessment,
     );
+    if (persistedAssessment) {
+      assessment = persistedAssessment.assessment;
+      oracleAssessmentRef = persistedAssessment.assessmentRef;
+    } else {
+      const raw = await collectOracleResponse(
+        input.runtime,
+        input.issue.id,
+        input.projectRoot,
+        input.budget,
+        prompt,
+      );
+      assessment = parseOracleAssessment(raw);
+      oracleAssessmentRef = persistOracleAssessment(
+        input.projectRoot,
+        input.issue.id,
+        assessment,
+      );
+    }
     derivedIssues = createDerivedIssueInputs(input.issue, assessment);
     createdIssues = await materializeDerivedIssues(
       input.issue,
@@ -290,7 +385,7 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
   } catch (error) {
     if (error instanceof DerivedIssueMaterializationError) {
       rolledBackIssues = error.rolledBackIssues;
-      createdIssues = [];
+      createdIssues = error.survivingIssues;
     }
 
     return {
