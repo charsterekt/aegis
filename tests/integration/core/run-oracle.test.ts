@@ -170,5 +170,3 @@ describe("runOracle", () => {
     ).rejects.toThrow(/sub_issues/i);
   });
 });
-
-
