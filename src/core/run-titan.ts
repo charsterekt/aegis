@@ -5,7 +5,7 @@ import {
 } from "../castes/titan/titan-prompt.js";
 import type { BudgetLimit } from "../config/schema.js";
 import type { DispatchRecord } from "./dispatch-state.js";
-import { DispatchStage, transitionStage } from "./stage-transition.js";
+import { DispatchStage, transitionStage, validateTransition } from "./stage-transition.js";
 import type { LaborCreationPlan } from "../labor/create-labor.js";
 import type { AgentRuntime, AgentEvent } from "../runtime/agent-runtime.js";
 import type { AegisIssue, AegisIssue as CreatedIssue, CreateIssueInput } from "../tracker/issue-model.js";
@@ -84,6 +84,7 @@ interface TitanExecutionPayload {
 
 export interface TitanIssueCreator {
   createIssue(input: CreateIssueInput): Promise<CreatedIssue>;
+  addBlocker(blockedId: string, blockerId: string): Promise<void>;
 }
 
 export interface RunTitanInput {
@@ -181,6 +182,12 @@ function parseTitanExecutionPayload(raw: string): TitanExecutionPayload {
   ) {
     throw new Error("Titan clarification output must include blocking_question");
   }
+  if (
+    outcome === "clarification" &&
+    typeof candidate["handoff_note"] !== "string"
+  ) {
+    throw new Error("Titan clarification output must include handoff_note");
+  }
 
   return {
     outcome,
@@ -207,12 +214,48 @@ function buildClarificationIssueInput(
       "",
       `Blocking question: ${payload.blocking_question ?? ""}`,
       `Summary: ${payload.summary}`,
-      `Handoff note: ${payload.handoff_note ?? "(none)"}`,
+      `Handoff note: ${payload.handoff_note}`,
     ].join("\n"),
     issueClass: "clarification",
     priority: issue.priority,
     originId: issue.id,
     labels: ["clarification", "titan"],
+  };
+}
+
+function findLastJsonMessage(messages: readonly string[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const candidate = messages[index].trim();
+    if (candidate === "") {
+      continue;
+    }
+    try {
+      JSON.parse(candidate);
+      return messages[index];
+    } catch {
+      // Keep scanning for the latest valid JSON artifact.
+    }
+  }
+
+  const fallback = messages.at(-1);
+  if (!fallback) {
+    throw new Error("Titan did not return a final message payload");
+  }
+  return fallback;
+}
+
+function transitionOrRetain(
+  record: DispatchRecord,
+  to: DispatchStage,
+): DispatchRecord {
+  if (validateTransition(record.stage, to)) {
+    return transitionStage(record, to);
+  }
+
+  return {
+    ...record,
+    runningAgent: null,
+    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -260,12 +303,7 @@ async function collectTitanResponse(
     });
   });
 
-  const finalMessage = messages.at(-1);
-  if (!finalMessage) {
-    throw new Error("Titan did not return a final message payload");
-  }
-
-  return finalMessage;
+  return findLastJsonMessage(messages);
 }
 
 export async function runTitan(input: RunTitanInput): Promise<RunTitanResult> {
@@ -318,22 +356,30 @@ export async function runTitan(input: RunTitanInput): Promise<RunTitanResult> {
     let clarificationArtifact: TitanClarificationArtifact | null = null;
 
     if (payload.outcome === "clarification") {
+      const blockingQuestion = payload.blocking_question;
+      const handoffNote = payload.handoff_note;
+      if (blockingQuestion === undefined || handoffNote === undefined) {
+        throw new Error("Titan clarification output must include blocking_question and handoff_note");
+      }
       clarificationIssue = await input.tracker.createIssue(
         buildClarificationIssueInput(input.issue, payload),
       );
+      await input.tracker.addBlocker(input.issue.id, clarificationIssue.id);
       clarificationArtifact = {
         ...contract.clarificationArtifact,
-        blockingQuestion: payload.blocking_question ?? "",
-        handoffNote: payload.handoff_note ?? payload.summary,
+        blockingQuestion,
+        handoffNote,
         linkedClarificationIssueId: clarificationIssue.id,
       };
     }
 
+    // Clarification or failure ends the current Titan attempt; the origin issue
+    // remains open in Beads and clarification work can block its redispatch.
     return {
       prompt,
       outcome: payload.outcome,
       updatedRecord: {
-        ...transitionStage(input.record, DispatchStage.Failed),
+        ...transitionOrRetain(input.record, DispatchStage.Failed),
         runningAgent: null,
       },
       handoffArtifact,
@@ -346,7 +392,7 @@ export async function runTitan(input: RunTitanInput): Promise<RunTitanResult> {
       prompt,
       outcome: "failure",
       updatedRecord: {
-        ...transitionStage(input.record, DispatchStage.Failed),
+        ...transitionOrRetain(input.record, DispatchStage.Failed),
         runningAgent: null,
       },
       handoffArtifact: contract.handoffArtifact,

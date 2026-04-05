@@ -18,6 +18,7 @@ import type { DispatchRecord } from "../../../src/core/dispatch-state.js";
 import type { AegisIssue } from "../../../src/tracker/issue-model.js";
 import type { AgentEvent, AgentHandle, AgentRuntime, SpawnOptions } from "../../../src/runtime/agent-runtime.js";
 import type { BudgetLimit } from "../../../src/config/schema.js";
+import type { LaborCreationPlan } from "../../../src/labor/create-labor.js";
 
 function makeIssue(overrides: Partial<AegisIssue> = {}): AegisIssue {
   return {
@@ -57,20 +58,44 @@ function makeRecord(stage: DispatchStage = DispatchStage.Implementing): Dispatch
   };
 }
 
-function makeRuntime(rawResponse: string): AgentRuntime {
+function makeLaborPlan(): LaborCreationPlan {
+  return {
+    issueId: "aegis-fjm.10.3",
+    laborPath: path.join("C:/dev/aegis", ".aegis", "labors", "labor-aegis-fjm.10.3"),
+    branchName: "aegis/aegis-fjm.10.3",
+    baseBranch: "main",
+    createWorktreeCommand: {
+      command: "git",
+      args: [
+        "worktree",
+        "add",
+        "-b",
+        "aegis/aegis-fjm.10.3",
+        path.join("C:/dev/aegis", ".aegis", "labors", "labor-aegis-fjm.10.3"),
+        "main",
+      ],
+    },
+  };
+}
+
+function makeRuntime(rawResponse: string | string[]): AgentRuntime {
+  const responses = Array.isArray(rawResponse) ? rawResponse : [rawResponse];
+
   return {
     async spawn(_opts: SpawnOptions): Promise<AgentHandle> {
       let listener: ((event: AgentEvent) => void) | null = null;
 
       return {
         async prompt(): Promise<void> {
-          listener?.({
-            type: "message",
-            timestamp: "2026-04-05T19:55:01.000Z",
-            issueId: "aegis-fjm.10.3",
-            caste: "titan",
-            text: rawResponse,
-          });
+          for (const [index, response] of responses.entries()) {
+            listener?.({
+              type: "message",
+              timestamp: `2026-04-05T19:55:0${index + 1}.000Z`,
+              issueId: "aegis-fjm.10.3",
+              caste: "titan",
+              text: response,
+            });
+          }
           listener?.({
             type: "session_ended",
             timestamp: "2026-04-05T19:55:02.000Z",
@@ -161,7 +186,8 @@ describe("S09 Titan contract seed", () => {
     expect(prompt).toContain("Labor path:");
     expect(prompt).toContain("aegis/aegis-fjm.10.3");
     expect(prompt).toContain('"outcome": "success" | "clarification" | "failure"');
-    expect(prompt).toContain('"blocking_question"?: string');
+    expect(prompt).toContain('"blocking_question" is required when outcome is "clarification"');
+    expect(prompt).not.toContain("?:");
     expect(prompt.toLowerCase()).toContain("return only json");
   });
 
@@ -234,29 +260,13 @@ describe("S09 Titan contract seed", () => {
       learnings_written_to_mnemosyne: [],
     })).spawn);
     const runtime: AgentRuntime = { spawn };
-    const tracker = { createIssue: vi.fn() };
+    const tracker = { createIssue: vi.fn(), addBlocker: vi.fn() };
     const budget: BudgetLimit = { turns: 4, tokens: 8000 };
 
     const result = await runTitan({
       issue: makeIssue(),
       record: makeRecord(),
-      labor: {
-        issueId: "aegis-fjm.10.3",
-        laborPath: path.join("C:/dev/aegis", ".aegis", "labors", "labor-aegis-fjm.10.3"),
-        branchName: "aegis/aegis-fjm.10.3",
-        baseBranch: "main",
-        createWorktreeCommand: {
-          command: "git",
-          args: [
-            "worktree",
-            "add",
-            "-b",
-            "aegis/aegis-fjm.10.3",
-            path.join("C:/dev/aegis", ".aegis", "labors", "labor-aegis-fjm.10.3"),
-            "main",
-          ],
-        },
-      },
+      labor: makeLaborPlan(),
       runtime,
       tracker,
       budget,
@@ -278,6 +288,7 @@ describe("S09 Titan contract seed", () => {
     ]);
     expect(result.clarificationArtifact).toBeNull();
     expect(tracker.createIssue).not.toHaveBeenCalled();
+    expect(tracker.addBlocker).not.toHaveBeenCalled();
     expect(result.prompt).toContain("return only JSON");
   });
 
@@ -290,28 +301,13 @@ describe("S09 Titan contract seed", () => {
           issueClass: "clarification",
         }),
       })),
+      addBlocker: vi.fn(async () => undefined),
     };
 
     const result = await runTitan({
       issue: makeIssue(),
       record: makeRecord(),
-      labor: {
-        issueId: "aegis-fjm.10.3",
-        laborPath: path.join("C:/dev/aegis", ".aegis", "labors", "labor-aegis-fjm.10.3"),
-        branchName: "aegis/aegis-fjm.10.3",
-        baseBranch: "main",
-        createWorktreeCommand: {
-          command: "git",
-          args: [
-            "worktree",
-            "add",
-            "-b",
-            "aegis/aegis-fjm.10.3",
-            path.join("C:/dev/aegis", ".aegis", "labors", "labor-aegis-fjm.10.3"),
-            "main",
-          ],
-        },
-      },
+      labor: makeLaborPlan(),
       runtime: makeRuntime(JSON.stringify({
         outcome: "clarification",
         summary: "Need explicit acceptance criteria before proceeding.",
@@ -348,31 +344,99 @@ describe("S09 Titan contract seed", () => {
       originId: "aegis-fjm.10.3",
       labels: ["clarification", "titan"],
     });
+    expect(tracker.addBlocker).toHaveBeenCalledWith("aegis-fjm.10.3", "aegis-fjm.30");
+  });
+
+  it("rejects clarification output that omits the required handoff note", async () => {
+    const tracker = { createIssue: vi.fn(), addBlocker: vi.fn() };
+
+    const result = await runTitan({
+      issue: makeIssue(),
+      record: makeRecord(),
+      labor: makeLaborPlan(),
+      runtime: makeRuntime(JSON.stringify({
+        outcome: "clarification",
+        summary: "Need a policy decision before continuing.",
+        files_changed: [],
+        tests_and_checks_run: [],
+        known_risks: [],
+        follow_up_work: [],
+        learnings_written_to_mnemosyne: [],
+        blocking_question: "Should Titan preserve labors for policy clarifications?",
+      })),
+      tracker,
+      budget: { turns: 4, tokens: 8000 },
+    });
+
+    expect(result.outcome).toBe("failure");
+    expect(result.failureReason).toMatch(/handoff_note/i);
+    expect(tracker.createIssue).not.toHaveBeenCalled();
+    expect(tracker.addBlocker).not.toHaveBeenCalled();
+  });
+
+  it("maps explicit Titan failure output to a failed attempt without creating clarification work", async () => {
+    const tracker = { createIssue: vi.fn(), addBlocker: vi.fn() };
+
+    const result = await runTitan({
+      issue: makeIssue(),
+      record: makeRecord(),
+      labor: makeLaborPlan(),
+      runtime: makeRuntime(JSON.stringify({
+        outcome: "failure",
+        summary: "Tests failed inside the labor.",
+        files_changed: ["src/core/run-titan.ts"],
+        tests_and_checks_run: ["npm run test -- tests/integration/core/run-titan.test.ts"],
+        known_risks: ["merge queue still pending"],
+        follow_up_work: ["investigate the failing test suite"],
+        learnings_written_to_mnemosyne: [],
+      })),
+      tracker,
+      budget: { turns: 4, tokens: 8000 },
+    });
+
+    expect(result.outcome).toBe("failure");
+    expect(result.updatedRecord.stage).toBe(DispatchStage.Failed);
+    expect(result.failureReason).toBe("Tests failed inside the labor.");
+    expect(result.handoffArtifact.filesChanged).toEqual(["src/core/run-titan.ts"]);
+    expect(result.clarificationIssue).toBeNull();
+    expect(result.clarificationArtifact).toBeNull();
+    expect(tracker.createIssue).not.toHaveBeenCalled();
+    expect(tracker.addBlocker).not.toHaveBeenCalled();
+  });
+
+  it("uses the latest valid JSON message when Titan emits extra non-JSON chatter after the artifact", async () => {
+    const tracker = { createIssue: vi.fn(), addBlocker: vi.fn() };
+
+    const result = await runTitan({
+      issue: makeIssue(),
+      record: makeRecord(),
+      labor: makeLaborPlan(),
+      runtime: makeRuntime([
+        JSON.stringify({
+          outcome: "success",
+          summary: "Implemented Titan execution.",
+          files_changed: ["src/core/run-titan.ts"],
+          tests_and_checks_run: ["npm run test -- tests/integration/core/run-titan.test.ts"],
+          known_risks: [],
+          follow_up_work: [],
+          learnings_written_to_mnemosyne: [],
+        }),
+        "Titan finished work and is waiting.",
+      ]),
+      tracker,
+      budget: { turns: 4, tokens: 8000 },
+    });
+
+    expect(result.outcome).toBe("success");
   });
 
   it("maps malformed Titan output to a failed dispatch transition", async () => {
     const result = await runTitan({
       issue: makeIssue(),
       record: makeRecord(),
-      labor: {
-        issueId: "aegis-fjm.10.3",
-        laborPath: path.join("C:/dev/aegis", ".aegis", "labors", "labor-aegis-fjm.10.3"),
-        branchName: "aegis/aegis-fjm.10.3",
-        baseBranch: "main",
-        createWorktreeCommand: {
-          command: "git",
-          args: [
-            "worktree",
-            "add",
-            "-b",
-            "aegis/aegis-fjm.10.3",
-            path.join("C:/dev/aegis", ".aegis", "labors", "labor-aegis-fjm.10.3"),
-            "main",
-          ],
-        },
-      },
+      labor: makeLaborPlan(),
       runtime: makeRuntime("{ nope }"),
-      tracker: { createIssue: vi.fn() },
+      tracker: { createIssue: vi.fn(), addBlocker: vi.fn() },
       budget: { turns: 4, tokens: 8000 },
     });
 
