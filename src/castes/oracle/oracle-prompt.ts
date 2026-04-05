@@ -40,7 +40,7 @@ export function buildOraclePrompt(issue: OraclePromptIssue): string {
     `Parent: ${issue.parentId ?? "(none)"}`,
     `Children: ${formatList(issue.childIds)}`,
     "",
-    "Allowed actions: read, read-only shell commands, and tracker commands.",
+    "Allowed actions: read-only shell commands and tracker reads.",
     "No file modifications. No writes.",
     "",
     "Return JSON with exactly these fields:",
