@@ -10,7 +10,12 @@
   "steerActions": [
     "start",
     "status",
-    "stop"
+    "stop",
+    "command",
+    "auto_on",
+    "auto_off",
+    "pause",
+    "resume"
   ],
   "requestFields": [
     "action",

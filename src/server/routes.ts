@@ -1,3 +1,7 @@
+import { createCommandExecutor } from "../core/command-executor.js";
+import type { CommandExecutionContext, CommandExecutionResult, CommandExecutor } from "../core/command-executor.js";
+import { parseCommand } from "../cli/parse-command.js";
+
 export const HTTP_ROUTE_PATHS = {
   root: "/",
   state: "/api/state",
@@ -7,7 +11,16 @@ export const HTTP_ROUTE_PATHS = {
   beadsHook: "/api/hooks/beads",
 } as const;
 
-export const CONTROL_API_ACTIONS = ["start", "status", "stop"] as const;
+export const CONTROL_API_ACTIONS = [
+  "start",
+  "status",
+  "stop",
+  "command",
+  "auto_on",
+  "auto_off",
+  "pause",
+  "resume",
+] as const;
 export const CONTROL_API_REQUEST_FIELDS = [
   "action",
   "request_id",
@@ -97,7 +110,43 @@ export const HTTP_ROUTE_CONTRACT: readonly HttpRouteDefinition[] = [
   },
 ] as const;
 
+export interface CommandActionRequest {
+  action: "command";
+  request_id: string;
+  issued_at: string;
+  source: "cli" | "olympus";
+  args?: {
+    command?: string;
+    [key: string]: unknown;
+  };
+}
+
+export type SteerRequestBody = ControlApiRequest | CommandActionRequest;
+
 type MaybePromise<T> = T | Promise<T>;
+
+export interface RestApiRouterBindings {
+  getStateSnapshot: () => MaybePromise<unknown>;
+  executeControlAction: (
+    request: ControlApiRequest,
+  ) => MaybePromise<ControlApiResponse>;
+  executeCommand?: (
+    commandText: string,
+    context: CommandExecutionContext,
+    executor: CommandExecutor,
+  ) => MaybePromise<CommandExecutionResult>;
+  getCommandContext?: () => CommandExecutionContext;
+  appendLearningRecord: (
+    entry: Record<string, unknown>,
+  ) => MaybePromise<Record<string, unknown>>;
+  ingestBeadsHookEvent: (payload: unknown) => MaybePromise<void>;
+  eventsTransport?: SseReplayTransport;
+  now?: () => Date;
+  setOperatingMode?: (mode: "conversational" | "auto") => MaybePromise<void>;
+  pause?: () => MaybePromise<void>;
+  resume?: () => MaybePromise<void>;
+  getOperatingMode?: () => OrchestrationMode;
+}
 
 export interface SseReplayTransport {
   replay(lastEventId?: string | null): string[];
@@ -121,19 +170,6 @@ export interface RestApiResponse<TBody = unknown> {
 export interface EventsRouteBody {
   replay: string[];
   subscribe: (writeFrame: (frame: string) => void) => () => void;
-}
-
-export interface RestApiRouterBindings {
-  getStateSnapshot: () => MaybePromise<unknown>;
-  executeControlAction: (
-    request: ControlApiRequest,
-  ) => MaybePromise<ControlApiResponse>;
-  appendLearningRecord: (
-    entry: Record<string, unknown>,
-  ) => MaybePromise<Record<string, unknown>>;
-  ingestBeadsHookEvent: (payload: unknown) => MaybePromise<void>;
-  eventsTransport?: SseReplayTransport;
-  now?: () => Date;
 }
 
 export interface RestApiRouter {
@@ -241,10 +277,104 @@ export function createRestApiRouter(bindings: RestApiRouterBindings): RestApiRou
       }
 
       if (method === "POST" && request.path === HTTP_ROUTE_PATHS.steer) {
+        if (!isRecord(request.body)) {
+          return toJsonResponse(400, {
+            ok: false,
+            error: "Invalid steer request payload.",
+          });
+        }
+
+        const body = request.body as Record<string, unknown>;
+        const bodyArgs = body.args as Record<string, unknown> | undefined;
+
+        // Check if this is a command action
+        if (body.action === "command" && typeof bodyArgs?.command === "string") {
+          // Validate source for command actions (same as control actions)
+          if (!isControlApiSource(body.source)) {
+            return toJsonResponse(403, {
+              ok: false,
+              error: "Command actions require a trusted source (cli or olympus).",
+            });
+          }
+
+          const commandText = bodyArgs.command as string;
+          const parsed = parseCommand(commandText);
+          const context = bindings.getCommandContext
+            ? bindings.getCommandContext()
+            : { operatingMode: { mode: "conversational", paused: false }, autoLoop: { enabledAt: null }, issueId: null } as CommandExecutionContext;
+          const executor = createCommandExecutor(context);
+          const result = await bindings.executeCommand?.(commandText, context, executor)
+            ?? await executor(parsed, context);
+
+          return toJsonResponse(200, {
+            ok: result.status !== "unsupported",
+            command: parsed.kind,
+            status: result.status,
+            message: result.message,
+            request_id: body.request_id as string | undefined,
+            acknowledged_at: now().toISOString(),
+          });
+        }
+
+        // Fall through to standard control action handling
         if (!isControlApiRequest(request.body)) {
           return toJsonResponse(400, {
             ok: false,
             error: "Invalid steer request payload.",
+          });
+        }
+
+        const action = request.body.action;
+
+        if (action === "auto_on" && bindings.setOperatingMode) {
+          await bindings.setOperatingMode("auto");
+          return toJsonResponse(200, {
+            ok: true,
+            action: "auto_on",
+            request_id: request.body.request_id,
+            acknowledged_at: now().toISOString(),
+            server_state: "running",
+            mode: "auto",
+            message: "Auto mode enabled",
+          });
+        }
+
+        if (action === "auto_off" && bindings.setOperatingMode) {
+          await bindings.setOperatingMode("conversational");
+          return toJsonResponse(200, {
+            ok: true,
+            action: "auto_off",
+            request_id: request.body.request_id,
+            acknowledged_at: now().toISOString(),
+            server_state: "running",
+            mode: "conversational",
+            message: "Auto mode disabled",
+          });
+        }
+
+        if (action === "pause" && bindings.pause) {
+          await bindings.pause();
+          return toJsonResponse(200, {
+            ok: true,
+            action: "pause",
+            request_id: request.body.request_id,
+            acknowledged_at: now().toISOString(),
+            server_state: "running",
+            mode: bindings.getOperatingMode?.() ?? "conversational",
+            message: "Orchestrator paused",
+          });
+        }
+
+        if (action === "resume" && bindings.resume) {
+          await bindings.resume();
+          return toJsonResponse(200, {
+            ok: true,
+            action: "resume",
+            request_id: request.body.request_id,
+            acknowledged_at: now().toISOString(),
+            server_state: "running",
+            mode: bindings.getOperatingMode?.() ?? "conversational",
+            message: "Orchestrator resumed",
           });
         }
 
