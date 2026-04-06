@@ -154,4 +154,84 @@ describe("S07 direct command contract seed", () => {
       kind: "unsupported",
     });
   });
+
+  it("rejects empty input", async () => {
+    const module = (await import(
+      pathToFileURL(path.join(repoRoot, "src", "cli", "parse-command.ts")).href
+    )) as {
+      parseCommand: (input: string) => {
+        kind: string;
+        reason?: string;
+      };
+    };
+
+    expect(module.parseCommand("")).toMatchObject({
+      kind: "unsupported",
+    });
+  });
+
+  it("rejects whitespace-only input", async () => {
+    const module = (await import(
+      pathToFileURL(path.join(repoRoot, "src", "cli", "parse-command.ts")).href
+    )) as {
+      parseCommand: (input: string) => {
+        kind: string;
+        reason?: string;
+      };
+    };
+
+    expect(module.parseCommand("   \t  ")).toMatchObject({
+      kind: "unsupported",
+    });
+  });
+
+  it("rejects bare auto command with specific error", async () => {
+    const module = (await import(
+      pathToFileURL(path.join(repoRoot, "src", "cli", "parse-command.ts")).href
+    )) as {
+      parseCommand: (input: string) => {
+        kind: string;
+        reason?: string;
+      };
+    };
+
+    const result = module.parseCommand("auto");
+    expect(result).toMatchObject({ kind: "unsupported" });
+    expect((result as { reason?: string }).reason).toContain("requires a subcommand");
+  });
+
+  it("rejects auto_on underscore form as unsupported", async () => {
+    const module = (await import(
+      pathToFileURL(path.join(repoRoot, "src", "cli", "parse-command.ts")).href
+    )) as {
+      parseCommand: (input: string) => {
+        kind: string;
+        reason?: string;
+      };
+    };
+
+    expect(module.parseCommand("auto_on")).toMatchObject({
+      kind: "unsupported",
+    });
+    expect(module.parseCommand("auto_off")).toMatchObject({
+      kind: "unsupported",
+    });
+  });
+
+  it("distinguishes missing vs extra argument errors for issue-scoped commands", async () => {
+    const module = (await import(
+      pathToFileURL(path.join(repoRoot, "src", "cli", "parse-command.ts")).href
+    )) as {
+      parseCommand: (input: string) => {
+        kind: string;
+        reason?: string;
+      };
+    };
+
+    const missingResult = module.parseCommand("scout");
+    expect((missingResult as { reason?: string }).reason).toContain("requires an issue id");
+
+    const extraResult = module.parseCommand("scout aegis-fjm.8.1 extra-arg");
+    expect((extraResult as { reason?: string }).reason).toContain("accepts exactly one issue id");
+  });
 });

@@ -88,12 +88,12 @@ const ISSUE_SCOPED_COMMANDS = new Set<DirectCommandName>([
   "process",
 ]);
 
-const FIXED_COMMAND_KINDS = new Set<DirectCommandKind>([
+// Commands that are valid as single-word user input (excludes auto_on/auto_off which
+// must be entered as "auto on" / "auto off" through the explicit auto handler).
+const SINGLE_WORD_COMMANDS = new Set<DirectCommandKind>([
   "status",
   "pause",
   "resume",
-  "auto_on",
-  "auto_off",
   "scale",
   "kill",
   "restart",
@@ -126,19 +126,27 @@ export function parseCommand(input: string): ParsedCommand {
   const parts = normalized.split(" ");
   const commandName = parts[0];
 
-  if (commandName === "auto" && parts.length === 2) {
-    if (parts[1] === "on") {
+  // Handle "auto on" / "auto off" explicitly; reject bare "auto" or unknown subcommands.
+  if (commandName === "auto") {
+    if (parts.length === 1) {
+      return unsupported(input, "auto requires a subcommand: on or off.");
+    }
+    if (parts.length === 2 && parts[1] === "on") {
       return { kind: "auto_on" };
     }
-    if (parts[1] === "off") {
+    if (parts.length === 2 && parts[1] === "off") {
       return { kind: "auto_off" };
     }
-    return unsupported(input, `Unsupported auto subcommand: ${parts[1]}.`);
+    return unsupported(input, `Unsupported auto subcommand: ${parts.slice(1).join(" ")}.`);
   }
 
   if (ISSUE_SCOPED_COMMANDS.has(commandName as DirectCommandName)) {
-    if (parts.length !== 2 || parts[1] === "") {
+    if (parts.length < 2 || parts[1] === "") {
       return unsupported(input, `${commandName} requires an issue id.`);
+    }
+
+    if (parts.length > 2) {
+      return unsupported(input, `${commandName} accepts exactly one issue id.`);
     }
 
     if (!isSafeIssueId(parts[1])) {
@@ -151,7 +159,7 @@ export function parseCommand(input: string): ParsedCommand {
     };
   }
 
-  if (FIXED_COMMAND_KINDS.has(commandName as DirectCommandKind) && parts.length === 1) {
+  if (SINGLE_WORD_COMMANDS.has(commandName as DirectCommandKind) && parts.length === 1) {
     return {
       kind: commandName as FixedCommand["kind"],
     };
