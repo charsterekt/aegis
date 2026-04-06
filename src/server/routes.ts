@@ -373,7 +373,7 @@ export function createRestApiRouter(bindings: RestApiRouterBindings): RestApiRou
             request_id: request.body.request_id,
             acknowledged_at: now().toISOString(),
             server_state: "running",
-            mode: bindings.getOperatingMode?.() ?? "auto",
+            mode: bindings.getOperatingMode?.() ?? "conversational",
             message: "Orchestrator resumed",
           });
         }
