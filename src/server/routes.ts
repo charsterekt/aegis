@@ -135,12 +135,17 @@ export interface RestApiRouterBindings {
     context: CommandExecutionContext,
     executor: CommandExecutor,
   ) => MaybePromise<CommandExecutionResult>;
+  getCommandContext?: () => CommandExecutionContext;
   appendLearningRecord: (
     entry: Record<string, unknown>,
   ) => MaybePromise<Record<string, unknown>>;
   ingestBeadsHookEvent: (payload: unknown) => MaybePromise<void>;
   eventsTransport?: SseReplayTransport;
   now?: () => Date;
+  setOperatingMode?: (mode: "conversational" | "auto") => MaybePromise<void>;
+  pause?: () => MaybePromise<void>;
+  resume?: () => MaybePromise<void>;
+  getOperatingMode?: () => OrchestrationMode;
 }
 
 export interface SseReplayTransport {
@@ -165,22 +170,6 @@ export interface RestApiResponse<TBody = unknown> {
 export interface EventsRouteBody {
   replay: string[];
   subscribe: (writeFrame: (frame: string) => void) => () => void;
-}
-
-export interface RestApiRouterBindings {
-  getStateSnapshot: () => MaybePromise<unknown>;
-  executeControlAction: (
-    request: ControlApiRequest,
-  ) => MaybePromise<ControlApiResponse>;
-  appendLearningRecord: (
-    entry: Record<string, unknown>,
-  ) => MaybePromise<Record<string, unknown>>;
-  ingestBeadsHookEvent: (payload: unknown) => MaybePromise<void>;
-  eventsTransport?: SseReplayTransport;
-  now?: () => Date;
-  setOperatingMode?: (mode: "conversational" | "auto") => MaybePromise<void>;
-  pause?: () => MaybePromise<void>;
-  resume?: () => MaybePromise<void>;
 }
 
 export interface RestApiRouter {
@@ -300,13 +289,19 @@ export function createRestApiRouter(bindings: RestApiRouterBindings): RestApiRou
 
         // Check if this is a command action
         if (body.action === "command" && typeof bodyArgs?.command === "string") {
+          // Validate source for command actions (same as control actions)
+          if (!isControlApiSource(body.source)) {
+            return toJsonResponse(403, {
+              ok: false,
+              error: "Command actions require a trusted source (cli or olympus).",
+            });
+          }
+
           const commandText = bodyArgs.command as string;
           const parsed = parseCommand(commandText);
-          const context: CommandExecutionContext = {
-            operatingMode: { mode: "conversational", paused: false },
-            autoLoop: { enabledAt: null },
-            issueId: null,
-          };
+          const context = bindings.getCommandContext
+            ? bindings.getCommandContext()
+            : { operatingMode: { mode: "conversational", paused: false }, autoLoop: { enabledAt: null }, issueId: null } as CommandExecutionContext;
           const executor = createCommandExecutor(context);
           const result = await bindings.executeCommand?.(commandText, context, executor)
             ?? await executor(parsed, context);
@@ -365,7 +360,7 @@ export function createRestApiRouter(bindings: RestApiRouterBindings): RestApiRou
             request_id: request.body.request_id,
             acknowledged_at: now().toISOString(),
             server_state: "running",
-            mode: "conversational",
+            mode: bindings.getOperatingMode?.() ?? "conversational",
             message: "Orchestrator paused",
           });
         }
@@ -378,7 +373,7 @@ export function createRestApiRouter(bindings: RestApiRouterBindings): RestApiRou
             request_id: request.body.request_id,
             acknowledged_at: now().toISOString(),
             server_state: "running",
-            mode: "auto",
+            mode: bindings.getOperatingMode?.() ?? "auto",
             message: "Orchestrator resumed",
           });
         }

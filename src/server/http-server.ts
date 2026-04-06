@@ -326,6 +326,12 @@ export function createHttpServerController(
       operatingModeState = resumeOperatingMode(operatingModeState);
       publishOrchestratorStateEvent();
     },
+    getOperatingMode: () => getCurrentMode(),
+    getCommandContext: () => ({
+      operatingMode: { ...operatingModeState },
+      autoLoop: { ...autoLoopState },
+      issueId: null,
+    }),
   });
 
   async function handleRequest(request: IncomingMessage, response: ServerResponse) {
