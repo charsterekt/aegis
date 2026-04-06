@@ -15,12 +15,6 @@ export const COOLDOWN_FAILURE_THRESHOLD = 3;
 export const COOLDOWN_WINDOW_MS = 10 * 60 * 1000;
 export const COOLDOWN_SUPPRESSION_MS = 30 * 60 * 1000;
 
-export interface FailureRecord {
-  timestamp: string;
-  caste: string;
-  reason: string;
-}
-
 export function shouldTriggerCooldown(
   consecutiveFailures: number,
   failureWindowStartMs: number | null,

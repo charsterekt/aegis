@@ -222,17 +222,15 @@ describe("ReaperImpl — Sentinel", () => {
     const record = makeRecord("issue-1", DispatchStage.Reviewing);
     record.runningAgent = { ...record.runningAgent!, caste: "sentinel" };
 
-    // Note: computeNextStage for sentinel with no sentinelVerdict param
-    // returns Failed only when outcome !== "success". Since outcome IS
-    // "success" (valid verdict), we need to check what computeNextStage does.
-    // With sentinel + success + no verdict param → it returns Failed.
     const result = reaper.reap("issue-1", "sentinel", "completed", events, record);
 
-    // The reaper doesn't parse the verdict itself — it just checks existence.
-    // The caller (runSentinel) handles the verdict parsing and stage decision.
-    // So the reaper sees "success" for a valid verdict artifact.
+    // Reaper extracts the sentinel verdict and passes it to computeNextStage.
+    // A "fail" verdict produces outcome="success" (sentinel did its job) but
+    // nextStage=Failed because the underlying PR was rejected.
     expect(result.outcome).toBe("success");
     expect(result.artifacts.passed).toBe(true);
+    expect(result.nextStage).toBe(DispatchStage.Failed);
+    expect(result.incrementFailure).toBe(true);
   });
 
   it("reaps a crashed Sentinel as crash → failed", () => {

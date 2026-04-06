@@ -221,6 +221,7 @@ export class MonitorImpl implements Monitor {
   private events: MonitorEvent[] = [];
   private dailyBudget: DailyBudgetState;
   private nowMs: () => number;
+  private _stuckCheckIntervalMs: number;
 
   constructor(options?: { nowMs?: () => number; stuckCheckIntervalMs?: number }) {
     this.nowMs = options?.nowMs ?? (() => Date.now());
@@ -233,8 +234,6 @@ export class MonitorImpl implements Monitor {
       hardStopTriggered: false,
     };
   }
-
-  private _stuckCheckIntervalMs: number;
 
   // -----------------------------------------------------------------------
   // Public: Monitor interface
