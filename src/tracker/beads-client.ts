@@ -82,10 +82,20 @@ export interface BeadsClient {
   linkIssue(parentId: string, childId: string): Promise<void>;
 
   /**
+   * Remove a previously recorded parent-child origin link.
+   */
+  unlinkIssue(parentId: string, childId: string): Promise<void>;
+
+  /**
    * Add a blocker dependency so `blockedId` does not appear in `bd ready`
    * until `blockerId` is resolved.
    */
   addBlocker(blockedId: string, blockerId: string): Promise<void>;
+
+  /**
+   * Remove a blocker dependency previously created with `addBlocker`.
+   */
+  removeBlocker(blockedId: string, blockerId: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -269,7 +279,27 @@ export class BeadsCliClient implements BeadsClient {
 
     // Link the new issue to its origin if specified (SPECv2 §5.5).
     if (input.originId) {
-      await this.linkIssue(input.originId, created.id);
+      try {
+        await this.linkIssue(input.originId, created.id);
+      } catch (error) {
+        let cleanupError: Error | null = null;
+        try {
+          await this.closeIssue(
+            created.id,
+            `Failed to link ${created.id} to origin ${input.originId}`,
+          );
+        } catch (rollbackError) {
+          cleanupError = rollbackError as Error;
+        }
+        if (cleanupError) {
+          const surfacedError = new Error(
+            `Failed to link ${created.id} to origin ${input.originId}: ${(error as Error).message}; rollback failed to close ${created.id}: ${cleanupError.message}`,
+          ) as Error & { createdIssue?: AegisIssue };
+          surfacedError.createdIssue = created;
+          throw surfacedError;
+        }
+        throw error;
+      }
     }
 
     return created;
@@ -327,8 +357,16 @@ export class BeadsCliClient implements BeadsClient {
     ]);
   }
 
+  async unlinkIssue(parentId: string, childId: string): Promise<void> {
+    await this._exec(["dep", "remove", childId, parentId]);
+  }
+
   async addBlocker(blockedId: string, blockerId: string): Promise<void> {
     await this._exec(["dep", "add", blockedId, blockerId]);
+  }
+
+  async removeBlocker(blockedId: string, blockerId: string): Promise<void> {
+    await this._exec(["dep", "remove", blockedId, blockerId]);
   }
 }
 
