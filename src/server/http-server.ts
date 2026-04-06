@@ -14,6 +14,20 @@ import {
   SSE_EVENT_STREAM_PATH,
 } from "../events/sse-stream.js";
 import {
+  createOperatingModeState,
+  enableAutoMode,
+  disableAutoMode,
+  pauseOperatingMode,
+  resumeOperatingMode,
+  type OperatingModeState,
+} from "../core/operating-mode.js";
+import {
+  createAutoLoopState,
+  enableAutoLoop,
+  disableAutoLoop,
+  type AutoLoopState,
+} from "../core/auto-loop.js";
+import {
   HTTP_ROUTE_PATHS,
   createRestApiRouter,
   type EventsRouteBody,
@@ -44,6 +58,9 @@ export interface HttpServerController {
   start(options: HttpServerStartOptions): Promise<{ host: string; port: number; url: string }>;
   stop(): Promise<void>;
   status(): ServerLifecycleState;
+  setOperatingMode(mode: "conversational" | "auto"): void;
+  pause(): void;
+  resume(): void;
 }
 
 export function createHttpServerContract(): HttpServerContract {
@@ -57,7 +74,6 @@ export function createHttpServerContract(): HttpServerContract {
 const OLYMPUS_DIST_INDEX = "olympus/dist/index.html";
 const OLYMPUS_DIST_DIRECTORY = "olympus/dist";
 const OLYMPUS_ASSET_DIRECTORY = "assets";
-const DEFAULT_ORCHESTRATION_MODE: OrchestrationMode = "conversational";
 const SSE_RETRY_MS = 1_500;
 const OLYMPUS_FALLBACK_SHELL = `<!doctype html>
 <html lang="en">
@@ -202,6 +218,8 @@ export function createHttpServerController(
   let startedAt: number | null = null;
   let serverToken: string | undefined;
   let nextEventSequence = 1;
+  let operatingModeState: OperatingModeState = createOperatingModeState();
+  let autoLoopState: AutoLoopState = createAutoLoopState();
   const activeSseConnections = new Set<ServerResponse>();
   const replayBus = createInMemoryLiveEventBus();
   const sseTransport = createSsePublishReplayTransport(replayBus, {
@@ -214,6 +232,10 @@ export function createHttpServerController(
     bindings.eventPublisher?.publish(event);
   }
 
+  function getCurrentMode(): OrchestrationMode {
+    return operatingModeState.mode;
+  }
+
   function publishOrchestratorStateEvent() {
     publishEvent(
       createLiveEvent({
@@ -223,7 +245,7 @@ export function createHttpServerController(
         sequence: nextEventSequence++,
         payload: {
           server_state: lifecycleState,
-          mode: DEFAULT_ORCHESTRATION_MODE,
+          mode: getCurrentMode(),
           uptime_ms: startedAt === null ? 0 : Math.max(0, Date.now() - startedAt),
           queue_depth: 0,
         },
@@ -235,7 +257,8 @@ export function createHttpServerController(
     getStateSnapshot: () => ({
       orchestrator: {
         server_state: lifecycleState,
-        mode: DEFAULT_ORCHESTRATION_MODE,
+        mode: getCurrentMode(),
+        paused: operatingModeState.paused,
         uptime_ms: startedAt === null ? 0 : Math.max(0, Date.now() - startedAt),
         ...(serverToken ? { server_token: serverToken } : {}),
       },
@@ -272,7 +295,7 @@ export function createHttpServerController(
         request_id: request.request_id,
         acknowledged_at: new Date().toISOString(),
         server_state: lifecycleState,
-        mode: DEFAULT_ORCHESTRATION_MODE,
+        mode: getCurrentMode(),
         message: `${request.action} accepted`,
       };
     },
@@ -285,6 +308,24 @@ export function createHttpServerController(
       publishOrchestratorStateEvent();
     },
     eventsTransport: sseTransport,
+    setOperatingMode: async (mode: "conversational" | "auto") => {
+      if (mode === "auto") {
+        operatingModeState = enableAutoMode(operatingModeState);
+        autoLoopState = enableAutoLoop(new Date().toISOString());
+      } else {
+        operatingModeState = disableAutoMode(operatingModeState);
+        autoLoopState = disableAutoLoop();
+      }
+      publishOrchestratorStateEvent();
+    },
+    pause: async () => {
+      operatingModeState = pauseOperatingMode(operatingModeState);
+      publishOrchestratorStateEvent();
+    },
+    resume: async () => {
+      operatingModeState = resumeOperatingMode(operatingModeState);
+      publishOrchestratorStateEvent();
+    },
   });
 
   async function handleRequest(request: IncomingMessage, response: ServerResponse) {
@@ -456,6 +497,24 @@ export function createHttpServerController(
     },
     status() {
       return lifecycleState;
+    },
+    setOperatingMode(mode: "conversational" | "auto") {
+      if (mode === "auto") {
+        operatingModeState = enableAutoMode(operatingModeState);
+        autoLoopState = enableAutoLoop(new Date().toISOString());
+      } else {
+        operatingModeState = disableAutoMode(operatingModeState);
+        autoLoopState = disableAutoLoop();
+      }
+      publishOrchestratorStateEvent();
+    },
+    pause() {
+      operatingModeState = pauseOperatingMode(operatingModeState);
+      publishOrchestratorStateEvent();
+    },
+    resume() {
+      operatingModeState = resumeOperatingMode(operatingModeState);
+      publishOrchestratorStateEvent();
     },
   };
 }

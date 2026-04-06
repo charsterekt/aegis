@@ -16,6 +16,10 @@ export const CONTROL_API_ACTIONS = [
   "status",
   "stop",
   "command",
+  "auto_on",
+  "auto_off",
+  "pause",
+  "resume",
 ] as const;
 export const CONTROL_API_REQUEST_FIELDS = [
   "action",
@@ -174,6 +178,9 @@ export interface RestApiRouterBindings {
   ingestBeadsHookEvent: (payload: unknown) => MaybePromise<void>;
   eventsTransport?: SseReplayTransport;
   now?: () => Date;
+  setOperatingMode?: (mode: "conversational" | "auto") => MaybePromise<void>;
+  pause?: () => MaybePromise<void>;
+  resume?: () => MaybePromise<void>;
 }
 
 export interface RestApiRouter {
@@ -319,6 +326,60 @@ export function createRestApiRouter(bindings: RestApiRouterBindings): RestApiRou
           return toJsonResponse(400, {
             ok: false,
             error: "Invalid steer request payload.",
+          });
+        }
+
+        const action = request.body.action;
+
+        if (action === "auto_on" && bindings.setOperatingMode) {
+          await bindings.setOperatingMode("auto");
+          return toJsonResponse(200, {
+            ok: true,
+            action: "auto_on",
+            request_id: request.body.request_id,
+            acknowledged_at: now().toISOString(),
+            server_state: "running",
+            mode: "auto",
+            message: "Auto mode enabled",
+          });
+        }
+
+        if (action === "auto_off" && bindings.setOperatingMode) {
+          await bindings.setOperatingMode("conversational");
+          return toJsonResponse(200, {
+            ok: true,
+            action: "auto_off",
+            request_id: request.body.request_id,
+            acknowledged_at: now().toISOString(),
+            server_state: "running",
+            mode: "conversational",
+            message: "Auto mode disabled",
+          });
+        }
+
+        if (action === "pause" && bindings.pause) {
+          await bindings.pause();
+          return toJsonResponse(200, {
+            ok: true,
+            action: "pause",
+            request_id: request.body.request_id,
+            acknowledged_at: now().toISOString(),
+            server_state: "running",
+            mode: "conversational",
+            message: "Orchestrator paused",
+          });
+        }
+
+        if (action === "resume" && bindings.resume) {
+          await bindings.resume();
+          return toJsonResponse(200, {
+            ok: true,
+            action: "resume",
+            request_id: request.body.request_id,
+            acknowledged_at: now().toISOString(),
+            server_state: "running",
+            mode: "auto",
+            message: "Orchestrator resumed",
           });
         }
 

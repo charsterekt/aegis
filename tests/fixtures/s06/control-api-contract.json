@@ -11,7 +11,11 @@
     "start",
     "status",
     "stop",
-    "command"
+    "command",
+    "auto_on",
+    "auto_off",
+    "pause",
+    "resume"
   ],
   "requestFields": [
     "action",
