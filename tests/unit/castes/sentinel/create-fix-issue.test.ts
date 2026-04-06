@@ -4,6 +4,8 @@
  * Tests the convert-from-verdict-to-fix-issues logic in create-fix-issue.ts.
  */
 
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -170,7 +172,7 @@ describe("createFixIssueInputs", () => {
       makeVerdict(),
     );
 
-    expect(inputs[0].description).toContain("sentinel-verdict-aegis-fjm.7");
+    expect(inputs[0].description).toContain(join(".aegis", "sentinel", "aegis-fjm.7.json"));
   });
 
   it("includes review summary in the description for context", () => {

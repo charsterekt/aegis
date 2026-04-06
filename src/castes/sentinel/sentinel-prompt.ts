@@ -69,9 +69,10 @@ export function buildSentinelPrompt(contract: SentinelPromptContract): string {
     "Return a JSON object with exactly these keys:",
     '- "verdict": "pass" | "fail"',
     '- "reviewSummary": string',
-    '- "issuesFound": string[]',
-    '- "followUpIssueIds": string[]',
-    '  "followUpIssueIds" must be non-empty when verdict is "fail".',
+    '- "issuesFound": string[] — list each concrete issue discovered.',
+    '  For "fail" verdicts, each entry becomes a corrective fix issue.',
+    '- "followUpIssueIds": string[] — ids of any fix issues you created.',
+    '  Leave empty if you did not create issues. Informational only.',
     '- "riskAreas": string[]',
   ].join("\n");
 }

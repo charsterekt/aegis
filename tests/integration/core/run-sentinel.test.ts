@@ -148,17 +148,18 @@ function makeFailingRuntime(errorMessage: string): AgentRuntime {
 
 function makeTracker(overrides: Partial<SentinelIssueCreator> = {}): SentinelIssueCreator {
   return {
-    createIssue: vi.fn(async (input) => ({
-      ...makeIssue({
+    createIssue: vi.fn(async (input) => {
+      return makeIssue({
         id: "aegis-fjm.30.1",
         title: input.title,
         description: input.description,
         issueClass: input.issueClass,
         labels: [...input.labels],
         parentId: input.originId,
-      }),
-    })),
+      });
+    }),
     addBlocker: vi.fn(async () => undefined),
+    closeIssue: vi.fn(async (id: string) => makeIssue({ id, status: "closed" })),
     ...overrides,
   };
 }
@@ -395,7 +396,7 @@ describe("runSentinel", () => {
     });
 
     expect(result.updatedRecord.stage).toBe(DispatchStage.Failed);
-    expect(result.failureReason).toMatch(/JSON/i);
+    expect(result.failureReason).toMatch(/final message payload/i);
   });
 
   it("fails closed when Sentinel returns an invalid verdict shape", async () => {
@@ -409,7 +410,7 @@ describe("runSentinel", () => {
     });
 
     expect(result.updatedRecord.stage).toBe(DispatchStage.Failed);
-    expect(result.failureReason).toMatch(/verdict/i);
+    expect(result.failureReason).toMatch(/final message payload|verdict/i);
   });
 
   it("uses the default Sentinel budget of 8 turns and 100k tokens when budget matches spec", async () => {
@@ -476,5 +477,134 @@ describe("runSentinel", () => {
         issueId: "aegis-fjm.42",
       }),
     );
+  });
+
+  it("fails closed and closes orphaned fix issues when addBlocker throws", async () => {
+    const failVerdict = JSON.stringify({
+      verdict: "fail",
+      reviewSummary: "Found issues",
+      issuesFound: ["Bug 1", "Bug 2"],
+      followUpIssueIds: [],
+      riskAreas: [],
+    });
+
+    const createdIssue1 = makeIssue({ id: "fix-1", title: "Fix: Bug 1", issueClass: "fix" });
+    const createdIssue2 = makeIssue({ id: "fix-2", title: "Fix: Bug 2", issueClass: "fix" });
+    let callCount = 0;
+
+    const tracker = makeTracker({
+      createIssue: vi.fn(async () => {
+        callCount += 1;
+        return callCount === 1 ? createdIssue1 : createdIssue2;
+      }),
+      addBlocker: vi.fn(async (blockedId: string, blockerId: string) => {
+        // Succeed for first issue, fail for second
+        if (blockerId === "fix-1") return undefined;
+        throw new Error("Blocker link failed");
+      }),
+    });
+
+    // runSentinel catches materializeFixIssues errors and returns a failed result
+    const result = await runSentinel({
+      issue: makeIssue(),
+      record: makeRecord(),
+      runtime: makeRuntime(failVerdict),
+      tracker,
+      budget,
+      projectRoot,
+    });
+
+    expect(result.updatedRecord.stage).toBe(DispatchStage.Failed);
+    expect(result.failureReason).toMatch(/Blocker link failed/);
+
+    // The second fix issue should be closed since its blocker was never linked
+    expect(tracker.closeIssue).toHaveBeenCalledWith(
+      "fix-2",
+      "Sentinel review for aegis-fjm.1 failed during fix-issue materialization",
+    );
+  });
+
+  it("fails closed when session ends with non-completed reason", async () => {
+    const runtime: AgentRuntime = {
+      async spawn(): Promise<AgentHandle> {
+        let listener: ((event: AgentEvent) => void) | null = null;
+        return {
+          async prompt(): Promise<void> {
+            // Emit session_ended with a non-completed reason
+            listener?.({
+              type: "session_ended",
+              timestamp: "2026-04-06T17:00:02.000Z",
+              issueId: "aegis-fjm.1",
+              caste: "sentinel",
+              reason: "budget_exceeded",
+              stats: { input_tokens: 0, output_tokens: 0, session_turns: 0, wall_time_sec: 0 },
+            });
+          },
+          async steer(): Promise<void> {},
+          async abort(): Promise<void> {},
+          subscribe(next): () => void {
+            listener = next;
+            return () => { listener = null; };
+          },
+          getStats() {
+            return { input_tokens: 0, output_tokens: 0, session_turns: 0, wall_time_sec: 0 };
+          },
+        };
+      },
+    };
+
+    const result = await runSentinel({
+      issue: makeIssue(),
+      record: makeRecord(),
+      runtime,
+      tracker: makeTracker(),
+      budget,
+      projectRoot,
+    });
+
+    expect(result.updatedRecord.stage).toBe(DispatchStage.Failed);
+    expect(result.failureReason).toMatch(/budget_exceeded/);
+  });
+
+  it("fails closed when Sentinel returns no messages", async () => {
+    const runtime: AgentRuntime = {
+      async spawn(): Promise<AgentHandle> {
+        let listener: ((event: AgentEvent) => void) | null = null;
+        return {
+          async prompt(): Promise<void> {
+            // Emit session_ended without any messages
+            listener?.({
+              type: "session_ended",
+              timestamp: "2026-04-06T17:00:02.000Z",
+              issueId: "aegis-fjm.1",
+              caste: "sentinel",
+              reason: "completed",
+              stats: { input_tokens: 0, output_tokens: 0, session_turns: 0, wall_time_sec: 0 },
+            });
+          },
+          async steer(): Promise<void> {},
+          async abort(): Promise<void> {},
+          subscribe(next): () => void {
+            listener = next;
+            return () => { listener = null; };
+          },
+          getStats() {
+            return { input_tokens: 0, output_tokens: 0, session_turns: 0, wall_time_sec: 0 };
+          },
+        };
+      },
+    };
+
+    const result = await runSentinel({
+      issue: makeIssue(),
+      record: makeRecord(),
+      runtime,
+      tracker: makeTracker(),
+      budget,
+      projectRoot,
+    });
+
+    expect(result.updatedRecord.stage).toBe(DispatchStage.Failed);
+    expect(result.failureReason).toMatch(/final message payload/);
   });
 });

@@ -7,6 +7,8 @@
  * explicitly.
  */
 
+import { join } from "node:path";
+
 import type { CreateIssueInput, IssuePriority, AegisIssue } from "./issue-model.js";
 import type { SentinelVerdict } from "../castes/sentinel/sentinel-parser.js";
 
@@ -54,7 +56,9 @@ export function createFixIssueInputs(
     return [];
   }
 
-  const verdictRef = `sentinel-verdict-${originIssue.id}`;
+  // The verdictRef matches the path used by persistSentinelVerdict() in
+  // run-sentinel.ts: .aegis/sentinel/<issueId>.json
+  const verdictRef = join(".aegis", "sentinel", `${originIssue.id}.json`);
 
   return verdict.issuesFound.map((issueDescription) => ({
     title: `Fix: ${issueDescription}`,

@@ -41,6 +41,7 @@ import { DispatchStage, transitionStage } from "./stage-transition.js";
 export interface SentinelIssueCreator {
   createIssue(input: CreateIssueInput): Promise<CreatedIssue>;
   addBlocker(blockedId: string, blockerId: string): Promise<void>;
+  closeIssue(id: string, reason?: string): Promise<CreatedIssue>;
 }
 
 export interface RunSentinelInput {
@@ -83,13 +84,34 @@ function persistSentinelVerdict(
   return verdictRef;
 }
 
+function isSentinelVerdictJson(text: string): boolean {
+  try {
+    const parsed = JSON.parse(text);
+    return (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "verdict" in parsed &&
+      "reviewSummary" in parsed &&
+      "issuesFound" in parsed &&
+      "followUpIssueIds" in parsed &&
+      "riskAreas" in parsed
+    );
+  } catch {
+    return false;
+  }
+}
+
 function findFinalSentinelPayloadMessage(messages: readonly string[]): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const candidate = messages[index].trim();
     if (candidate === "") {
       continue;
     }
-    return messages[index];
+    // Validate that the message looks like a verdict artifact, matching the
+    // Titan pattern of scanning for the latest valid payload.
+    if (isSentinelVerdictJson(candidate)) {
+      return messages[index];
+    }
   }
   throw new Error("Sentinel did not return a final message payload");
 }
@@ -175,15 +197,25 @@ async function materializeFixIssues(
     for (const fixInput of fixInputs) {
       const createdIssue = await tracker.createIssue(fixInput);
       createdIssues.push(createdIssue);
-      issuesWithAddedBlockers.push(createdIssue);
       await tracker.addBlocker(issue.id, createdIssue.id);
+      issuesWithAddedBlockers.push(createdIssue);
     }
   } catch (error) {
-    // Best-effort cleanup: close any issues that were successfully created
-    // but failed to have their blockers linked.
+    // Best-effort cleanup: close any fix issues that were created but failed
+    // to have their blockers linked, following the Oracle rollback pattern.
     for (const createdIssue of createdIssues) {
-      if (!issuesWithAddedBlockers.some((i) => i.id === createdIssue.id)) {
+      if (issuesWithAddedBlockers.some((i) => i.id === createdIssue.id)) {
+        // Blocker was already linked for this issue; skip cleanup.
         continue;
+      }
+      // This issue was created but addBlocker was never called or threw.
+      try {
+        await tracker.closeIssue(
+          createdIssue.id,
+          `Sentinel review for ${issue.id} failed during fix-issue materialization`,
+        );
+      } catch {
+        // Swallow close errors; the original error is more important.
       }
     }
     throw error;
@@ -207,7 +239,7 @@ export async function runSentinel(input: RunSentinelInput): Promise<RunSentinelR
     issueId: input.issue.id,
     issueTitle: input.issue.title,
     issueDescription: input.issue.description,
-    targetBranch: input.issue.labels.includes("merged") ? "main" : "main",
+    targetBranch: "main",
     baseBranch: "main",
   });
   const prompt = buildSentinelPrompt(promptContract);
