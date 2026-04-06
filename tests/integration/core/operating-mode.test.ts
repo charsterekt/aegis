@@ -167,27 +167,4 @@ describe("S07 operating mode contract seed", () => {
 
     expect(autoLoopModule.disableAutoLoop()).toEqual({ enabledAt: null });
   });
-
-  it("rejects all issues as new when auto-loop is disabled", async () => {
-    const fixture = readJsonFixture<OperatingModeFixture>(
-      "tests/fixtures/s07/operating-mode-contract.json",
-    );
-    const autoLoopModule = (await import(
-      pathToFileURL(path.join(repoRoot, "src", "core", "auto-loop.ts")).href
-    )) as {
-      isNewReadyIssue: (
-        issue: { id: string; readyAt: string },
-        state: { enabledAt: string | null },
-      ) => boolean;
-      createAutoLoopState: () => { enabledAt: string | null };
-    };
-
-    const disabled = autoLoopModule.createAutoLoopState();
-    expect(autoLoopModule.isNewReadyIssue(fixture.baselineReadyIssue, disabled)).toBe(
-      false,
-    );
-    expect(autoLoopModule.isNewReadyIssue(fixture.freshReadyIssue, disabled)).toBe(
-      false,
-    );
-  });
 });

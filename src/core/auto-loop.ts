@@ -50,7 +50,6 @@ export function isNewReadyIssue(
     return false;
   }
 
-  // Strict: issues already ready when auto was enabled are excluded (SPECv2 §7.2).
   return parseTimestamp(issue.readyAt, "issue.readyAt") >
     parseTimestamp(state.enabledAt, "state.enabledAt");
 }
