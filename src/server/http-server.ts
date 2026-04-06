@@ -39,6 +39,8 @@ import {
   buildScopeVisibilitySummary,
 } from "../core/overlap-visibility.js";
 import type { ScopeAllocation } from "../core/scope-allocator.js";
+import { handleAppendLearning, resolveMnemosynePath } from "./learning-route.js";
+import { loadConfig } from "../config/load-config.js";
 
 export const HTTP_SERVER_INITIAL_STATE: ServerLifecycleState = "stopped";
 
@@ -323,11 +325,12 @@ export function createHttpServerController(
         message: `${request.action} accepted`,
       };
     },
-    appendLearningRecord: async (entry) => ({
-      ok: true,
-      recorded_at: new Date().toISOString(),
-      entry,
-    }),
+    appendLearningRecord: async (entry) => {
+      const root = process.cwd();
+      const config = loadConfig();
+      const mnemosynePath = resolveMnemosynePath(root);
+      return handleAppendLearning(entry, mnemosynePath, config.mnemosyne);
+    },
     ingestBeadsHookEvent: async () => {
       publishOrchestratorStateEvent();
     },
