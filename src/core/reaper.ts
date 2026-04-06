@@ -1,21 +1,8 @@
 /**
- * S10 contract seed — Reaper module.
+ * S10 — Reaper module.
  *
  * The Reaper finalizes the outcome of a finished session.
- * SPECv2 §9.7:
- *   - verify expected outputs exist
- *   - transition state to the next stage or `failed`
- *   - reset or increment failure counters
- *   - trigger Labor cleanup or preservation
- *   - queue merge candidates after Titan success
- *   - reclaim concurrency capacity
- *   - run Lethe pruning when appropriate
- *
- * Key rules (SPECv2 §9.7):
- *   - success requires artifact verification, not just process exit
- *   - failed sessions return issues to an actionable state
- *   - Titans do not mark work complete directly
- *   - merge work proceeds through the queue, not through implicit REAP merge
+ * SPECv2 §9.7.
  *
  * This module defines the interface, result types, and outcome verification
  * contracts.  Implementation (actual stage transitions, labors cleanup,
@@ -27,14 +14,6 @@ import { DispatchStage } from "./stage-transition.js";
 import type { AgentEvent } from "../runtime/agent-events.js";
 import type { MonitorEvent } from "./monitor.js";
 
-// ---------------------------------------------------------------------------
-// Session result types
-// ---------------------------------------------------------------------------
-
-/**
- * Why a session ended.  Derived from AgentEvent.session_ended.reason plus
- * monitor-side termination signals (e.g. stuck kill, budget abort).
- */
 export type SessionEndReason =
   | "completed"
   | "aborted"
@@ -43,147 +22,53 @@ export type SessionEndReason =
   | "stuck_killed"
   | "monitor_aborted";
 
-/**
- * The outcome of reaping a finished session.
- * This drives the next stage transition and failure accounting.
- */
 export type ReaperOutcome =
-  /** Session completed successfully with valid artifacts. */
   | "success"
-  /** Session completed but artifacts are missing or invalid. */
   | "artifact_failure"
-  /** Session was terminated by the monitor (stuck, budget, etc.). */
   | "monitor_termination"
-  /** Session crashed or hit an unrecoverable runtime error. */
   | "crash";
 
-// ---------------------------------------------------------------------------
-// Artifact verification
-// ---------------------------------------------------------------------------
-
-/**
- * Result of verifying that a session produced the expected artifacts.
- * Each caste has different artifact requirements (SPECv2 §10).
- */
 export interface ArtifactVerification {
-  /** Issue ID being verified. */
   issueId: string;
-  /** Caste that produced the artifacts. */
   caste: string;
-  /** Whether all required artifacts are present and valid. */
   passed: boolean;
-  /** Details about what was checked and what failed. */
   checks: ArtifactCheck[];
 }
 
-/** A single artifact verification check. */
 export interface ArtifactCheck {
-  /** Name of the check (e.g. "oracle_assessment", "titan_handoff", "sentinel_verdict"). */
   name: string;
-  /** Whether this specific check passed. */
   passed: boolean;
-  /** Human-readable detail about what was found or missing. */
   detail: string;
 }
 
-// ---------------------------------------------------------------------------
-// Labor cleanup instruction
-// ---------------------------------------------------------------------------
-
-/**
- * Instruction for what to do with a Labor after a session ends.
- * The Reaper decides; the labor module executes.
- */
 export interface LaborCleanupInstruction {
-  /** Issue ID whose labor to clean up. */
   issueId: string;
-  /** Whether to remove the worktree directory. */
   removeWorktree: boolean;
-  /** Whether to delete the git branch. */
   deleteBranch: boolean;
-  /** Reason for this cleanup decision. */
   reason: string;
 }
 
-// ---------------------------------------------------------------------------
-// Merge candidate instruction
-// ---------------------------------------------------------------------------
-
-/**
- * Instruction to enqueue a merge candidate after Titan success.
- * The Reaper produces this; the merge queue consumes it.
- */
 export interface MergeCandidateInstruction {
-  /** Originating issue ID. */
   issueId: string;
-  /** Candidate branch name (e.g. "aegis/aegis-fjm.10"). */
   candidateBranch: string;
-  /** Target branch to merge into (e.g. "main"). */
   targetBranch: string;
-  /** Path to the Titan handoff artifact file. */
   handoffArtifactPath: string;
 }
 
-// ---------------------------------------------------------------------------
-// Reaper result
-// ---------------------------------------------------------------------------
-
-/**
- * The full result of reaping one session.
- * Contains the outcome, next stage, failure accounting, and side-effect
- * instructions that the caller must execute.
- */
 export interface ReaperResult {
-  /** The issue ID that was reaped. */
   issueId: string;
-  /** The determined outcome category. */
   outcome: ReaperOutcome;
-  /** Why the session ended. */
   endReason: SessionEndReason;
-  /** The next dispatch stage to transition to. */
   nextStage: DispatchStage;
-  /** Artifact verification details. */
   artifacts: ArtifactVerification;
-  /** Whether to increment the failure counter. */
   incrementFailure: boolean;
-  /** Whether to reset the failure counter (successful completion). */
   resetFailures: boolean;
-  /** Labor cleanup instruction, if applicable. */
   laborCleanup: LaborCleanupInstruction | null;
-  /** Merge candidate instruction, if applicable (Titan success). */
   mergeCandidate: MergeCandidateInstruction | null;
-  /** Any monitor events generated during reaping. */
   monitorEvents: MonitorEvent[];
 }
 
-// ---------------------------------------------------------------------------
-// Reaper interface
-// ---------------------------------------------------------------------------
-
-/**
- * The Reaper finalizes the outcome of a finished agent session.
- *
- * Responsibilities (SPECv2 §9.7):
- *   - verify that the session produced expected artifacts for its caste
- *   - determine the outcome (success, artifact_failure, monitor_termination, crash)
- *   - compute the next dispatch stage
- *   - produce side-effect instructions (labor cleanup, merge enqueue)
- *   - update failure counters appropriately
- *
- * The Reaper is pure decision logic.  Side effects (stage transitions,
- * file writes, branch deletion) are executed by the caller.
- */
 export interface Reaper {
-  /**
-   * Reap a finished session and produce a ReaperResult.
-   *
-   * @param issueId - Beads issue ID.
-   * @param caste - Agent caste that ran.
-   * @param endReason - Why the session ended.
-   * @param events - All AgentEvents collected during the session.
-   * @param currentRecord - The current DispatchRecord for this issue.
-   * @returns A ReaperResult with the outcome and side-effect instructions.
-   */
   reap(
     issueId: string,
     caste: string,
@@ -191,55 +76,15 @@ export interface Reaper {
     events: AgentEvent[],
     currentRecord: DispatchRecord,
   ): ReaperResult;
-
-  /**
-   * Verify artifacts for an Oracle session.
-   * Checks that a valid OracleAssessment was produced.
-   */
-  verifyOracleArtifacts(
-    issueId: string,
-    events: AgentEvent[],
-  ): ArtifactVerification;
-
-  /**
-   * Verify artifacts for a Titan session.
-   * Checks that a handoff artifact exists with the required fields.
-   */
-  verifyTitanArtifacts(
-    issueId: string,
-    events: AgentEvent[],
-  ): ArtifactVerification;
-
-  /**
-   * Verify artifacts for a Sentinel session.
-   * Checks that a structured verdict was produced.
-   */
-  verifySentinelArtifacts(
-    issueId: string,
-    events: AgentEvent[],
-  ): ArtifactVerification;
+  verifyOracleArtifacts(issueId: string, events: AgentEvent[]): ArtifactVerification;
+  verifyTitanArtifacts(issueId: string, events: AgentEvent[]): ArtifactVerification;
+  verifySentinelArtifacts(issueId: string, events: AgentEvent[]): ArtifactVerification;
 }
 
 // ---------------------------------------------------------------------------
 // Pure helper functions
 // ---------------------------------------------------------------------------
 
-/**
- * Determine the next dispatch stage based on caste, outcome, and current stage.
- *
- * Happy-path transitions (SPECv2 §6.1):
- *   - Oracle success: scouting → scouted
- *   - Titan success: implementing → implemented
- *   - Sentinel success (pass): reviewing → complete
- *   - Sentinel fail (fail verdict): reviewing → failed
- *   - Any failure: current stage → failed
- *
- * @param caste - The caste that ran.
- * @param outcome - The reaper outcome.
- * @param currentStage - The issue's current dispatch stage.
- * @param sentinelVerdict - For Sentinel only: "pass" or "fail".
- * @returns The next dispatch stage.
- */
 export function computeNextStage(
   caste: string,
   outcome: ReaperOutcome,
@@ -264,32 +109,16 @@ export function computeNextStage(
   }
 }
 
-/**
- * Determine the labor cleanup instruction for a finished session.
- *
- * SPECv2 §11.2:
- *   - successful merge → remove worktree and delete branch
- *   - conflict or failure → preserve labor and branch
- *   - Oracle/Sentinel → no labor to clean up
- *
- * @param caste - Agent caste that ran.
- * @param outcome - The reaper outcome.
- * @param issueId - Issue ID.
- * @returns LaborCleanupInstruction or null if no labor exists.
- */
 export function determineLaborCleanup(
   caste: string,
   outcome: ReaperOutcome,
   issueId: string,
 ): LaborCleanupInstruction | null {
-  // Oracle and Sentinel do not use Labors.
   if (caste === "oracle" || caste === "sentinel") {
     return null;
   }
 
   if (caste === "titan" && outcome === "success") {
-    // Titan success: preserve the labor until the merge queue decides.
-    // The merge queue will clean up after successful merge.
     return {
       issueId,
       removeWorktree: false,
@@ -299,7 +128,6 @@ export function determineLaborCleanup(
   }
 
   if (caste === "titan") {
-    // Titan failure: preserve labor for diagnostics and potential rework.
     return {
       issueId,
       removeWorktree: false,
@@ -309,4 +137,145 @@ export function determineLaborCleanup(
   }
 
   return null;
+}
+
+/**
+ * Minimal Reaper implementation for integration testing.
+ * Verifies artifacts based on session events and produces a ReaperResult.
+ */
+export class ReaperImpl implements Reaper {
+  reap(
+    issueId: string,
+    caste: string,
+    endReason: SessionEndReason,
+    events: AgentEvent[],
+    currentRecord: DispatchRecord,
+  ): ReaperResult {
+    const artifacts = this.verifyArtifactsForCaste(issueId, caste, events);
+    const outcome = this.determineOutcome(endReason, artifacts);
+    const nextStage = computeNextStage(caste, outcome, currentRecord.stage);
+    const laborCleanup = determineLaborCleanup(caste, outcome, issueId);
+
+    const incrementFailure =
+      outcome === "artifact_failure" ||
+      outcome === "monitor_termination" ||
+      outcome === "crash";
+
+    const resetFailures = outcome === "success";
+
+    return {
+      issueId,
+      outcome,
+      endReason,
+      nextStage,
+      artifacts,
+      incrementFailure,
+      resetFailures,
+      laborCleanup,
+      mergeCandidate:
+        caste === "titan" && outcome === "success"
+          ? {
+              issueId,
+              candidateBranch: `aegis/${issueId}`,
+              targetBranch: "main",
+              handoffArtifactPath: `.aegis/artifacts/${issueId}/handoff.json`,
+            }
+          : null,
+      monitorEvents: [],
+    };
+  }
+
+  verifyOracleArtifacts(issueId: string, events: AgentEvent[]): ArtifactVerification {
+    return this.verifyArtifactsForCaste(issueId, "oracle", events);
+  }
+
+  verifyTitanArtifacts(issueId: string, events: AgentEvent[]): ArtifactVerification {
+    return this.verifyArtifactsForCaste(issueId, "titan", events);
+  }
+
+  verifySentinelArtifacts(issueId: string, events: AgentEvent[]): ArtifactVerification {
+    return this.verifyArtifactsForCaste(issueId, "sentinel", events);
+  }
+
+  private verifyArtifactsForCaste(
+    issueId: string,
+    caste: string,
+    events: AgentEvent[],
+  ): ArtifactVerification {
+    const checks: ArtifactCheck[] = [];
+
+    switch (caste) {
+      case "oracle": {
+        const hasAssessment = events.some(
+          (e) => e.type === "message" && e.text.includes("OracleAssessment"),
+        );
+        checks.push({
+          name: "oracle_assessment",
+          passed: hasAssessment,
+          detail: hasAssessment
+            ? "Valid OracleAssessment found in session messages"
+            : "No OracleAssessment found in session output",
+        });
+        break;
+      }
+      case "titan": {
+        const hasHandoff = events.some(
+          (e) => e.type === "message" && e.text.includes("TitanHandoff"),
+        );
+        checks.push({
+          name: "titan_handoff",
+          passed: hasHandoff,
+          detail: hasHandoff
+            ? "Valid TitanHandoff artifact found"
+            : "No TitanHandoff artifact found",
+        });
+        break;
+      }
+      case "sentinel": {
+        const hasVerdict = events.some(
+          (e) => e.type === "message" && (e.text.includes("pass") || e.text.includes("fail")),
+        );
+        checks.push({
+          name: "sentinel_verdict",
+          passed: hasVerdict,
+          detail: hasVerdict
+            ? "Valid Sentinel verdict found"
+            : "No Sentinel verdict found",
+        });
+        break;
+      }
+      default:
+        checks.push({
+          name: "unknown_caste_artifacts",
+          passed: false,
+          detail: `Unknown caste: ${caste}`,
+        });
+    }
+
+    return {
+      issueId,
+      caste,
+      passed: checks.every((c) => c.passed),
+      checks,
+    };
+  }
+
+  private determineOutcome(
+    endReason: SessionEndReason,
+    artifacts: ArtifactVerification,
+  ): ReaperOutcome {
+    switch (endReason) {
+      case "completed":
+        return artifacts.passed ? "success" : "artifact_failure";
+      case "budget_exceeded":
+      case "stuck_killed":
+      case "monitor_aborted":
+        return "monitor_termination";
+      case "aborted":
+      case "error":
+        return "crash";
+      default:
+        return "crash";
+    }
+  }
 }

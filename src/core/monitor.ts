@@ -1,5 +1,5 @@
 /**
- * S10 contract seed — Monitor module.
+ * S10 Lane A — Monitor implementation.
  *
  * The Monitor observes running sessions in real time and enforces budgets.
  * SPECv2 §9.6:
@@ -11,62 +11,44 @@
  *   - abort sessions when limits are exceeded
  *   - suppress optional escalations (Janus) when budget guardrails would be violated
  *
- * Canonical default thresholds (SPECv2 §9.6):
- *   - stuck warning: 90 seconds without tool progress
- *   - stuck kill: 150 seconds without tool progress
- *   - per-issue exact-cost warning: $3.00 when metering=exact_usd
- *   - daily exact-cost warning: $10.00 when metering=exact_usd
- *   - daily exact-cost hard stop: $20.00 when metering=exact_usd
- *   - subscription quota warning floor: 35% remaining when metering=quota
- *   - subscription quota hard-stop floor: 20% remaining when metering=quota
- *   - unknown-metering posture: no autonomous Janus, no autonomous complex-work dispatch
- *
- * Canonical stuck rules (SPECv2 §9.6):
- *   - no tool call for warning threshold → steering nudge
- *   - no tool call for kill threshold → abort
- *   - repeating the same tool call 3+ times → steering nudge
+ * Lane A responsibilities:
+ *   - event-driven budget enforcement on AgentEvent stream boundaries
+ *   - stuck detection (90s warning, 150s kill per contract)
+ *   - repeated tool call detection (3+ same call → steering nudge)
  *   - turn budget exceeded → abort
  *   - token budget exceeded → abort
- *   - daily hard stop exceeded / quota floor crossed / credit floor crossed → refuse new autonomous dispatch
- *
- * This module defines the interface and observable state.  Implementation
- * (event-loop wiring, SSE publishing, actual abort calls) belongs in the lanes.
+ *   - daily hard stop exceeded, quota floor crossed, credit floor crossed → refuse new autonomous dispatch
+ *   - live stats updates via SSE events
+ *   - budget enforcement works with different metering modes
  */
 
 import type { AgentEvent } from "../runtime/agent-events.js";
-import type { AgentHandle, AgentStats } from "../runtime/agent-runtime.js";
+import type { AgentHandle } from "../runtime/agent-runtime.js";
+import type { BudgetLimit } from "../config/schema.js";
 import type {
   AuthMode,
   MeteringCapability,
   NormalizedBudgetStatus,
+  UsageObservation,
 } from "../runtime/normalize-stats.js";
-import type { BudgetLimit } from "../config/schema.js";
+import { normalizeStats } from "../runtime/normalize-stats.js";
 
 // ---------------------------------------------------------------------------
-// Thresholds
+// Interfaces (from S10 contract seed)
 // ---------------------------------------------------------------------------
 
 /** Default thresholds for budget enforcement (SPECv2 §9.6). */
 export interface MonitorThresholds {
-  /** Seconds without tool progress before emitting a stuck warning. Default: 90 */
   stuckWarningSec: number;
-  /** Seconds without tool progress before aborting the session. Default: 150 */
   stuckKillSec: number;
-  /** Maximum repetitions of the same tool before nudging. Default: 3 */
   repeatedToolThreshold: number;
-  /** Per-issue exact-cost warning in USD when metering=exact_usd. Default: 3.00 */
   perIssueCostWarningUsd: number | null;
-  /** Daily exact-cost warning in USD when metering=exact_usd. Default: 10.00 */
   dailyCostWarningUsd: number | null;
-  /** Daily exact-cost hard stop in USD when metering=exact_usd. Default: 20.00 */
   dailyHardStopUsd: number | null;
-  /** Subscription quota warning floor percentage. Default: 35 */
   quotaWarningFloorPct: number | null;
-  /** Subscription quota hard-stop floor percentage. Default: 20 */
   quotaHardStopFloorPct: number | null;
 }
 
-/** Default thresholds from SPECv2 §9.6. */
 export const DEFAULT_MONITOR_THRESHOLDS: MonitorThresholds = {
   stuckWarningSec: 90,
   stuckKillSec: 150,
@@ -78,45 +60,31 @@ export const DEFAULT_MONITOR_THRESHOLDS: MonitorThresholds = {
   quotaHardStopFloorPct: 20,
 };
 
-// ---------------------------------------------------------------------------
-// Session tracking state
-// ---------------------------------------------------------------------------
-
-/**
- * Real-time tracking state for a single active session.
- * The monitor maintains one of these per running agent.
- */
+/** Real-time tracking state for a single active session. */
 export interface SessionTracker {
-  /** Beads issue ID this session is working on. */
   issueId: string;
-  /** Caste of the running agent. */
   caste: string;
-  /** Runtime agent handle — used for abort/steer/getStats. */
   handle: AgentHandle;
-  /** Latest stats snapshot from the session. */
-  latestStats: AgentStats | null;
-  /** Latest usage observation from the runtime, if available. */
+  latestStats: {
+    input_tokens: number;
+    output_tokens: number;
+    session_turns: number;
+    wall_time_sec: number;
+    active_context_pct?: number;
+  } | null;
   latestObservation: {
     auth_mode: AuthMode;
     metering: MeteringCapability;
     exact_cost_usd?: number;
     quota_remaining_pct?: number;
+    credits_remaining?: number;
   } | null;
-  /** Epoch ms timestamp of the last tool-use event. */
   lastToolProgressMs: number | null;
-  /** Epoch ms timestamp when the session started. */
   sessionStartMs: number;
-  /** Rolling list of recent tool calls (for repeated-tool detection). */
   recentToolCalls: string[];
-  /** Whether a steering nudge has already been sent for the current stuck episode. */
   stuckNudgeSent: boolean;
-  /** Whether the session has been aborted by the monitor. */
   aborted: boolean;
 }
-
-// ---------------------------------------------------------------------------
-// Monitor events (outbound to SSE bus)
-// ---------------------------------------------------------------------------
 
 /** Event types the monitor emits to the SSE bus. */
 export type MonitorEventType =
@@ -130,72 +98,21 @@ export type MonitorEventType =
   | "repeated_tool_nudge"
   | "session_aborted_by_monitor";
 
-/**
- * An outbound event from the monitor to the SSE bus.
- * The SSE stream pushes these to Olympus for visibility.
- */
 export interface MonitorEvent {
   type: MonitorEventType;
-  /** ISO-8601 timestamp. */
   timestamp: string;
-  /** Issue ID the event relates to. */
   issueId: string;
-  /** Human-readable description of what happened. */
   message: string;
-  /** Additional context (e.g. current cost, remaining quota). */
   details?: Record<string, unknown>;
 }
 
-// ---------------------------------------------------------------------------
-// Budget gate decisions
-// ---------------------------------------------------------------------------
-
-/**
- * Result of checking whether autonomous dispatch is allowed globally.
- * When any daily or quota hard-stop threshold is crossed, the monitor
- * refuses to start new autonomous sessions until a human reviews.
- */
 export interface BudgetGateResult {
-  /** Whether new autonomous dispatch is allowed. */
   allowed: boolean;
-  /** If not allowed, the reason code. */
   reason: string | null;
-  /** Current normalized budget status for diagnostics. */
   status: NormalizedBudgetStatus | null;
 }
 
-// ---------------------------------------------------------------------------
-// Monitor interface
-// ---------------------------------------------------------------------------
-
-/**
- * The Monitor observes running sessions and enforces budget/stuck rules.
- *
- * Responsibilities (SPECv2 §9.6):
- *   - subscribe to session events via AgentHandle.subscribe()
- *   - track per-session progress and budget consumption
- *   - emit steering nudges when agents appear stuck
- *   - abort sessions that exceed budget or stuck thresholds
- *   - push MonitorEvents to the SSE bus for Olympus visibility
- *   - gate new autonomous dispatch when daily/quotas are exhausted
- *
- * Implementations must:
- *   - run enforcement on event boundaries, not only on outer poll ticks
- *   - never store telemetry in Mnemosyne
- *   - make all decisions visible to the user
- */
 export interface Monitor {
-  /**
-   * Begin observing a session.  The caller passes the AgentHandle and the
-   * monitor subscribes to events internally.
-   *
-   * @param issueId - Beads issue ID.
-   * @param caste - Agent caste name.
-   * @param handle - Live agent handle from the runtime.
-   * @param budget - Budget hard limits for this caste.
-   * @param thresholds - Monitor-specific thresholds (defaults applied if omitted).
-   * @returns A SessionTracker that the caller can query for current state.
-   */
   startObserving(
     issueId: string,
     caste: string,
@@ -203,53 +120,17 @@ export interface Monitor {
     budget: BudgetLimit,
     thresholds?: Partial<MonitorThresholds>,
   ): SessionTracker;
-
-  /**
-   * Stop observing a session and clean up subscriptions.
-   * Called by the Reaper after session termination.
-   *
-   * @param issueId - Beads issue ID to stop observing.
-   */
   stopObserving(issueId: string): void;
-
-  /**
-   * Check the global budget gate — whether new autonomous dispatch is allowed.
-   * This is called by the triage/dispatch loop before spawning new agents.
-   *
-   * @returns BudgetGateResult indicating if dispatch may proceed.
-   */
   checkBudgetGate(): BudgetGateResult;
-
-  /**
-   * Record that the daily cost bucket has been reset (e.g. at UTC midnight).
-   * This clears any daily hard-stop suppression.
-   */
   resetDailyBudget(): void;
-
-  /**
-   * Return the current list of active session trackers (for diagnostics/Olympus).
-   */
   getActiveSessions(): ReadonlyMap<string, SessionTracker>;
-
-  /**
-   * Return any monitor events that have been emitted since the last call.
-   * The SSE stream consumes these to push live updates to Olympus.
-   */
   drainEvents(): MonitorEvent[];
 }
 
 // ---------------------------------------------------------------------------
-// Pure helper functions (used by implementations)
+// Pure helper functions (SPECv2 §9.6)
 // ---------------------------------------------------------------------------
 
-/**
- * Check whether a session appears stuck based on elapsed time since last tool progress.
- *
- * @param lastToolProgressMs - Epoch ms of the last tool-use event, or null.
- * @param nowMs - Current epoch milliseconds.
- * @param thresholds - Monitor thresholds.
- * @returns "ok" | "warning" | "kill"
- */
 export function assessStuckState(
   lastToolProgressMs: number | null,
   nowMs: number = Date.now(),
@@ -268,13 +149,6 @@ export function assessStuckState(
   return "ok";
 }
 
-/**
- * Check whether the same tool has been called repeatedly beyond the threshold.
- *
- * @param recentToolCalls - Rolling list of recent tool names.
- * @param thresholds - Monitor thresholds.
- * @returns `true` if the same tool was called 3+ times in a row.
- */
 export function hasRepeatedToolCalls(
   recentToolCalls: string[],
   thresholds: MonitorThresholds = DEFAULT_MONITOR_THRESHOLDS,
@@ -287,13 +161,6 @@ export function hasRepeatedToolCalls(
   return window.every((t) => t === last);
 }
 
-/**
- * Check whether daily exact-cost hard stop has been reached.
- *
- * @param dailySpendUsd - Cumulative daily spend in USD.
- * @param thresholds - Monitor thresholds.
- * @returns `true` if the daily hard stop is exceeded.
- */
 export function isDailyHardStopExceeded(
   dailySpendUsd: number | null,
   thresholds: MonitorThresholds = DEFAULT_MONITOR_THRESHOLDS,
@@ -304,13 +171,6 @@ export function isDailyHardStopExceeded(
   return dailySpendUsd >= thresholds.dailyHardStopUsd;
 }
 
-/**
- * Check whether quota floor has been crossed (subscription metering).
- *
- * @param quotaRemainingPct - Remaining quota percentage.
- * @param thresholds - Monitor thresholds.
- * @returns "ok" | "warning" | "abort"
- */
 export function assessQuotaFloor(
   quotaRemainingPct: number | undefined,
   thresholds: MonitorThresholds = DEFAULT_MONITOR_THRESHOLDS,
@@ -333,13 +193,585 @@ export function assessQuotaFloor(
   return "ok";
 }
 
-/**
- * Whether autonomous Janus dispatch is allowed under current budget posture.
- * SPECv2 §9.6: unknown-metering posture → no autonomous Janus.
- *
- * @param metering - Current metering capability.
- * @returns `true` if autonomous Janus is permitted.
- */
 export function canAutoDispatchJanus(metering: MeteringCapability): boolean {
   return metering !== "unknown";
+}
+
+// ---------------------------------------------------------------------------
+// MonitorImpl
+// ---------------------------------------------------------------------------
+
+interface MutableSessionTracker extends SessionTracker {
+  _unsubscribe: (() => void) | null;
+  _stuckTimer: ReturnType<typeof setInterval> | null;
+  _budgetWarningEmitted: boolean;
+  _repeatedToolNudgeEmitted: boolean;
+}
+
+interface DailyBudgetState {
+  spendUsd: number | null;
+  quotaRemainingPct: number | null;
+  creditsRemaining: number | null;
+  metering: MeteringCapability;
+  hardStopTriggered: boolean;
+}
+
+export class MonitorImpl implements Monitor {
+  private trackers: Map<string, MutableSessionTracker> = new Map();
+  private events: MonitorEvent[] = [];
+  private dailyBudget: DailyBudgetState;
+  private nowMs: () => number;
+
+  constructor(options?: { nowMs?: () => number; stuckCheckIntervalMs?: number }) {
+    this.nowMs = options?.nowMs ?? (() => Date.now());
+    this._stuckCheckIntervalMs = options?.stuckCheckIntervalMs ?? 1000;
+    this.dailyBudget = {
+      spendUsd: null,
+      quotaRemainingPct: null,
+      creditsRemaining: null,
+      metering: "unknown",
+      hardStopTriggered: false,
+    };
+  }
+
+  private _stuckCheckIntervalMs: number;
+
+  // -----------------------------------------------------------------------
+  // Public: Monitor interface
+  // -----------------------------------------------------------------------
+
+  startObserving(
+    issueId: string,
+    caste: string,
+    handle: AgentHandle,
+    budget: BudgetLimit,
+    thresholds?: Partial<MonitorThresholds>,
+  ): SessionTracker {
+    const mergedThresholds = { ...DEFAULT_MONITOR_THRESHOLDS, ...thresholds };
+    const now = this.nowMs();
+
+    const tracker: MutableSessionTracker = {
+      issueId,
+      caste,
+      handle,
+      latestStats: null,
+      latestObservation: null,
+      lastToolProgressMs: null,
+      sessionStartMs: now,
+      recentToolCalls: [],
+      stuckNudgeSent: false,
+      aborted: false,
+      _unsubscribe: null,
+      _stuckTimer: null,
+      _budgetWarningEmitted: false,
+      _repeatedToolNudgeEmitted: false,
+    };
+
+    const unsubscribe = handle.subscribe((event: AgentEvent) => {
+      this.handleEvent(tracker, event, budget, mergedThresholds);
+    });
+    tracker._unsubscribe = unsubscribe;
+
+    const stuckTimer = setInterval(() => {
+      this.checkStuck(tracker, mergedThresholds);
+    }, this._stuckCheckIntervalMs);
+    tracker._stuckTimer = stuckTimer;
+
+    this.trackers.set(issueId, tracker);
+
+    return tracker;
+  }
+
+  stopObserving(issueId: string): void {
+    const tracker = this.trackers.get(issueId);
+    if (!tracker) return;
+
+    if (tracker._unsubscribe) {
+      tracker._unsubscribe();
+      tracker._unsubscribe = null;
+    }
+    if (tracker._stuckTimer) {
+      clearInterval(tracker._stuckTimer);
+      tracker._stuckTimer = null;
+    }
+    this.trackers.delete(issueId);
+  }
+
+  checkBudgetGate(): BudgetGateResult {
+    const db = this.dailyBudget;
+
+    // Quota floor crossed (checked before generic hard stop to give specific reason)
+    if (
+      db.quotaRemainingPct !== null &&
+      DEFAULT_MONITOR_THRESHOLDS.quotaHardStopFloorPct !== null &&
+      db.quotaRemainingPct <= DEFAULT_MONITOR_THRESHOLDS.quotaHardStopFloorPct
+    ) {
+      return {
+        allowed: false,
+        reason: "quota_floor_exceeded",
+        status: this.buildGateStatus(),
+      };
+    }
+
+    // Credits floor crossed
+    if (db.creditsRemaining !== null && db.creditsRemaining <= 0) {
+      return {
+        allowed: false,
+        reason: "credits_floor_exceeded",
+        status: this.buildGateStatus(),
+      };
+    }
+
+    // Daily hard stop exceeded
+    if (db.hardStopTriggered || isDailyHardStopExceeded(db.spendUsd)) {
+      return {
+        allowed: false,
+        reason: "daily_hard_stop_exceeded",
+        status: this.buildGateStatus(),
+      };
+    }
+
+    return { allowed: true, reason: null, status: null };
+  }
+
+  resetDailyBudget(): void {
+    this.dailyBudget = {
+      spendUsd: null,
+      quotaRemainingPct: null,
+      creditsRemaining: null,
+      metering: this.dailyBudget.metering,
+      hardStopTriggered: false,
+    };
+  }
+
+  getActiveSessions(): ReadonlyMap<string, SessionTracker> {
+    return this.trackers;
+  }
+
+  drainEvents(): MonitorEvent[] {
+    const pending = this.events;
+    this.events = [];
+    return pending;
+  }
+
+  // -----------------------------------------------------------------------
+  // Internal: event handling
+  // -----------------------------------------------------------------------
+
+  private handleEvent(
+    tracker: MutableSessionTracker,
+    event: AgentEvent,
+    budget: BudgetLimit,
+    thresholds: MonitorThresholds,
+  ): void {
+    if (tracker.aborted) return;
+
+    switch (event.type) {
+      case "tool_use":
+        this.onToolUse(tracker, event, thresholds);
+        break;
+      case "stats_update":
+        this.onStatsUpdate(tracker, event, budget, thresholds);
+        break;
+      case "budget_warning":
+        this.onBudgetWarning(tracker, event);
+        break;
+      case "session_ended":
+        this.onSessionEnded(tracker, event);
+        break;
+      case "error":
+        this.onError(tracker, event);
+        break;
+      case "session_started":
+      case "message":
+        break;
+    }
+  }
+
+  private onToolUse(
+    tracker: MutableSessionTracker,
+    event: Extract<AgentEvent, { type: "tool_use" }>,
+    thresholds: MonitorThresholds,
+  ): void {
+    tracker.lastToolProgressMs = this.nowMs();
+    tracker.recentToolCalls.push(event.tool);
+
+    const maxHistory = thresholds.repeatedToolThreshold * 3;
+    if (tracker.recentToolCalls.length > maxHistory) {
+      tracker.recentToolCalls = tracker.recentToolCalls.slice(-maxHistory);
+    }
+
+    tracker.stuckNudgeSent = false;
+    tracker._repeatedToolNudgeEmitted = false;
+    this.checkRepeatedToolCalls(tracker, thresholds);
+  }
+
+  private onStatsUpdate(
+    tracker: MutableSessionTracker,
+    event: Extract<AgentEvent, { type: "stats_update" }>,
+    budget: BudgetLimit,
+    thresholds: MonitorThresholds,
+  ): void {
+    tracker.latestStats = event.stats;
+
+    if (event.observation) {
+      tracker.latestObservation = {
+        auth_mode: event.observation.auth_mode,
+        metering: event.observation.metering,
+        exact_cost_usd: event.observation.exact_cost_usd,
+        quota_remaining_pct: event.observation.quota_remaining_pct,
+        credits_remaining: event.observation.credits_remaining,
+      };
+      this.updateDailyBudgetFromObservation(event.observation);
+    }
+
+    const normalized = this.normalizeForTracker(tracker);
+    this.enforceBudget(tracker, normalized, budget, thresholds);
+  }
+
+  private onBudgetWarning(
+    tracker: MutableSessionTracker,
+    event: Extract<AgentEvent, { type: "budget_warning" }>,
+  ): void {
+    if (tracker._budgetWarningEmitted) return;
+    tracker._budgetWarningEmitted = true;
+
+    this.emitEvent({
+      type: "budget_warning",
+      timestamp: new Date(this.nowMs()).toISOString(),
+      issueId: tracker.issueId,
+      message: `Session approaching budget limit: ${event.limitKind} at ${event.current} / ${event.limit}`,
+      details: {
+        limitKind: event.limitKind,
+        current: event.current,
+        limit: event.limit,
+        fraction: event.fraction,
+      },
+    });
+  }
+
+  private onSessionEnded(
+    tracker: MutableSessionTracker,
+    event: Extract<AgentEvent, { type: "session_ended" }>,
+  ): void {
+    tracker.latestStats = event.stats;
+    this.stopObserving(tracker.issueId);
+  }
+
+  private onError(
+    tracker: MutableSessionTracker,
+    event: Extract<AgentEvent, { type: "error" }>,
+  ): void {
+    if (event.fatal) {
+      this.emitEvent({
+        type: "session_aborted_by_monitor",
+        timestamp: new Date(this.nowMs()).toISOString(),
+        issueId: tracker.issueId,
+        message: `Session error (fatal): ${event.message}`,
+      });
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Internal: stuck detection
+  // -----------------------------------------------------------------------
+
+  private checkStuck(
+    tracker: MutableSessionTracker,
+    thresholds: MonitorThresholds,
+  ): void {
+    if (tracker.aborted) return;
+
+    const stuckState = assessStuckState(tracker.lastToolProgressMs, this.nowMs(), thresholds);
+
+    if (stuckState === "kill") {
+      this.emitEvent({
+        type: "stuck_abort",
+        timestamp: new Date(this.nowMs()).toISOString(),
+        issueId: tracker.issueId,
+        message: `Session stuck for >= ${thresholds.stuckKillSec}s — aborting`,
+        details: {
+          lastToolProgressMs: tracker.lastToolProgressMs,
+          elapsedSec: tracker.lastToolProgressMs
+            ? (this.nowMs() - tracker.lastToolProgressMs) / 1000
+            : null,
+        },
+      });
+      this.abortSession(tracker);
+    } else if (stuckState === "warning" && !tracker.stuckNudgeSent) {
+      this.emitEvent({
+        type: "stuck_warning",
+        timestamp: new Date(this.nowMs()).toISOString(),
+        issueId: tracker.issueId,
+        message: `Session appears stuck — no tool progress for >= ${thresholds.stuckWarningSec}s`,
+        details: {
+          lastToolProgressMs: tracker.lastToolProgressMs,
+          elapsedSec: tracker.lastToolProgressMs
+            ? (this.nowMs() - tracker.lastToolProgressMs) / 1000
+            : null,
+        },
+      });
+      tracker.stuckNudgeSent = true;
+      tracker.handle
+        .steer(
+          "You appear to be stuck. Please provide a progress update or try a different approach.",
+        )
+        .catch(() => {});
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Internal: repeated tool call detection
+  // -----------------------------------------------------------------------
+
+  private checkRepeatedToolCalls(
+    tracker: MutableSessionTracker,
+    thresholds: MonitorThresholds,
+  ): void {
+    if (tracker._repeatedToolNudgeEmitted) return;
+    if (!hasRepeatedToolCalls(tracker.recentToolCalls, thresholds)) return;
+
+    tracker._repeatedToolNudgeEmitted = true;
+
+    const repeatedTool = tracker.recentToolCalls[tracker.recentToolCalls.length - 1];
+    this.emitEvent({
+      type: "repeated_tool_nudge",
+      timestamp: new Date(this.nowMs()).toISOString(),
+      issueId: tracker.issueId,
+      message: `Agent called "${repeatedTool}" ${thresholds.repeatedToolThreshold}+ times in a row — sending steering nudge`,
+      details: { tool: repeatedTool, count: thresholds.repeatedToolThreshold },
+    });
+
+    tracker.handle
+      .steer(
+        `You have called the "${repeatedTool}" tool ${thresholds.repeatedToolThreshold} times in a row. If this is intentional, explain why. Otherwise, try a different approach.`,
+      )
+      .catch(() => {});
+  }
+
+  // -----------------------------------------------------------------------
+  // Internal: budget enforcement
+  // -----------------------------------------------------------------------
+
+  private enforceBudget(
+    tracker: MutableSessionTracker,
+    normalized: NormalizedBudgetStatus,
+    budget: BudgetLimit,
+    thresholds: MonitorThresholds,
+  ): void {
+    if (tracker.aborted) return;
+
+    // Turn budget exceeded
+    if (normalized.session_turns >= budget.turns) {
+      this.emitEvent({
+        type: "budget_abort",
+        timestamp: new Date(this.nowMs()).toISOString(),
+        issueId: tracker.issueId,
+        message: `Turn budget exceeded: ${normalized.session_turns} / ${budget.turns}`,
+        details: { turns: normalized.session_turns, limit: budget.turns },
+      });
+      this.abortSession(tracker);
+      return;
+    }
+
+    // Token budget exceeded
+    if (normalized.total_tokens >= budget.tokens) {
+      this.emitEvent({
+        type: "budget_abort",
+        timestamp: new Date(this.nowMs()).toISOString(),
+        issueId: tracker.issueId,
+        message: `Token budget exceeded: ${normalized.total_tokens} / ${budget.tokens}`,
+        details: { tokens: normalized.total_tokens, limit: budget.tokens },
+      });
+      this.abortSession(tracker);
+      return;
+    }
+
+    // Per-issue cost warning (exact_usd)
+    if (
+      normalized.exact_cost_usd !== undefined &&
+      thresholds.perIssueCostWarningUsd !== null &&
+      normalized.exact_cost_usd >= thresholds.perIssueCostWarningUsd &&
+      !tracker._budgetWarningEmitted
+    ) {
+      tracker._budgetWarningEmitted = true;
+      this.emitEvent({
+        type: "budget_warning",
+        timestamp: new Date(this.nowMs()).toISOString(),
+        issueId: tracker.issueId,
+        message: `Per-issue cost warning: $${normalized.exact_cost_usd.toFixed(2)} >= $${thresholds.perIssueCostWarningUsd.toFixed(2)}`,
+        details: {
+          costUsd: normalized.exact_cost_usd,
+          limitUsd: thresholds.perIssueCostWarningUsd,
+          metering: "exact_usd",
+        },
+      });
+    }
+
+    // Daily cost warning (exact_usd)
+    if (
+      normalized.exact_cost_usd !== undefined &&
+      thresholds.dailyCostWarningUsd !== null &&
+      normalized.exact_cost_usd >= thresholds.dailyCostWarningUsd &&
+      !tracker._budgetWarningEmitted
+    ) {
+      tracker._budgetWarningEmitted = true;
+      this.emitEvent({
+        type: "budget_warning",
+        timestamp: new Date(this.nowMs()).toISOString(),
+        issueId: tracker.issueId,
+        message: `Daily cost warning: $${normalized.exact_cost_usd.toFixed(2)} >= $${thresholds.dailyCostWarningUsd.toFixed(2)}`,
+        details: {
+          costUsd: normalized.exact_cost_usd,
+          dailyLimitUsd: thresholds.dailyCostWarningUsd,
+          metering: "exact_usd",
+        },
+      });
+    }
+
+    // Daily hard stop (exact_usd)
+    if (
+      normalized.exact_cost_usd !== undefined &&
+      thresholds.dailyHardStopUsd !== null &&
+      normalized.exact_cost_usd >= thresholds.dailyHardStopUsd
+    ) {
+      this.dailyBudget.hardStopTriggered = true;
+      this.emitEvent({
+        type: "daily_hard_stop",
+        timestamp: new Date(this.nowMs()).toISOString(),
+        issueId: tracker.issueId,
+        message: `Daily hard stop reached: $${normalized.exact_cost_usd.toFixed(2)} >= $${thresholds.dailyHardStopUsd.toFixed(2)}`,
+        details: {
+          costUsd: normalized.exact_cost_usd,
+          dailyHardStopUsd: thresholds.dailyHardStopUsd,
+        },
+      });
+      this.abortSession(tracker);
+      return;
+    }
+
+    // Quota floor checks
+    if (normalized.quota_remaining_pct !== undefined) {
+      const quotaState = assessQuotaFloor(normalized.quota_remaining_pct, thresholds);
+      if (quotaState === "abort") {
+        this.dailyBudget.hardStopTriggered = true;
+        this.emitEvent({
+          type: "quota_floor_abort",
+          timestamp: new Date(this.nowMs()).toISOString(),
+          issueId: tracker.issueId,
+          message: `Quota floor crossed: ${normalized.quota_remaining_pct}% remaining <= ${thresholds.quotaHardStopFloorPct}%`,
+          details: {
+            quotaRemainingPct: normalized.quota_remaining_pct,
+            hardStopFloorPct: thresholds.quotaHardStopFloorPct,
+          },
+        });
+        this.abortSession(tracker);
+        return;
+      }
+      if (quotaState === "warning" && !tracker._budgetWarningEmitted) {
+        tracker._budgetWarningEmitted = true;
+        this.emitEvent({
+          type: "quota_floor_warning",
+          timestamp: new Date(this.nowMs()).toISOString(),
+          issueId: tracker.issueId,
+          message: `Quota floor warning: ${normalized.quota_remaining_pct}% remaining <= ${thresholds.quotaWarningFloorPct}%`,
+          details: {
+            quotaRemainingPct: normalized.quota_remaining_pct,
+            warningFloorPct: thresholds.quotaWarningFloorPct,
+          },
+        });
+      }
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Internal: helpers
+  // -----------------------------------------------------------------------
+
+  private normalizeForTracker(tracker: MutableSessionTracker): NormalizedBudgetStatus {
+    const stats = tracker.latestStats ?? {
+      input_tokens: 0,
+      output_tokens: 0,
+      session_turns: 0,
+      wall_time_sec: 0,
+    };
+    const authMode: AuthMode = tracker.latestObservation?.auth_mode ?? "unknown";
+    const metering: MeteringCapability = tracker.latestObservation?.metering ?? "unknown";
+    const obs: UsageObservation | undefined = tracker.latestObservation
+      ? {
+          provider: "unknown",
+          auth_mode: tracker.latestObservation.auth_mode,
+          metering: tracker.latestObservation.metering,
+          exact_cost_usd: tracker.latestObservation.exact_cost_usd,
+          quota_remaining_pct: tracker.latestObservation.quota_remaining_pct,
+          credits_remaining: tracker.latestObservation.credits_remaining,
+          confidence: "proxy",
+          source: "session_stats",
+        }
+      : undefined;
+    return normalizeStats(stats, authMode, metering, obs);
+  }
+
+  private updateDailyBudgetFromObservation(obs: {
+    auth_mode: AuthMode;
+    metering: MeteringCapability;
+    exact_cost_usd?: number;
+    quota_remaining_pct?: number;
+    credits_remaining?: number;
+  }): void {
+    this.dailyBudget.metering = obs.metering;
+
+    if (obs.exact_cost_usd !== undefined) {
+      if (this.dailyBudget.spendUsd === null || obs.exact_cost_usd > this.dailyBudget.spendUsd) {
+        this.dailyBudget.spendUsd = obs.exact_cost_usd;
+      }
+    }
+
+    if (obs.quota_remaining_pct !== undefined) {
+      if (
+        this.dailyBudget.quotaRemainingPct === null ||
+        obs.quota_remaining_pct < this.dailyBudget.quotaRemainingPct
+      ) {
+        this.dailyBudget.quotaRemainingPct = obs.quota_remaining_pct;
+      }
+    }
+
+    if (obs.credits_remaining !== undefined) {
+      if (
+        this.dailyBudget.creditsRemaining === null ||
+        obs.credits_remaining < this.dailyBudget.creditsRemaining
+      ) {
+        this.dailyBudget.creditsRemaining = obs.credits_remaining;
+      }
+    }
+  }
+
+  private abortSession(tracker: MutableSessionTracker): void {
+    if (tracker.aborted) return;
+    tracker.aborted = true;
+    tracker.handle.abort().catch(() => {});
+  }
+
+  private emitEvent(event: MonitorEvent): void {
+    this.events.push(event);
+  }
+
+  private buildGateStatus(): NormalizedBudgetStatus | null {
+    const db = this.dailyBudget;
+    if (db.spendUsd === null && db.quotaRemainingPct === null && db.creditsRemaining === null) {
+      return null;
+    }
+    return {
+      metering: db.metering,
+      auth_mode: "unknown",
+      total_tokens: 0,
+      session_turns: 0,
+      wall_time_sec: 0,
+      ...(db.spendUsd !== null ? { exact_cost_usd: db.spendUsd } : {}),
+      ...(db.quotaRemainingPct !== null ? { quota_remaining_pct: db.quotaRemainingPct } : {}),
+      ...(db.creditsRemaining !== null ? { credits_remaining: db.creditsRemaining } : {}),
+      confidence: db.spendUsd !== null ? "exact" : "proxy",
+      budget_warning: true,
+    };
+  }
 }
