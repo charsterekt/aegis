@@ -23,12 +23,8 @@ import type { BudgetLimit } from "../../../src/config/schema.js";
 
 function makeBudget(): BudgetLimit {
   return {
-    max_turns: 50,
-    max_input_tokens: 100_000,
-    max_output_tokens: 50_000,
-    max_cost_usd: 5,
-    max_quota_pct: 80,
-    max_credits: 100,
+    turns: 50,
+    tokens: 150_000,
   };
 }
 
