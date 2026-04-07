@@ -4,6 +4,7 @@ import type {
   ServerLifecycleState,
 } from "../server/routes.js";
 import type { SuppressionEntry } from "../core/scope-allocator.js";
+import type { MergeQueueStateEventPayload } from "./merge-events.js";
 
 export const LIVE_EVENT_ENVELOPE_FIELDS = [
   "id",
@@ -18,6 +19,7 @@ export const LIVE_EVENT_TYPES = [
   "launch.sequence",
   "control.command",
   "scope.suppression",
+  "merge.queue_state",
 ] as const;
 
 export type LiveEventType = (typeof LIVE_EVENT_TYPES)[number];
@@ -55,6 +57,7 @@ export interface LiveEventPayloadMap {
   "launch.sequence": LaunchSequenceEventPayload;
   "control.command": ControlCommandEventPayload;
   "scope.suppression": ScopeSuppressionEventPayload;
+  "merge.queue_state": MergeQueueStateEventPayload;
 }
 
 export type LiveEventPayload<TType extends LiveEventType> = LiveEventPayloadMap[TType];
@@ -78,6 +81,7 @@ const LIVE_EVENT_PAYLOAD_FIELDS: {
   "launch.sequence": ["phase", "step", "status", "detail"],
   "control.command": ["action", "request_id", "status", "detail"],
   "scope.suppression": ["dispatchable", "suppressed", "hasOverlap", "evaluatedAt"],
+  "merge.queue_state": ["issueId", "status", "attemptCount", "errorDetail"],
 };
 
 export function isLiveEventType(value: string): value is LiveEventType {
