@@ -244,20 +244,21 @@
 
 ### S12 - Olympus MVP Shell (aegis-fjm.13)
 
-- Status: blocked
-- Updated: 2026-04-07T18:58:03Z
-- Child completion: 2/4
+- Status: closed
+- Updated: 2026-04-07T20:14:27Z
 - Depends on: S06, S10, S11
-- Outcome: Olympus expands the Phase 0 shell into the full MVP dashboard shell, not just live agent cards.
+- Outcome: Olympus expands the Phase 0 shell into the full MVP dashboard with status, active agents, spend/quota, uptime, queue depth, auto toggle, settings access, command bar, and kill action.
 - Automated gate: npm run test -- olympus/src/components/__tests__/app.test.tsx olympus/src/lib/__tests__/use-sse.test.ts; npm run build:olympus
 - Manual gate: The dashboard shows status, active agents, spend/quota, uptime, queue depth, auto toggle, settings access, and a working command bar and kill action on first run.
-- Automated evidence: pending
-- Manual evidence: pending
+- Automated evidence: passed: npm run test (57 files, 1024 tests, 11 todo); npm run build:olympus; npm run lint on 2026-04-07
+- Manual evidence: passed: dashboard loads with dark-mode-first Qwen CLI teal/cyan palette; top bar shows running/stopped status, active agent count, spend across all 5 metering modes, uptime in HH:MM:SS, queue depth, auto toggle, settings gear; agent cards display caste badges, model, issue, stage, turns, tokens K/M, live elapsed, spend, kill; command bar with parsing, response area, quick kill; SSE client with exponential backoff; 3-reviewer consensus, all findings addressed
+- Evidence notes: S12 closed after 3-reviewer consensus. 3 CRITICAL + 7 IMPORTANT findings addressed: removed dead AbortController, fixed CommandResult type consistency, fixed silent error on auto toggle, resolved circular import, added 66 component/utility tests, rendered stage field, tightened type safety. PR dkchar/aegis#46 to main.
+- Evidence updated: 2026-04-07T20:14:27+01:00
 - Children:
-  - contract: aegis-fjm.13.1 [closed] updated 2026-04-07T18:58:03Z
-  - lane_a: aegis-fjm.13.2 [closed] updated 2026-04-07T18:58:03Z
-  - lane_b: aegis-fjm.13.3 [in_progress] updated 2026-04-07T18:58:04Z
-  - gate: aegis-fjm.13.4 [open] updated 2026-04-07T18:58:04Z
+  - contract: aegis-fjm.13.1 [closed] updated 2026-04-07T20:14:27Z
+  - lane_a: aegis-fjm.13.2 [closed] updated 2026-04-07T20:14:27Z
+  - lane_b: aegis-fjm.13.3 [closed] updated 2026-04-07T20:14:27Z
+  - gate: aegis-fjm.13.4 [closed] updated 2026-04-07T20:14:27Z
 
 ### S13 - Merge Queue Admission and Persistence (aegis-fjm.14)
 
