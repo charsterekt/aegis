@@ -39,6 +39,8 @@ import {
   buildScopeVisibilitySummary,
 } from "../core/overlap-visibility.js";
 import type { ScopeAllocation } from "../core/scope-allocator.js";
+import { handleAppendLearning, resolveMnemosynePath } from "./learning-route.js";
+import { loadConfig } from "../config/load-config.js";
 
 export const HTTP_SERVER_INITIAL_STATE: ServerLifecycleState = "stopped";
 
@@ -218,6 +220,7 @@ function createNotFoundResponse(response: ServerResponse) {
 export function createHttpServerController(
   bindings: HttpServerBindings = {},
 ): HttpServerController {
+  let projectRoot = process.cwd();
   let lifecycleState: ServerLifecycleState = HTTP_SERVER_INITIAL_STATE;
   let activeServer: ReturnType<typeof createServer> | null = null;
   let startedAt: number | null = null;
@@ -323,11 +326,11 @@ export function createHttpServerController(
         message: `${request.action} accepted`,
       };
     },
-    appendLearningRecord: async (entry) => ({
-      ok: true,
-      recorded_at: new Date().toISOString(),
-      entry,
-    }),
+    appendLearningRecord: async (entry) => {
+      const config = loadConfig(projectRoot);
+      const mnemosynePath = resolveMnemosynePath(projectRoot);
+      return handleAppendLearning(entry, mnemosynePath, config.mnemosyne);
+    },
     ingestBeadsHookEvent: async () => {
       publishOrchestratorStateEvent();
     },
@@ -456,6 +459,7 @@ export function createHttpServerController(
       }
 
       lifecycleState = "starting";
+      projectRoot = path.resolve(options.root ?? process.cwd());
       serverToken = options.serverToken;
       const host = options.host ?? "127.0.0.1";
       const server = createServer((request, response) => {

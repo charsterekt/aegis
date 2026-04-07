@@ -16,6 +16,7 @@ export interface OraclePromptIssue {
   blockers: readonly string[];
   parentId: string | null;
   childIds: readonly string[];
+  relevantLearnings?: string;
 }
 
 function formatList(values: readonly string[]): string {
@@ -27,6 +28,7 @@ function formatList(values: readonly string[]): string {
  */
 export function buildOraclePrompt(issue: OraclePromptIssue): string {
   const description = issue.description ?? "(none)";
+  const learningsBlock = issue.relevantLearnings?.trim();
 
   return [
     "You are Oracle, the scouting caste for Aegis.",
@@ -40,6 +42,7 @@ export function buildOraclePrompt(issue: OraclePromptIssue): string {
     `Parent: ${issue.parentId ?? "(none)"}`,
     `Children: ${formatList(issue.childIds)}`,
     "",
+    ...(learningsBlock ? [learningsBlock, ""] : []),
     "Allowed actions: read-only shell commands and tracker reads.",
     "No file modifications. No writes.",
     "",
@@ -64,5 +67,6 @@ export function issueToOraclePromptIssue(issue: AegisIssue): OraclePromptIssue {
     blockers: issue.blockers,
     parentId: issue.parentId,
     childIds: issue.childIds,
+    relevantLearnings: undefined,
   };
 }

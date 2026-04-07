@@ -1,6 +1,7 @@
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { DEFAULT_AEGIS_CONFIG } from "../config/defaults.js";
 import type { BudgetLimit } from "../config/schema.js";
 import type { DispatchRecord } from "./dispatch-state.js";
 import { DispatchStage, transitionStage } from "./stage-transition.js";
@@ -25,6 +26,7 @@ import type {
 } from "../tracker/issue-model.js";
 import { createDerivedIssueInputs } from "../tracker/create-derived-issues.js";
 import type { OperatingMode } from "./operating-mode.js";
+import { buildRelevantLearningsPrompt } from "../memory/select-learnings.js";
 
 export type OracleComplexityDisposition =
   | "allow"
@@ -51,6 +53,7 @@ export interface RunOracleInput {
   projectRoot: string;
   operatingMode: OperatingMode;
   allowComplexAutoDispatch: boolean;
+  mnemosyne?: { prompt_token_budget: number };
 }
 
 export interface RunOracleResult {
@@ -132,6 +135,27 @@ function determineComplexityDisposition(
   }
 
   return "allow";
+}
+
+function buildLearningQuery(issue: Pick<AegisIssue, "title" | "description" | "labels">): string {
+  return [issue.title, issue.description ?? "", issue.labels.join(" ")].join(" ");
+}
+
+function buildOraclePromptWithLearnings(
+  issue: AegisIssue,
+  projectRoot: string,
+  mnemosyne: { prompt_token_budget: number },
+): string {
+  const relevantLearnings = buildRelevantLearningsPrompt(
+    join(projectRoot, ".aegis", "mnemosyne.jsonl"),
+    buildLearningQuery(issue),
+    mnemosyne,
+  );
+
+  return buildOraclePrompt({
+    ...issueToOraclePromptIssue(issue),
+    relevantLearnings,
+  });
 }
 
 function findFinalOraclePayloadMessage(messages: readonly string[]): string {
@@ -472,7 +496,12 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
     );
   }
 
-  let prompt = buildOraclePrompt(issueToOraclePromptIssue(input.issue));
+  const mnemosyneConfig = input.mnemosyne ?? DEFAULT_AEGIS_CONFIG.mnemosyne;
+  let prompt = buildOraclePromptWithLearnings(
+    input.issue,
+    input.projectRoot,
+    mnemosyneConfig,
+  );
   let assessment: OracleAssessment | null = null;
   let derivedIssues: CreateIssueInput[] = [];
   let createdIssues: CreatedIssue[] = [];
@@ -481,7 +510,11 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
 
   try {
     const promptIssue = await input.tracker.getIssue(input.issue.id);
-    prompt = buildOraclePrompt(issueToOraclePromptIssue(promptIssue));
+    prompt = buildOraclePromptWithLearnings(
+      promptIssue,
+      input.projectRoot,
+      mnemosyneConfig,
+    );
     const raw = await collectOracleResponse(
       input.runtime,
       input.issue.id,
