@@ -26,6 +26,7 @@ import { admitCandidate, dequeueItem, isEligibleForEnqueue } from "../../../src/
 import { mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { DispatchRecord } from "../../../src/core/dispatch-state.js";
+import { DispatchStage } from "../../../src/core/stage-transition.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -58,7 +59,7 @@ function makeQueueItem(overrides: Partial<QueueItem> = {}): QueueItem {
 function makeDispatchRecord(overrides: Partial<DispatchRecord> = {}): DispatchRecord {
   return {
     issueId: overrides.issueId ?? "test-issue-1",
-    stage: overrides.stage ?? "implemented",
+    stage: overrides.stage ?? DispatchStage.Implemented,
     runningAgent: overrides.runningAgent ?? null,
     oracleAssessmentRef: overrides.oracleAssessmentRef ?? null,
     sentinelVerdictRef: overrides.sentinelVerdictRef ?? null,
@@ -292,22 +293,22 @@ describe("Merge Queue Store — Unit", () => {
 
   describe("isEligibleForEnqueue", () => {
     it("returns true for implemented stage and not in queue", () => {
-      const record = makeDispatchRecord({ stage: "implemented" });
+      const record = makeDispatchRecord({ stage: DispatchStage.Implemented });
       expect(isEligibleForEnqueue(record, false)).toBe(true);
     });
 
     it("returns false for non-implemented stage", () => {
-      const record = makeDispatchRecord({ stage: "implementing" });
+      const record = makeDispatchRecord({ stage: DispatchStage.Implementing });
       expect(isEligibleForEnqueue(record, false)).toBe(false);
     });
 
     it("returns false if already in queue", () => {
-      const record = makeDispatchRecord({ stage: "implemented" });
+      const record = makeDispatchRecord({ stage: DispatchStage.Implemented });
       expect(isEligibleForEnqueue(record, true)).toBe(false);
     });
 
     it("returns false for empty issue ID", () => {
-      const record = makeDispatchRecord({ issueId: "", stage: "implemented" });
+      const record = makeDispatchRecord({ issueId: "", stage: DispatchStage.Implemented });
       expect(isEligibleForEnqueue(record, false)).toBe(false);
     });
   });

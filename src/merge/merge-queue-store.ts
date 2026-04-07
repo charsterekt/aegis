@@ -234,7 +234,7 @@ export function reconcileMergeQueueState(
  * @param state - Current queue state.
  * @returns The next QueueItem to process, or null.
  */
-export function nextQueedItem(state: MergeQueueState): QueueItem | null {
+export function nextQueuedItem(state: MergeQueueState): QueueItem | null {
   const queued = state.items
     .filter((item) => item.status === "queued")
     .sort((a, b) => a.position - b.position);

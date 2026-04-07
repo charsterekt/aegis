@@ -9,7 +9,7 @@
  * This module extends the live event system with merge-specific event types.
  */
 
-import type { QueueItemStatus } from "./merge-queue-store.js";
+import type { QueueItemStatus } from "../merge/merge-queue-store.js";
 
 // ---------------------------------------------------------------------------
 // Merge event types
