@@ -9,7 +9,15 @@
 import type { JSX } from "react";
 import type { DashboardState } from "../types/dashboard-state";
 import { MetricDisplay } from "./metric-display";
-import { formatUptime } from "./status-bar";
+
+/** Format seconds into HH:MM:SS string. */
+export function formatUptime(seconds: number): string {
+  if (seconds < 0) seconds = 0;
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
 
 export interface TopBarProps {
   state: DashboardState | null;
@@ -18,8 +26,10 @@ export interface TopBarProps {
   onSettingsOpen: () => void;
 }
 
+type SpendVariant = "default" | "success" | "warning" | "danger" | "info";
+
 /** Format a spend observation into a human-readable display value. */
-function formatSpend(state: DashboardState | null): { value: string; unit?: string; variant: string; tooltip?: string } {
+function formatSpend(state: DashboardState | null): { value: string; unit?: string; variant: SpendVariant; tooltip?: string } {
   if (!state) return { value: "--", variant: "default", tooltip: "No spend data" };
 
   const spend = state.spend;
@@ -128,7 +138,7 @@ export function TopBar(props: TopBarProps): JSX.Element {
           label="Spend"
           value={spendInfo.value}
           unit={spendInfo.unit}
-          variant={spendInfo.variant as "default" | "success" | "warning" | "danger" | "info"}
+          variant={spendInfo.variant}
           tooltip={spendInfo.tooltip}
         />
 

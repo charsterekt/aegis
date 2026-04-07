@@ -6,6 +6,7 @@ import { TopBar } from "./components/top-bar";
 import { SettingsPanel } from "./components/settings-panel";
 import { AgentGrid } from "./components/agent-grid";
 import { CommandBar } from "./components/command-bar";
+import type { CommandResult } from "./components/command-bar";
 
 // Inject global styles on first render
 injectGlobalStyles();
@@ -13,13 +14,23 @@ injectGlobalStyles();
 export function App(): JSX.Element {
   const { state, isConnected, error, sendCommand } = useSse();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [commandResults, setCommandResults] = useState<
-    Array<{ command: string; success: boolean; result?: string; error?: string }>
-  >([]);
+  const [commandResults, setCommandResults] = useState<CommandResult[]>([]);
 
   const handleAutoToggle = useCallback(
-    (enabled: boolean) => {
-      void sendCommand(enabled ? "auto_on" : "auto_off");
+    async (enabled: boolean) => {
+      try {
+        await sendCommand(enabled ? "auto_on" : "auto_off");
+        setCommandResults((prev) => [
+          ...prev,
+          { command: enabled ? "auto_on" : "auto_off", success: true, result: `Auto mode ${enabled ? "on" : "off"}`, timestamp: Date.now() },
+        ]);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        setCommandResults((prev) => [
+          ...prev,
+          { command: enabled ? "auto_on" : "auto_off", success: false, error: msg, timestamp: Date.now() },
+        ]);
+      }
     },
     [sendCommand],
   );
@@ -30,13 +41,13 @@ export function App(): JSX.Element {
         await sendCommand("kill", { agentId });
         setCommandResults((prev) => [
           ...prev,
-          { command: `kill ${agentId}`, success: true, result: "Agent killed" },
+          { command: `kill ${agentId}`, success: true, result: "Agent killed", timestamp: Date.now() },
         ]);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
         setCommandResults((prev) => [
           ...prev,
-          { command: `kill ${agentId}`, success: false, error: msg },
+          { command: `kill ${agentId}`, success: false, error: msg, timestamp: Date.now() },
         ]);
       }
     },
@@ -49,13 +60,13 @@ export function App(): JSX.Element {
         await sendCommand(command, payload);
         setCommandResults((prev) => [
           ...prev,
-          { command, success: true, result: "OK" },
+          { command, success: true, result: "OK", timestamp: Date.now() },
         ]);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
         setCommandResults((prev) => [
           ...prev,
-          { command, success: false, error: msg },
+          { command, success: false, error: msg, timestamp: Date.now() },
         ]);
       }
     },

@@ -1,11 +1,13 @@
 /**
- * Status bar component.
+ * StatusBar component.
  *
- * Lane A implements: orchestrator running state, mode indicator,
+ * Displays orchestrator running state, mode indicator,
  * connection status, and uptime display.
+ * Kept for future dedicated status section expansion.
  */
 
 import type { JSX } from "react";
+import { formatUptime } from "./top-bar";
 
 export interface StatusBarProps {
   isRunning: boolean;
@@ -14,63 +16,27 @@ export interface StatusBarProps {
   uptimeSeconds: number;
 }
 
-/** Format seconds into HH:MM:SS. */
-export function formatUptime(totalSeconds: number): string {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  return [hours, minutes, seconds]
-    .map((n) => String(n).padStart(2, "0"))
-    .join(":");
-}
-
 export function StatusBar(props: StatusBarProps): JSX.Element {
   const { isRunning, mode, isConnected, uptimeSeconds } = props;
 
   return (
-    <div data-testid="status-bar" role="status" className="status-bar" style={{
-      display: "flex",
-      alignItems: "center",
-      gap: "16px",
-      padding: "8px 16px",
-      fontSize: "14px",
-      flexWrap: "wrap",
-    }}>
-      {/* Running / Stopped indicator */}
-      <span className="status-indicator">
-        <span
-          className={`status-dot ${isRunning ? "running" : "stopped"} ${isRunning ? "pulse" : ""}`}
-          aria-hidden="true"
-        />
+    <div data-testid="status-bar" role="status" className="status-bar">
+      <div className="status-indicator">
+        <span className={`status-dot ${isRunning ? "running" : "stopped"} ${isRunning ? "pulse" : ""}`} />
         {isRunning ? "Running" : "Stopped"}
-      </span>
-
-      {/* Mode indicator */}
+      </div>
       {mode && (
-        <span className="status-indicator">
-          Mode:{" "}
-          <strong style={{ textTransform: "capitalize" }}>
-            {mode === "auto" ? "Auto" : "Conversational"}
-          </strong>
-        </span>
+        <div className="status-indicator">
+          Mode: <strong>{mode === "auto" ? "Auto" : "Conversational"}</strong>
+        </div>
       )}
-
-      {/* Connection status */}
-      <span className="status-indicator">
-        <span
-          className={`status-dot ${isConnected ? "connected" : "disconnected"} ${!isConnected ? "pulse" : ""}`}
-          aria-hidden="true"
-        />
+      <div className="status-indicator">
+        <span className={`status-dot ${isConnected ? "connected" : "disconnected"} ${!isConnected ? "pulse" : ""}`} />
         {isConnected ? "Connected" : "Disconnected"}
-      </span>
-
-      {/* Uptime */}
-      <span className="status-indicator">
-        Uptime:{" "}
-        <strong style={{ fontVariantNumeric: "tabular-nums" }}>
-          {formatUptime(uptimeSeconds)}
-        </strong>
-      </span>
+      </div>
+      <div className="status-indicator">
+        Uptime: <strong>{formatUptime(uptimeSeconds)}</strong>
+      </div>
     </div>
   );
 }

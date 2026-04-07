@@ -1,5 +1,6 @@
 export { TopBar } from "./top-bar";
 export type { TopBarProps } from "./top-bar";
+export { formatUptime } from "./top-bar";
 
 export { SettingsPanel } from "./settings-panel";
 export type { SettingsPanelProps } from "./settings-panel";
@@ -16,7 +17,6 @@ export type { AgentGridProps } from "./agent-grid";
 
 export { StatusBar } from "./status-bar";
 export type { StatusBarProps } from "./status-bar";
-export { formatUptime } from "./status-bar";
 
 export { MetricDisplay } from "./metric-display";
 export type { MetricDisplayProps } from "./metric-display";

@@ -66,7 +66,6 @@ export function useSse(options: UseSseOptions = {}): UseSseReturn {
   const [error, setError] = useState<string | null>(null);
 
   const eventSourceRef = useRef<EventSource | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isManualCloseRef = useRef(false);
@@ -218,7 +217,6 @@ export function useSse(options: UseSseOptions = {}): UseSseReturn {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ command, ...payload }),
-        signal: abortControllerRef.current?.signal,
       });
       if (!res.ok) {
         const text = await res.text();
@@ -239,7 +237,6 @@ export function useSse(options: UseSseOptions = {}): UseSseReturn {
     return () => {
       isManualCloseRef.current = true;
       closeConnection();
-      abortControllerRef.current?.abort();
     };
   }, [enabled, connect, closeConnection]);
 

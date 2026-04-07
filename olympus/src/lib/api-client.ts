@@ -1,6 +1,7 @@
 /**
  * HTTP API client for Olympus.
  * Wraps calls to the Aegis REST endpoints.
+ * Kept for future dedicated API client layer expansion.
  */
 
 const STEER_URL = "/api/steer";

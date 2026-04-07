@@ -1,6 +1,8 @@
 /**
- * Olympus global styles.
- * Applied once at app root level.
+ * Olympus global styles (CSS-in-JS variant).
+ *
+ * Alternative to index.css stylesheet approach.
+ * Kept for future theme switching or dynamic style injection.
  */
 
 import { colors, fontSizes, spacing } from "../theme/tokens";
@@ -70,3 +72,17 @@ export const globalStyles = `
     text-decoration: underline;
   }
 `;
+
+/**
+ * Inject global styles into the document head.
+ * Safe to call multiple times — idempotent.
+ */
+let injected = false;
+export function injectGlobalStyles() {
+  if (injected) return;
+  injected = true;
+
+  const style = document.createElement("style");
+  style.textContent = globalStyles;
+  document.head.appendChild(style);
+}

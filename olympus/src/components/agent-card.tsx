@@ -101,7 +101,7 @@ function LiveElapsed({ elapsedSeconds }: { elapsedSeconds: number }): JSX.Elemen
 }
 
 export function AgentCard(props: AgentCardProps): JSX.Element {
-  const { agentId, caste, model, issueId, turnCount, inputTokens, outputTokens, elapsedSeconds, onKill } = props;
+  const { agentId, caste, model, issueId, stage, turnCount, inputTokens, outputTokens, elapsedSeconds, onKill } = props;
 
   const handleKill = useCallback(() => {
     onKill(agentId);
@@ -137,6 +137,10 @@ export function AgentCard(props: AgentCardProps): JSX.Element {
 
       <div className="agent-card-issue" title={`Model: ${model}`}>
         Model: <strong>{model}</strong>
+      </div>
+
+      <div className="agent-card-issue" title={`Stage: ${stage}`}>
+        Stage: <strong>{stage}</strong>
       </div>
 
       <div className="agent-card-stats">

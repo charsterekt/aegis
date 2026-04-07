@@ -18,7 +18,9 @@ export interface MetricDisplayProps {
   tooltip?: string;
 }
 
-const variantColorMap: Record<string, string> = {
+type Variant = NonNullable<MetricDisplayProps["variant"]>;
+
+const variantColorMap: Record<Variant, string> = {
   default: colors.textPrimary,
   success: colors.success,
   warning: colors.warning,
