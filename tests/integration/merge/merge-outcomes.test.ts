@@ -114,20 +114,25 @@ describe("classifyConflictTier", () => {
     expect(tier).toBe(2);
   });
 
-  it("returns Tier 3 when attempt count reaches max retry threshold", () => {
-    const tier = classifyConflictTier("some error", 1, 3, 3);
+  it("prioritizes Tier 3 over Tier 2 when threshold is reached with conflicts", () => {
+    // When actual conflicts exist AND threshold is reached, Tier 3 takes priority
+    const tier = classifyConflictTier("CONFLICT content", 1, 3, 3);
     expect(tier).toBe(3);
   });
 
-  it("returns Tier 2 (not Tier 3) when below max retry threshold", () => {
+  it("returns Tier 2 (not Tier 3) for conflicts below threshold", () => {
     const tier = classifyConflictTier("CONFLICT in file", 1, 2, 3);
     expect(tier).toBe(2);
   });
 
-  it("prioritizes Tier 3 over Tier 2 when threshold is reached even with conflicts", () => {
-    // Once threshold is reached, Tier 3 takes priority
-    const tier = classifyConflictTier("CONFLICT content", 1, 3, 3);
+  it("returns Tier 3 for non-conflict failures at threshold", () => {
+    const tier = classifyConflictTier("some error", 1, 3, 3);
     expect(tier).toBe(3);
+  });
+
+  it("returns Tier 1 for non-conflict failures below threshold", () => {
+    const tier = classifyConflictTier("some error", 1, 1, 3);
+    expect(tier).toBe(1);
   });
 });
 
@@ -139,9 +144,8 @@ describe("attemptMerge", () => {
   it("successfully merges a clean candidate branch (Tier 0)", async () => {
     createCandidateBranch("aegis/clean-issue", "clean feature content");
 
-    // In a test environment without a remote, the fetch will fail but the
-    // local merge should still work. We test the merge logic path by checking
-    // that the function handles the no-remote case gracefully.
+    // Without a remote, attemptMerge now skips fetch/pull and proceeds
+    // directly to the local merge, which should succeed for a clean branch.
     const result = await attemptMerge({
       candidateBranch: "aegis/clean-issue",
       targetBranch: "main",
@@ -152,13 +156,10 @@ describe("attemptMerge", () => {
       maxRetryBeforeJanus: 3,
     });
 
-    // Without a remote, fetch fails → rework_request is the correct behavior
-    // The important thing is the function doesn't crash and returns a valid result
-    expect(result.success).toBeDefined();
-    expect(result.outcome).toBeDefined();
-    expect(result.laborPreserved).toBeDefined();
-    expect(result.conflictTier).toBeDefined();
-    expect(result.detail).toBeDefined();
+    expect(result.success).toBe(true);
+    expect(result.conflictTier).toBe(0);
+    expect(result.outcome).toBe("MERGED");
+    expect(result.laborPreserved).toBe(false);
   });
 
   it("returns REWORK_REQUEST when candidate branch does not exist", async () => {

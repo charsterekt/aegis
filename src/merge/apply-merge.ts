@@ -92,19 +92,25 @@ export function classifyConflictTier(
     return 0; // Tier 0: clean merge
   }
 
-  // Check if retry threshold for Janus escalation is reached
-  if (attemptCount >= maxRetryBeforeJanus) {
-    return 3; // Tier 3: Janus escalation
-  }
-
-  // Check for conflict markers in output
+  // First, classify the nature of the failure by checking conflict markers
   const hasConflicts =
     mergeOutput.includes("CONFLICT") ||
     mergeOutput.includes("Automatic merge failed") ||
     mergeOutput.includes("Merge conflict");
 
+  // If there are actual conflicts and retry threshold is reached, escalate to Janus
+  if (hasConflicts && attemptCount >= maxRetryBeforeJanus) {
+    return 3; // Tier 3: Janus escalation (repeated conflict attempts)
+  }
+
+  // Hard conflict — files conflict, labor must be preserved
   if (hasConflicts) {
     return 2; // Tier 2: hard conflict
+  }
+
+  // Check if retry threshold for Janus escalation is reached (non-conflict failures)
+  if (attemptCount >= maxRetryBeforeJanus) {
+    return 3; // Tier 3: Janus escalation (repeated failures)
   }
 
   // Default to Tier 1: stale branch or rebase needed
@@ -133,15 +139,34 @@ export function classifyConflictTier(
 export async function attemptMerge(
   input: MergeAttemptInput,
 ): Promise<MergeAttemptResult> {
+  // Save the original branch so we can restore it on exit
+  const originalBranchResult = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+    cwd: input.projectRoot,
+    timeout: 5_000,
+    encoding: "utf-8",
+    windowsHide: true,
+  });
+  const originalBranch = originalBranchResult.stdout?.trim();
+
+  const restoreBranch = () => {
+    if (originalBranch) {
+      spawnSync("git", ["checkout", originalBranch], {
+        cwd: input.projectRoot,
+        timeout: 10_000,
+        windowsHide: true,
+      });
+    }
+  };
+
   try {
-    // Step 1: Check if remote exists before fetching
+    // Step 1: Check if remote exists before fetching/pulling
     const hasRemote = spawnSync("git", ["remote", "get-url", "origin"], {
       cwd: input.projectRoot,
       timeout: 5_000,
       windowsHide: true,
-    });
+    }).status === 0;
 
-    if (hasRemote.status === 0) {
+    if (hasRemote) {
       // Fetch latest only if remote exists
       spawnSync("git", ["fetch", "origin"], {
         cwd: input.projectRoot,
@@ -164,6 +189,7 @@ export async function attemptMerge(
     );
 
     if (checkoutResult.status !== 0) {
+      restoreBranch();
       return {
         success: false,
         conflictTier: 1,
@@ -174,27 +200,30 @@ export async function attemptMerge(
       };
     }
 
-    // Step 3: Pull latest on target branch
-    const pullResult = spawnSync(
-      "git",
-      ["pull", "origin", input.targetBranch],
-      {
-        cwd: input.projectRoot,
-        timeout: 30_000,
-        encoding: "utf-8",
-        windowsHide: true,
-      },
-    );
+    // Step 3: Pull latest on target branch only if remote exists
+    if (hasRemote) {
+      const pullResult = spawnSync(
+        "git",
+        ["pull", "origin", input.targetBranch],
+        {
+          cwd: input.projectRoot,
+          timeout: 30_000,
+          encoding: "utf-8",
+          windowsHide: true,
+        },
+      );
 
-    if (pullResult.status !== 0) {
-      return {
-        success: false,
-        conflictTier: 1,
-        outcome: "REWORK_REQUEST",
-        detail: `Failed to pull target branch: ${pullResult.stderr?.trim() ?? "unknown error"}`,
-        laborPreserved: true,
-        error: pullResult.stderr?.trim(),
-      };
+      if (pullResult.status !== 0) {
+        restoreBranch();
+        return {
+          success: false,
+          conflictTier: 1,
+          outcome: "REWORK_REQUEST",
+          detail: `Failed to pull target branch: ${pullResult.stderr?.trim() ?? "unknown error"}`,
+          laborPreserved: true,
+          error: pullResult.stderr?.trim(),
+        };
+      }
     }
 
     // Step 4: Attempt the merge with --no-edit to avoid interactive editor
@@ -221,7 +250,8 @@ export async function attemptMerge(
     );
 
     if (conflictTier === 0) {
-      // Tier 0: clean merge
+      // Tier 0: clean merge — restore original branch
+      restoreBranch();
       return {
         success: true,
         conflictTier: 0,
@@ -231,15 +261,16 @@ export async function attemptMerge(
       };
     }
 
+    // Non-Tier-0: abort merge and restore branch
+    spawnSync("git", ["merge", "--abort"], {
+      cwd: input.projectRoot,
+      timeout: 10_000,
+      windowsHide: true,
+    });
+    restoreBranch();
+
     // Tier 1: stale branch or rebase needed
     if (conflictTier === 1) {
-      // Abort the merge to leave repo in clean state
-      spawnSync("git", ["merge", "--abort"], {
-        cwd: input.projectRoot,
-        timeout: 10_000,
-        windowsHide: true,
-      });
-
       return {
         success: false,
         conflictTier: 1,
@@ -249,14 +280,8 @@ export async function attemptMerge(
       };
     }
 
-    // Tier 2: hard conflict — abort merge, preserve labor
+    // Tier 2: hard conflict
     if (conflictTier === 2) {
-      spawnSync("git", ["merge", "--abort"], {
-        cwd: input.projectRoot,
-        timeout: 10_000,
-        windowsHide: true,
-      });
-
       return {
         success: false,
         conflictTier: 2,
@@ -275,12 +300,13 @@ export async function attemptMerge(
       laborPreserved: true,
     };
   } catch (err) {
-    // Ensure we abort any in-progress merge on error
+    // Ensure we abort any in-progress merge and restore original branch
     spawnSync("git", ["merge", "--abort"], {
       cwd: input.projectRoot,
       timeout: 10_000,
       windowsHide: true,
     });
+    restoreBranch();
 
     return {
       success: false,

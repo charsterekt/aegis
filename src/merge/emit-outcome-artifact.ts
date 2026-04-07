@@ -11,7 +11,6 @@
 import { writeFileSync, renameSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { MergeOutcomeEventPayload } from "../events/merge-events.js";
-import type { QueueItem } from "./merge-queue-store.js";
 import type { ConflictTier } from "./apply-merge.js";
 
 // ---------------------------------------------------------------------------

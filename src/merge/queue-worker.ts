@@ -15,7 +15,7 @@ import type { MergeQueueState, QueueItem } from "./merge-queue-store.js";
 import { nextQueuedItem } from "./merge-queue-store.js";
 import type { LiveEventPublisher } from "../events/event-bus.js";
 import { runGates, defaultGateConfig } from "./run-gates.js";
-import { attemptMerge, classifyConflictTier } from "./apply-merge.js";
+import { attemptMerge } from "./apply-merge.js";
 import { emitOutcomeArtifact } from "./emit-outcome-artifact.js";
 import { preserveLabor, shouldPreserveLabor } from "./preserve-labor.js";
 import { resolveLaborPath, buildLaborBranchName } from "../labor/create-labor.js";

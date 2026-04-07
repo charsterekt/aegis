@@ -7,7 +7,7 @@
  *   - labor preservation means the worktree and branch remain intact
  */
 
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import type { LaborCleanupPlan } from "../labor/cleanup-labor.js";
 import { planLaborCleanup } from "../labor/cleanup-labor.js";
@@ -101,7 +101,7 @@ export async function preserveLabor(
     // Atomic write via tmp→rename
     const tmpPath = metadataPath + ".tmp";
     writeFileSync(tmpPath, JSON.stringify(metadata, null, 2), "utf-8");
-    writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), "utf-8");
+    renameSync(tmpPath, metadataPath);
 
     return {
       preserved: true,
