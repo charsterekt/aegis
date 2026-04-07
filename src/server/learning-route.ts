@@ -9,24 +9,55 @@
  */
 
 import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   appendLearning,
   loadLearnings,
+  replaceLearningsAtomically,
+  isLearningCategory,
+  isLearningSource,
   validateLearning,
   type LearningRecord,
-  type LearningCategory,
-  type LearningSource,
 } from "../memory/mnemosyne-store.js";
 import { pruneLearnings } from "../memory/lethe.js";
-import type { AegisConfig } from "../config/schema.js";
-import { readFileSync, writeFileSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
 // Learning record enrichment
 // ---------------------------------------------------------------------------
 
-/** Global counter for ID generation within this process. */
-let nextLearningId = 1;
+type EnrichedLearningResult =
+  | { ok: true; record: LearningRecord }
+  | { ok: false; error: string };
+
+function readOptionalStringField(
+  input: Record<string, unknown>,
+  fieldName: string,
+  defaultValue: string,
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (!(fieldName in input) || input[fieldName] === undefined) {
+    return { ok: true, value: defaultValue };
+  }
+
+  if (typeof input[fieldName] !== "string") {
+    return { ok: false, error: `${fieldName} must be a string when provided` };
+  }
+
+  return { ok: true, value: input[fieldName] };
+}
+
+function readOptionalIssueIdField(
+  input: Record<string, unknown>,
+): { ok: true; value: string | null } | { ok: false; error: string } {
+  if (!("issueId" in input) || input.issueId === undefined) {
+    return { ok: true, value: null };
+  }
+
+  if (input.issueId === null || typeof input.issueId === "string") {
+    return { ok: true, value: input.issueId };
+  }
+
+  return { ok: false, error: "issueId must be a string or null when provided" };
+}
 
 /**
  * Enrich a raw learning input from the API into a full LearningRecord.
@@ -36,18 +67,55 @@ let nextLearningId = 1;
  */
 function enrichLearningInput(
   input: Record<string, unknown>,
-): LearningRecord {
-  const category = (input.category ?? "convention") as LearningCategory;
-  const source = (input.source ?? "human") as LearningSource;
+): EnrichedLearningResult {
+  const categoryField = readOptionalStringField(input, "category", "convention");
+  if (!categoryField.ok) {
+    return categoryField;
+  }
+  if (!isLearningCategory(categoryField.value)) {
+    return {
+      ok: false,
+      error: `invalid category "${categoryField.value}"; must be one of: convention, pattern, failure`,
+    };
+  }
+
+  const contentField = readOptionalStringField(input, "content", "");
+  if (!contentField.ok) {
+    return contentField;
+  }
+
+  const domainField = readOptionalStringField(input, "domain", "general");
+  if (!domainField.ok) {
+    return domainField;
+  }
+
+  const sourceField = readOptionalStringField(input, "source", "human");
+  if (!sourceField.ok) {
+    return sourceField;
+  }
+  if (!isLearningSource(sourceField.value)) {
+    return {
+      ok: false,
+      error: `invalid source "${sourceField.value}"; must be one of: oracle, titan, sentinel, janus, human, system`,
+    };
+  }
+
+  const issueIdField = readOptionalIssueIdField(input);
+  if (!issueIdField.ok) {
+    return issueIdField;
+  }
 
   return {
-    id: `learn-${Date.now()}-${nextLearningId++}`,
-    category,
-    content: (input.content ?? "") as string,
-    domain: (input.domain ?? "general") as string,
-    source,
-    issueId: (input.issueId as string | null) ?? null,
-    timestamp: new Date().toISOString(),
+    ok: true,
+    record: {
+      id: `learn-${randomUUID()}`,
+      category: categoryField.value,
+      content: contentField.value,
+      domain: domainField.value,
+      source: sourceField.value,
+      issueId: issueIdField.value,
+      timestamp: new Date().toISOString(),
+    },
   };
 }
 
@@ -72,30 +140,30 @@ function enrichLearningInput(
 export function handleAppendLearning(
   entry: Record<string, unknown>,
   mnemosynePath: string,
-  config: { max_records: number; prompt_token_budget: number },
+  config: { max_records: number },
 ): { ok: boolean; recorded_at?: string; id?: string; error?: string; pruned?: number } {
-  // Enrich
-  const record = enrichLearningInput(entry);
-
-  // Validate
+  const enriched = enrichLearningInput(entry);
+  if (!enriched.ok) {
+    return { ok: false, error: enriched.error };
+  }
+  const { record } = enriched;
   const validation = validateLearning(record);
   if (validation !== true) {
     return { ok: false, error: validation };
   }
 
-  // Append
-  appendLearning(mnemosynePath, record);
-
-  // Prune if needed
+  const existingLearnings = loadLearnings(mnemosynePath);
   let prunedCount = 0;
-  const learnings = loadLearnings(mnemosynePath);
-  if (learnings.length > config.max_records) {
-    const { remaining, pruned } = pruneLearnings(learnings, config.max_records);
-    prunedCount = pruned.length;
 
-    // Persist the pruned result (rewrite the file with only remaining records)
-    const content = remaining.map((r) => JSON.stringify(r)).join("\n") + "\n";
-    writeFileSync(mnemosynePath, content, { encoding: "utf-8" });
+  if (existingLearnings.length + 1 > config.max_records) {
+    const { remaining, pruned } = pruneLearnings(
+      [...existingLearnings, record],
+      config.max_records,
+    );
+    prunedCount = pruned.length;
+    replaceLearningsAtomically(mnemosynePath, remaining);
+  } else {
+    appendLearning(mnemosynePath, record);
   }
 
   return {

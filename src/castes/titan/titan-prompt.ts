@@ -19,6 +19,7 @@ export interface TitanPromptContext {
   laborPath: string;
   branchName: string;
   baseBranch: string;
+  relevantLearnings?: string;
 }
 
 export interface TitanPromptContract extends TitanPromptContext {
@@ -41,6 +42,8 @@ export function createTitanPromptContract(
 }
 
 export function buildTitanPrompt(contract: TitanPromptContract): string {
+  const learningsBlock = contract.relevantLearnings?.trim();
+
   return [
     "You are Titan, the implementation caste for Aegis.",
     "Work only inside the assigned labor and return only JSON.",
@@ -52,6 +55,7 @@ export function buildTitanPrompt(contract: TitanPromptContract): string {
     `Candidate branch: ${contract.branchName}`,
     `Base branch: ${contract.baseBranch}`,
     "",
+    ...(learningsBlock ? [learningsBlock, ""] : []),
     "Sections:",
     ...contract.sections.map((section) => `- ${section}`),
     "",

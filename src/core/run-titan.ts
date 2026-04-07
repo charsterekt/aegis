@@ -1,8 +1,11 @@
+import { join, resolve } from "node:path";
+
 import {
   buildTitanPrompt,
   createTitanPromptContract,
   type TitanPromptContext,
 } from "../castes/titan/titan-prompt.js";
+import { DEFAULT_AEGIS_CONFIG } from "../config/defaults.js";
 import type { BudgetLimit } from "../config/schema.js";
 import type { DispatchRecord } from "./dispatch-state.js";
 import type { FileScope } from "./scope-allocator.js";
@@ -10,6 +13,7 @@ import { DispatchStage, transitionStage } from "./stage-transition.js";
 import type { LaborCreationPlan } from "../labor/create-labor.js";
 import type { AgentRuntime, AgentEvent } from "../runtime/agent-runtime.js";
 import type { AegisIssue, AegisIssue as CreatedIssue, CreateIssueInput } from "../tracker/issue-model.js";
+import { buildRelevantLearningsPrompt } from "../memory/select-learnings.js";
 
 export type TitanRunOutcome = "success" | "clarification" | "failure";
 
@@ -98,6 +102,8 @@ export interface RunTitanInput {
   runtime: AgentRuntime;
   tracker: TitanIssueCreator;
   budget: BudgetLimit;
+  projectRoot?: string;
+  mnemosyne?: { prompt_token_budget: number };
 }
 
 export interface RunTitanResult {
@@ -141,6 +147,18 @@ export function createTitanRunContract(
     },
     lifecycleRules: TITAN_RUN_LIFECYCLE_RULES,
   };
+}
+
+function buildLearningQuery(issue: Pick<AegisIssue, "title" | "description" | "labels">): string {
+  return [issue.title, issue.description ?? "", issue.labels.join(" ")].join(" ");
+}
+
+function resolveTitanProjectRoot(input: RunTitanInput): string {
+  if (!input.projectRoot) {
+    throw new Error("runTitan requires projectRoot because labor.base_path is configurable");
+  }
+
+  return resolve(input.projectRoot);
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -319,6 +337,13 @@ export async function runTitan(input: RunTitanInput): Promise<RunTitanResult> {
       `runTitan requires a dispatch record in stage=${DispatchStage.Implementing}`,
     );
   }
+  const projectRoot = resolveTitanProjectRoot(input);
+  const mnemosyneConfig = input.mnemosyne ?? DEFAULT_AEGIS_CONFIG.mnemosyne;
+  const relevantLearnings = buildRelevantLearningsPrompt(
+    join(projectRoot, ".aegis", "mnemosyne.jsonl"),
+    buildLearningQuery(input.issue),
+    mnemosyneConfig,
+  );
   const promptContract = createTitanPromptContract({
     issueId: input.issue.id,
     issueTitle: input.issue.title,
@@ -326,6 +351,7 @@ export async function runTitan(input: RunTitanInput): Promise<RunTitanResult> {
     laborPath: input.labor.laborPath,
     branchName: input.labor.branchName,
     baseBranch: input.labor.baseBranch,
+    relevantLearnings,
   });
   const contract = createTitanRunContract(promptContract);
   const prompt = buildTitanPrompt(promptContract);

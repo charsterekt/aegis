@@ -11,7 +11,14 @@
  * - mnemosyne.jsonl owns learned project knowledge
  */
 
-import { readFileSync, appendFileSync, existsSync, mkdirSync } from "node:fs";
+import {
+  readFileSync,
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname } from "node:path";
 
 // ---------------------------------------------------------------------------
@@ -69,6 +76,14 @@ const VALID_CATEGORIES: Set<LearningCategory> = new Set(["convention", "pattern"
 /** Valid learning sources. */
 const VALID_SOURCES: Set<LearningSource> = new Set(["oracle", "titan", "sentinel", "janus", "human", "system"]);
 
+export function isLearningCategory(value: string): value is LearningCategory {
+  return VALID_CATEGORIES.has(value as LearningCategory);
+}
+
+export function isLearningSource(value: string): value is LearningSource {
+  return VALID_SOURCES.has(value as LearningSource);
+}
+
 /**
  * Validate that a learning record has all required fields and legal values.
  * Returns true if the record is valid, or an error string describing the issue.
@@ -95,7 +110,7 @@ export function validateLearning(input: unknown): true | string {
   if (typeof rec.category !== "string") {
     return "category must be a string";
   }
-  if (!VALID_CATEGORIES.has(rec.category as LearningCategory)) {
+  if (!isLearningCategory(rec.category)) {
     return `invalid category "${rec.category}"; must be one of: ${[...VALID_CATEGORIES].join(", ")}`;
   }
   if (typeof rec.content !== "string" || rec.content.trim() === "") {
@@ -107,7 +122,7 @@ export function validateLearning(input: unknown): true | string {
   if (typeof rec.source !== "string") {
     return "source must be a string";
   }
-  if (!VALID_SOURCES.has(rec.source as LearningSource)) {
+  if (!isLearningSource(rec.source)) {
     return `invalid source "${rec.source}"; must be one of: ${[...VALID_SOURCES].join(", ")}`;
   }
   if (typeof rec.timestamp !== "string") {
@@ -136,15 +151,39 @@ export function validateLearning(input: unknown): true | string {
  * @param filePath - absolute path to the mnemosyne.jsonl file
  * @param record - validated learning record to append
  */
-export function appendLearning(filePath: string, record: LearningRecord): void {
+function ensureLearningDirectory(filePath: string): void {
   const dir = dirname(filePath);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
+}
+
+export function appendLearning(filePath: string, record: LearningRecord): void {
+  ensureLearningDirectory(filePath);
 
   // Append as a single JSON line — JSONL format
   const line = JSON.stringify(record) + "\n";
   appendFileSync(filePath, line, { encoding: "utf-8" });
+}
+
+/**
+ * Atomically replace the full Mnemosyne JSONL file.
+ *
+ * Used by Lethe pruning so a failed rewrite cannot corrupt the existing file.
+ */
+export function replaceLearningsAtomically(
+  filePath: string,
+  learnings: readonly LearningRecord[],
+): void {
+  ensureLearningDirectory(filePath);
+
+  const temporaryPath = `${filePath}.tmp`;
+  const content = learnings.length === 0
+    ? ""
+    : `${learnings.map((record) => JSON.stringify(record)).join("\n")}\n`;
+
+  writeFileSync(temporaryPath, content, "utf-8");
+  renameSync(temporaryPath, filePath);
 }
 
 // ---------------------------------------------------------------------------

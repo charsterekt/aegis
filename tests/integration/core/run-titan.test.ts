@@ -1,4 +1,7 @@
 import path from "node:path";
+import { appendLearning, type LearningRecord } from "../../../src/memory/mnemosyne-store.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -20,6 +23,8 @@ import type { AgentEvent, AgentHandle, AgentRuntime, SpawnOptions } from "../../
 import type { BudgetLimit } from "../../../src/config/schema.js";
 import type { LaborCreationPlan } from "../../../src/labor/create-labor.js";
 import type { TitanIssueCreator } from "../../../src/core/run-titan.js";
+
+const DEFAULT_PROJECT_ROOT = path.resolve("C:/dev/aegis");
 
 function makeIssue(overrides: Partial<AegisIssue> = {}): AegisIssue {
   return {
@@ -61,10 +66,22 @@ function makeRecord(stage: DispatchStage = DispatchStage.Implementing): Dispatch
   };
 }
 
+function makeLearning(overrides: Partial<LearningRecord> = {}): LearningRecord {
+  return {
+    id: overrides.id ?? "learn-1",
+    category: overrides.category ?? "convention",
+    content: overrides.content ?? "Use path.join() for Windows-safe paths",
+    domain: overrides.domain ?? "config",
+    source: overrides.source ?? "human",
+    issueId: overrides.issueId ?? null,
+    timestamp: overrides.timestamp ?? "2026-04-05T19:00:00.000Z",
+  };
+}
+
 function makeLaborPlan(): LaborCreationPlan {
   return {
     issueId: "aegis-fjm.10.3",
-    laborPath: path.join("C:/dev/aegis", ".aegis", "labors", "labor-aegis-fjm.10.3"),
+    laborPath: path.join(DEFAULT_PROJECT_ROOT, ".aegis", "labors", "labor-aegis-fjm.10.3"),
     branchName: "aegis/aegis-fjm.10.3",
     baseBranch: "main",
     createWorktreeCommand: {
@@ -74,7 +91,7 @@ function makeLaborPlan(): LaborCreationPlan {
         "add",
         "-b",
         "aegis/aegis-fjm.10.3",
-        path.join("C:/dev/aegis", ".aegis", "labors", "labor-aegis-fjm.10.3"),
+        path.join(DEFAULT_PROJECT_ROOT, ".aegis", "labors", "labor-aegis-fjm.10.3"),
         "main",
       ],
     },
@@ -296,6 +313,7 @@ describe("S09 Titan contract seed", () => {
       runtime,
       tracker,
       budget,
+      projectRoot: DEFAULT_PROJECT_ROOT,
     });
 
     expect(spawn).toHaveBeenCalledWith({
@@ -316,6 +334,76 @@ describe("S09 Titan contract seed", () => {
     expect(tracker.createIssue).not.toHaveBeenCalled();
     expect(tracker.addBlocker).not.toHaveBeenCalled();
     expect(result.prompt).toContain("return only JSON");
+  });
+
+  it("injects relevant Mnemosyne learnings into the Titan prompt", async () => {
+    const projectRoot = mkdtempSync(path.join(tmpdir(), "aegis-s09-mnemosyne-"));
+    appendLearning(
+      path.join(projectRoot, ".aegis", "mnemosyne.jsonl"),
+      makeLearning({
+        id: "learn-titan",
+        content: "Use path.join() for Windows-safe paths in config work.",
+        domain: "config",
+      }),
+    );
+
+    try {
+      const result = await runTitan({
+        issue: makeIssue({
+          description: "Implement Windows config path handling in Titan.",
+        }),
+        record: makeRecord(),
+        labor: {
+          ...makeLaborPlan(),
+          laborPath: path.join(projectRoot, ".aegis", "labors", "labor-aegis-fjm.10.3"),
+        },
+        runtime: makeRuntime(JSON.stringify({
+          outcome: "success",
+          summary: "Implemented Titan execution.",
+          files_changed: ["src/core/run-titan.ts"],
+          tests_and_checks_run: ["npm run test -- tests/integration/core/run-titan.test.ts"],
+          known_risks: [],
+          follow_up_work: [],
+          learnings_written_to_mnemosyne: [],
+        })),
+        tracker: makeTracker(),
+        budget: { turns: 4, tokens: 8000 },
+        projectRoot,
+      });
+
+      expect(result.prompt).toContain("## Mnemosyne Reference Data (Untrusted)");
+      expect(result.prompt).toContain("Use path.join() for Windows-safe paths in config work.");
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("requires an explicit projectRoot instead of inferring it from laborPath", async () => {
+    const projectRoot = mkdtempSync(path.join(tmpdir(), "aegis-s09-custom-labor-"));
+
+    try {
+      await expect(runTitan({
+        issue: makeIssue(),
+        record: makeRecord(),
+        labor: {
+          ...makeLaborPlan(),
+          laborPath: path.join(projectRoot, "custom-labors", "labor-aegis-fjm.10.3"),
+        },
+        runtime: makeRuntime(JSON.stringify({
+          outcome: "success",
+          summary: "Implemented Titan execution.",
+          files_changed: ["src/core/run-titan.ts"],
+          tests_and_checks_run: ["npm run test -- tests/integration/core/run-titan.test.ts"],
+          known_risks: [],
+          follow_up_work: [],
+          learnings_written_to_mnemosyne: [],
+        })),
+        tracker: makeTracker(),
+        budget: { turns: 4, tokens: 8000 },
+      } as any)).rejects.toThrow(/requires projectRoot/i);
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 
   it("creates a clarification issue and maps the Titan attempt to failed when the response is ambiguous", async () => {
@@ -346,6 +434,7 @@ describe("S09 Titan contract seed", () => {
       })),
       tracker,
       budget: { turns: 4, tokens: 8000 },
+      projectRoot: DEFAULT_PROJECT_ROOT,
     });
 
     expect(result.outcome).toBe("clarification");
@@ -391,6 +480,7 @@ describe("S09 Titan contract seed", () => {
       })),
       tracker,
       budget: { turns: 4, tokens: 8000 },
+      projectRoot: DEFAULT_PROJECT_ROOT,
     });
 
     expect(result.outcome).toBe("failure");
@@ -417,6 +507,7 @@ describe("S09 Titan contract seed", () => {
       })),
       tracker,
       budget: { turns: 4, tokens: 8000 },
+      projectRoot: DEFAULT_PROJECT_ROOT,
     });
 
     expect(result.outcome).toBe("failure");
@@ -452,6 +543,7 @@ describe("S09 Titan contract seed", () => {
       ]),
       tracker,
       budget: { turns: 4, tokens: 8000 },
+      projectRoot: DEFAULT_PROJECT_ROOT,
     });
 
     expect(result.outcome).toBe("success");
@@ -465,6 +557,7 @@ describe("S09 Titan contract seed", () => {
       runtime: makeRuntime("{ nope }"),
       tracker: makeTracker(),
       budget: { turns: 4, tokens: 8000 },
+      projectRoot: DEFAULT_PROJECT_ROOT,
     });
 
     expect(result.outcome).toBe("failure");
@@ -489,6 +582,7 @@ describe("S09 Titan contract seed", () => {
       })),
       tracker: makeTracker(),
       budget: { turns: 4, tokens: 8000 },
+      projectRoot: DEFAULT_PROJECT_ROOT,
     });
 
     expect(result.outcome).toBe("failure");
@@ -519,6 +613,7 @@ describe("S09 Titan contract seed", () => {
       })),
       tracker,
       budget: { turns: 4, tokens: 8000 },
+      projectRoot: DEFAULT_PROJECT_ROOT,
     });
 
     expect(result.outcome).toBe("failure");
@@ -546,6 +641,7 @@ describe("S09 Titan contract seed", () => {
         })),
         tracker: makeTracker(),
         budget: { turns: 4, tokens: 8000 },
+        projectRoot: DEFAULT_PROJECT_ROOT,
       }),
     ).rejects.toThrow(/implementing/i);
   });

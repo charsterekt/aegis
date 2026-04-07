@@ -4,8 +4,8 @@
  * Gate: npm run test -- tests/integration/memory/mnemosyne-store.test.ts
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { appendFileSync, existsSync, readFileSync, rmSync, mkdirSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { appendFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import {
   appendLearning,
   loadLearnings,
@@ -14,6 +14,7 @@ import {
   type LearningRecord,
 } from "../../../src/memory/mnemosyne-store.js";
 import { pruneLearnings, computePruneSet } from "../../../src/memory/lethe.js";
+import { handleAppendLearning } from "../../../src/server/learning-route.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -21,6 +22,7 @@ import { pruneLearnings, computePruneSet } from "../../../src/memory/lethe.js";
 
 const TEST_DIR = ".aegis/test-mnemosyne";
 const TEST_FILE = `${TEST_DIR}/mnemosyne.jsonl`;
+const ROUTE_CONFIG = { max_records: 3, prompt_token_budget: 1_000 };
 
 function makeRecord(overrides: Partial<LearningRecord> = {}): LearningRecord {
   return {
@@ -45,8 +47,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (existsSync(TEST_FILE)) {
-    rmSync(TEST_FILE);
+  vi.useRealTimers();
+  vi.resetModules();
+  vi.doUnmock("node:fs");
+  if (existsSync(TEST_DIR)) {
+    rmSync(TEST_DIR, { recursive: true, force: true });
   }
 });
 
@@ -286,5 +291,119 @@ describe("Telemetry exclusion", () => {
       const result = validateLearning(makeRecord({ category: cat as any }));
       expect(result).toContain("invalid category");
     }
+  });
+});
+
+describe("handleAppendLearning", () => {
+  it("records a learning with defaults through the server write path", () => {
+    const result = handleAppendLearning(
+      { content: "Prefer path.join() on Windows" },
+      TEST_FILE,
+      ROUTE_CONFIG,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.id).toMatch(/^learn-/);
+    expect(result.recorded_at).toBeTruthy();
+
+    const loaded = loadLearnings(TEST_FILE);
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0]).toMatchObject({
+      category: "convention",
+      content: "Prefer path.join() on Windows",
+      domain: "general",
+      source: "human",
+      issueId: null,
+    });
+  });
+
+  it("rejects explicit nulls instead of silently defaulting them", () => {
+    const result = handleAppendLearning(
+      {
+        content: "Prefer path.join() on Windows",
+        domain: null,
+      },
+      TEST_FILE,
+      ROUTE_CONFIG,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "domain must be a string when provided",
+    });
+    expect(loadLearnings(TEST_FILE)).toEqual([]);
+  });
+
+  it("rejects missing content instead of acknowledging an unreadable learning", () => {
+    const result = handleAppendLearning({}, TEST_FILE, ROUTE_CONFIG);
+
+    expect(result).toEqual({
+      ok: false,
+      error: "content must be a non-empty string",
+    });
+    expect(loadLearnings(TEST_FILE)).toEqual([]);
+  });
+
+  it("keeps the prior file contents intact when prune persistence fails", async () => {
+    appendLearning(TEST_FILE, makeRecord({ id: "keep-1", content: "existing learning" }));
+
+    const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.resetModules();
+    vi.doMock("node:fs", () => ({
+      ...realFs,
+      writeFileSync: (
+        path: Parameters<typeof realFs.writeFileSync>[0],
+        data: Parameters<typeof realFs.writeFileSync>[1],
+        options?: Parameters<typeof realFs.writeFileSync>[2],
+      ) => {
+        if (String(path).includes("mnemosyne.jsonl")) {
+          realFs.writeFileSync(path, "partial-write\n", "utf8");
+          throw new Error("simulated rewrite failure");
+        }
+        return realFs.writeFileSync(path, data, options as never);
+      },
+    }));
+
+    try {
+      const { handleAppendLearning: isolatedHandleAppendLearning } = await import("../../../src/server/learning-route.js");
+
+      expect(() => isolatedHandleAppendLearning(
+        { content: "new learning" },
+        TEST_FILE,
+        { max_records: 1 },
+      )).toThrow("simulated rewrite failure");
+    } finally {
+      vi.doUnmock("node:fs");
+      vi.resetModules();
+    }
+
+    const loaded = loadLearnings(TEST_FILE);
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].id).toBe("keep-1");
+  });
+
+  it("generates unique ids across module reloads", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-04T00:00:00.000Z"));
+
+    vi.resetModules();
+    const firstModule = await import("../../../src/server/learning-route.js");
+    const first = firstModule.handleAppendLearning(
+      { content: "first learning" },
+      TEST_FILE,
+      ROUTE_CONFIG,
+    );
+
+    vi.resetModules();
+    const secondModule = await import("../../../src/server/learning-route.js");
+    const second = secondModule.handleAppendLearning(
+      { content: "second learning" },
+      TEST_FILE,
+      ROUTE_CONFIG,
+    );
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(first.id).not.toBe(second.id);
   });
 });

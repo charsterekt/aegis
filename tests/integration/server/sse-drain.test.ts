@@ -1,9 +1,22 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it } from "vitest";
 
+import { initProject } from "../../../src/config/init-project.js";
+import { loadLearnings } from "../../../src/memory/mnemosyne-store.js";
 import { createHttpServerController } from "../../../src/server/http-server.js";
 import type { HttpServerController } from "../../../src/server/http-server.js";
 
 let controller: HttpServerController | null = null;
+const tempRoots: string[] = [];
+
+function createTempRoot(prefix: string) {
+  const root = mkdtempSync(path.join(tmpdir(), prefix));
+  tempRoots.push(root);
+  return root;
+}
 
 afterEach(async () => {
   if (controller) {
@@ -13,6 +26,10 @@ afterEach(async () => {
       // already stopped
     }
     controller = null;
+  }
+
+  for (const root of tempRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -93,6 +110,41 @@ describe("SSE connection drain during shutdown", () => {
 
     for (const ac of abortControllers) {
       ac.abort();
+    }
+  });
+
+  it("resolves learning writes from the configured project root instead of process.cwd()", async () => {
+    const projectRoot = createTempRoot("aegis-s11-root-");
+    const foreignCwd = createTempRoot("aegis-s11-cwd-");
+    initProject(projectRoot);
+
+    const originalCwd = process.cwd();
+    process.chdir(foreignCwd);
+
+    try {
+      controller = createHttpServerController();
+      const { port } = await controller.start({ port: 0, root: projectRoot });
+
+      const response = await fetch(`http://127.0.0.1:${port}/api/learning`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          content: "Use path.join() for Windows-safe paths",
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ ok: true });
+      expect(
+        loadLearnings(path.join(projectRoot, ".aegis", "mnemosyne.jsonl")),
+      ).toHaveLength(1);
+      expect(
+        loadLearnings(path.join(foreignCwd, ".aegis", "mnemosyne.jsonl")),
+      ).toEqual([]);
+    } finally {
+      process.chdir(originalCwd);
     }
   });
 });
