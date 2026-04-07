@@ -319,7 +319,7 @@ describe("S09 Titan contract seed", () => {
     expect(spawn).toHaveBeenCalledWith({
       caste: "titan",
       issueId: "aegis-fjm.10.3",
-      workingDirectory: path.join("C:/dev/aegis", ".aegis", "labors", "labor-aegis-fjm.10.3"),
+      workingDirectory: path.join(DEFAULT_PROJECT_ROOT, ".aegis", "labors", "labor-aegis-fjm.10.3"),
       toolRestrictions: [],
       budget,
     });
@@ -442,7 +442,7 @@ describe("S09 Titan contract seed", () => {
     expect(result.clarificationArtifact).toEqual({
       originalIssueId: "aegis-fjm.10.3",
       issueTitle: "[S09] Parallel lane B",
-      laborPath: path.join("C:/dev/aegis", ".aegis", "labors", "labor-aegis-fjm.10.3"),
+      laborPath: path.join(DEFAULT_PROJECT_ROOT, ".aegis", "labors", "labor-aegis-fjm.10.3"),
       candidateBranch: "aegis/aegis-fjm.10.3",
       baseBranch: "main",
       blockingQuestion: "Should Titan emit one handoff artifact per issue or per merge candidate?",
