@@ -213,6 +213,34 @@ function buildEvidence(
   });
 }
 
+function evaluateCheckStatus(
+  metricValue: number | null,
+  thresholdKind: "min" | "max",
+  thresholdValue: number,
+): ReleaseGateStatus {
+  if (metricValue === null) {
+    return "pending";
+  }
+
+  if (thresholdKind === "min") {
+    return metricValue >= thresholdValue ? "pass" : "fail";
+  }
+
+  return metricValue <= thresholdValue ? "pass" : "fail";
+}
+
+function resolveOverallStatus(checks: readonly ReleaseGateCheck[]): ReleaseGateStatus {
+  if (checks.some((check) => check.status === "fail")) {
+    return "fail";
+  }
+
+  if (checks.some((check) => check.status === "pending")) {
+    return "pending";
+  }
+
+  return "pass";
+}
+
 export interface CreatePendingReleaseGateReportOptions {
   generatedAt?: string | null;
   checklistPath?: string;
@@ -254,4 +282,34 @@ export function createPendingReleaseGateReport(
     metrics,
     checks,
   };
+}
+
+export function evaluateReleaseGateReport(
+  report: ReleaseGateReport,
+): ReleaseGateReport {
+  const checks = report.checks.map((check) => {
+    const metricValue = report.metrics[check.metric_key];
+
+    return {
+      ...check,
+      metric_value: metricValue,
+      status: evaluateCheckStatus(
+        metricValue,
+        check.threshold_kind,
+        check.threshold_value,
+      ),
+    };
+  });
+
+  return {
+    ...report,
+    overall_status: resolveOverallStatus(checks),
+    checks,
+  };
+}
+
+export function createReleaseGateReport(
+  options: CreatePendingReleaseGateReportOptions,
+): ReleaseGateReport {
+  return evaluateReleaseGateReport(createPendingReleaseGateReport(options));
 }
