@@ -888,6 +888,101 @@ describe("validateEvalRunResult", () => {
 });
 
 // ---------------------------------------------------------------------------
+// validateEvalRunResult — evidence parity
+// ---------------------------------------------------------------------------
+
+describe("validateEvalRunResult — evidence parity", () => {
+  it("rejects when issue_evidence has fewer entries than issue_count", () => {
+    const data = makeMinimalResultData();
+    data["issue_count"] = 2;
+    // issue_evidence still has only 1 entry
+
+    const result = validateEvalRunResult(data);
+    expect(result.valid).toBe(false);
+    expect(
+      result.errors.some((e) =>
+        e.includes("issue_evidence has 1 entries but issue_count is 2"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects when issue_evidence has keys not in completion_outcomes", () => {
+    const data = makeMinimalResultData();
+    data["issue_evidence"] = {
+      "issue-1": makeIssueEvidence(),
+      "issue-2": makeIssueEvidence(),
+    };
+    data["issue_count"] = 2;
+    // completion_outcomes still has only "issue-1"
+
+    const result = validateEvalRunResult(data);
+    expect(result.valid).toBe(false);
+    expect(
+      result.errors.some((e) =>
+        e.includes('completion_outcomes missing key "issue-2" present in issue_evidence'),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects when completion_outcomes has keys not in issue_evidence", () => {
+    const data = makeMinimalResultData();
+    data["completion_outcomes"] = {
+      "issue-1": "completed",
+      "issue-2": "completed",
+    };
+    data["issue_count"] = 1;
+    // issue_evidence still has only "issue-1"
+
+    const result = validateEvalRunResult(data);
+    expect(result.valid).toBe(false);
+    expect(
+      result.errors.some((e) =>
+        e.includes('issue_evidence missing key "issue-2" present in completion_outcomes'),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects when merge_outcomes has keys not in issue_evidence", () => {
+    const data = makeMinimalResultData();
+    data["merge_outcomes"] = {
+      "issue-1": "merged_clean",
+      "issue-2": "merged_clean",
+    };
+    data["issue_count"] = 1;
+    // issue_evidence still has only "issue-1"
+
+    const result = validateEvalRunResult(data);
+    expect(result.valid).toBe(false);
+    expect(
+      result.errors.some((e) =>
+        e.includes('issue_evidence missing key "issue-2" present in merge_outcomes'),
+      ),
+    ).toBe(true);
+  });
+
+  it("passes when all parities match", () => {
+    const data = makeMinimalResultData();
+    data["issue_count"] = 2;
+    data["completion_outcomes"] = {
+      "issue-1": "completed",
+      "issue-2": "failed",
+    };
+    data["merge_outcomes"] = {
+      "issue-1": "merged_clean",
+      "issue-2": "not_attempted",
+    };
+    data["issue_evidence"] = {
+      "issue-1": makeIssueEvidence(),
+      "issue-2": makeIssueEvidence(),
+    };
+
+    const result = validateEvalRunResult(data);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // compareScoreSummaries
 // ---------------------------------------------------------------------------
 

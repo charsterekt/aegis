@@ -68,7 +68,7 @@ export function computeScoreSummary(
     issue_completion_rate_80pct: completionRate >= 0.8,
     human_interventions_within_threshold:
       humanInterventionsPer10Issues <= maxHumanPer10,
-    janus_minority_path: janusInvocationRatePer10Issues <= 5,
+    janus_minority_path: janusInvocationRatePer10Issues < 5,
   };
 
   return {

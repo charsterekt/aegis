@@ -1,7 +1,8 @@
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, afterEach } from "vitest";
 
 import {
   createEmptyReleaseMetrics,
@@ -15,6 +16,7 @@ import {
   createReleaseGateReport,
   createPendingReleaseGateReport,
   evaluateReleaseGateReport,
+  generateReleaseGateReportFromDisk,
 } from "../../../src/evals/release-gate.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..");
@@ -262,5 +264,183 @@ describe("S16B contract seed - release gate", () => {
     expect(findCheck(evaluated, "structured_artifact_compliance_100pct").status).toBe(
       "pass",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateReleaseGateReportFromDisk tests
+// ---------------------------------------------------------------------------
+
+describe("generateReleaseGateReportFromDisk", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tempDirs) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup failures
+      }
+    }
+    tempDirs.length = 0;
+  });
+
+  function makeTempDir(): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aegis-release-test-"));
+    tempDirs.push(dir);
+    return dir;
+  }
+
+  it("discovers persisted result files and generates a report", () => {
+    const evalRoot = makeTempDir();
+    const reportsDir = path.join(evalRoot, "reports");
+
+    // Create a minimal valid eval result
+    const result = {
+      aegis_version: "0.1.0",
+      git_sha: "abc123def4567890123456789012345678901234",
+      config_fingerprint: "test-fingerprint",
+      runtime: "pi",
+      model_mapping: { oracle: "pi", titan: "pi" },
+      scenario_id: "single-clean-issue",
+      issue_count: 1,
+      issue_types: { task: 1 },
+      completion_outcomes: { "issue-1": "completed" },
+      merge_outcomes: { "issue-1": "merged_clean" },
+      issue_evidence: {
+        "issue-1": {
+          structured_artifacts: {
+            oracle: { expected: true, compliant: true, assessment_ref: null, estimated_complexity: "trivial", ready: true, derived_issue_ids: [] },
+            titan: { expected: true, compliant: true, outcome: "success", files_changed: [], tests_and_checks_run: [], clarification_issue_id: null },
+            sentinel: { expected: false, compliant: null, verdict_ref: null, verdict: null, created_fix_issue_ids: [] },
+            janus: { expected: false, compliant: null, artifact_ref: null, recommended_next_action: null },
+          },
+          clarification: { expected: false, compliant: null, clarification_issue_id: null, blocking_question: null },
+          merge_queue: { queued_at: "2026-04-08T00:00:00.000Z", merged_at: "2026-04-08T00:00:02.000Z", direct_to_main_bypass: false, rework_count: 0, janus_invoked: false, janus_succeeded: false, conflict_count: 0 },
+          restart_recovery: { expected: false, recovered: null, phase: null },
+        },
+      },
+      human_intervention_issue_ids: [],
+      cost_totals: null,
+      quota_totals: null,
+      timing: {
+        started_at: "2026-04-08T00:00:00.000Z",
+        finished_at: "2026-04-08T00:00:05.000Z",
+        elapsed_ms: 5000,
+      },
+    };
+
+    // Write the result file
+    fs.writeFileSync(
+      path.join(evalRoot, "single-clean-issue.json"),
+      JSON.stringify(result, null, 2),
+      "utf8",
+    );
+
+    // Generate the report
+    const output = generateReleaseGateReportFromDisk(evalRoot, reportsDir);
+
+    // Verify report was written
+    expect(output.report).toBeDefined();
+    expect(output.report.overall_status).toBeDefined();
+    expect(output.scoreSummaries).toBeDefined();
+    expect(output.scoreSummaries["single-clean-issue"]).toBeDefined();
+    expect(output.reportPath).toMatch(/release-report\.json$/);
+    expect(fs.existsSync(output.reportPath)).toBe(true);
+
+    // Verify the report content
+    expect(output.report.checks.length).toBe(RELEASE_GATE_CHECK_IDS.length);
+    expect(output.report.metrics.scenario_count).toBe(1);
+    expect(output.report.metrics.issue_completion_rate).toBe(1.0);
+  });
+
+  it("throws when result files are invalid", () => {
+    const evalRoot = makeTempDir();
+    const reportsDir = path.join(evalRoot, "reports");
+
+    // Write an invalid result (missing required field)
+    fs.writeFileSync(
+      path.join(evalRoot, "bad-result.json"),
+      JSON.stringify({ aegis_version: "0.1.0" }),
+      "utf8",
+    );
+
+    expect(() => {
+      generateReleaseGateReportFromDisk(evalRoot, reportsDir);
+    }).toThrow(/Invalid eval run result/);
+  });
+
+  it("returns empty results when no result files exist", () => {
+    const evalRoot = makeTempDir();
+    const reportsDir = path.join(evalRoot, "reports");
+
+    const output = generateReleaseGateReportFromDisk(evalRoot, reportsDir);
+
+    expect(output.report.metrics.scenario_count).toBe(0);
+    expect(Object.keys(output.scoreSummaries).length).toBe(0);
+  });
+
+  it("enforces Janus minority path fails at exactly 5/10", () => {
+    const evalRoot = makeTempDir();
+    const reportsDir = path.join(evalRoot, "reports");
+
+    // Create a result with exactly 5 Janus invocations per 10 issues (50%)
+    const issueEvidence: Record<string, any> = {};
+    const completionOutcomes: Record<string, string> = {};
+    const mergeOutcomes: Record<string, string> = {};
+
+    for (let i = 1; i <= 10; i++) {
+      const issueId = `issue-${i}`;
+      completionOutcomes[issueId] = "completed";
+      mergeOutcomes[issueId] = i <= 5 ? "conflict_resolved_janus" : "merged_clean";
+      issueEvidence[issueId] = {
+        structured_artifacts: {
+          oracle: { expected: true, compliant: true, assessment_ref: null, estimated_complexity: "moderate", ready: true, derived_issue_ids: [] },
+          titan: { expected: true, compliant: true, outcome: "success", files_changed: [], tests_and_checks_run: [], clarification_issue_id: null },
+          sentinel: { expected: true, compliant: true, verdict_ref: null, verdict: "pass", created_fix_issue_ids: [] },
+          janus: { expected: i <= 5, compliant: i <= 5, artifact_ref: null, recommended_next_action: i <= 5 ? "requeue" : null },
+        },
+        clarification: { expected: false, compliant: null, clarification_issue_id: null, blocking_question: null },
+        merge_queue: { queued_at: "2026-04-08T00:00:00.000Z", merged_at: "2026-04-08T00:00:02.000Z", direct_to_main_bypass: false, rework_count: 0, janus_invoked: i <= 5, janus_succeeded: i <= 5, conflict_count: i <= 5 ? 1 : 0 },
+        restart_recovery: { expected: false, recovered: null, phase: null },
+      };
+    }
+
+    const result = {
+      aegis_version: "0.1.0",
+      git_sha: "abc123def4567890123456789012345678901234",
+      config_fingerprint: "test-fingerprint",
+      runtime: "pi",
+      model_mapping: { oracle: "pi", titan: "pi" },
+      scenario_id: "janus-escalation",
+      issue_count: 10,
+      issue_types: { task: 10 },
+      completion_outcomes: completionOutcomes,
+      merge_outcomes: mergeOutcomes,
+      issue_evidence: issueEvidence,
+      human_intervention_issue_ids: [],
+      cost_totals: null,
+      quota_totals: null,
+      timing: {
+        started_at: "2026-04-08T00:00:00.000Z",
+        finished_at: "2026-04-08T00:00:05.000Z",
+        elapsed_ms: 5000,
+      },
+    };
+
+    fs.writeFileSync(
+      path.join(evalRoot, "janus-escalation.json"),
+      JSON.stringify(result, null, 2),
+      "utf8",
+    );
+
+    const output = generateReleaseGateReportFromDisk(evalRoot, reportsDir);
+
+    // Janus rate is exactly 5/10, which should FAIL (not a minority)
+    const janusCheck = output.report.checks.find((c) => c.id === "janus_minority_path");
+    expect(janusCheck).toBeDefined();
+    expect(janusCheck!.metric_value).toBe(5.0);
+    expect(janusCheck!.status).toBe("fail");
+    expect(output.report.overall_status).toBe("fail");
   });
 });

@@ -75,6 +75,12 @@ export interface ScenarioResultOverrides {
   completionOutcomes: Record<string, CompletionOutcome>;
   mergeOutcomes: Record<string, MergeOutcome>;
   humanInterventionIssueIds?: string[];
+  /**
+   * Actual restart recovery status per issue id.
+   * Present only for restart scenarios; null when the runner cannot determine
+   * whether dispatch state was reconciled correctly after the simulated restart.
+   */
+  restartRecovered?: Record<string, boolean | null>;
 }
 
 export interface DispatchRecordOptions {
@@ -664,8 +670,25 @@ function buildScenarioIssueEvidence(
         binding.capabilities.includes("sentinel") && merged;
       const janusExpected =
         binding.capabilities.includes("janus") && mergeAttempted;
-      const clarificationExpected = completionOutcome === "paused_ambiguous";
+
+      // Clarification is expected when the fixture designed this issue to pause
+      // for ambiguity, regardless of whether the runner actually paused.
+      // If the fixture expected paused_ambiguous but the issue completed instead,
+      // expected is still true and compliant is false (the runner missed the
+      // ambiguity signal).
+      const fixtureExpectedPaused = issue.expected_completion === "paused_ambiguous";
+      const actuallyPausedAmbiguous = completionOutcome === "paused_ambiguous";
+      const clarificationExpected = fixtureExpectedPaused;
+      const clarificationCompliant = actuallyPausedAmbiguous
+        ? true
+        : fixtureExpectedPaused
+          ? false
+          : null;
+
       const restartExpected = restartPhase !== null;
+      const restartRecovered = restartExpected
+        ? (overrides.restartRecovered?.[issue.id] ?? null)
+        : null;
 
       evidence.structured_artifacts.oracle = {
         ...evidence.structured_artifacts.oracle,
@@ -723,7 +746,7 @@ function buildScenarioIssueEvidence(
       evidence.clarification = {
         ...evidence.clarification,
         expected: clarificationExpected,
-        compliant: clarificationExpected ? true : null,
+        compliant: clarificationCompliant,
         clarification_issue_id: clarificationExpected
           ? `${issue.id}-clarification`
           : null,
@@ -754,7 +777,7 @@ function buildScenarioIssueEvidence(
 
       evidence.restart_recovery = {
         expected: restartExpected,
-        recovered: restartExpected ? true : null,
+        recovered: restartRecovered,
         phase: restartPhase,
       };
 

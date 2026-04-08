@@ -305,6 +305,70 @@ function validateIssueEvidence(
 }
 
 // ---------------------------------------------------------------------------
+// Evidence parity validation
+// ---------------------------------------------------------------------------
+
+function validateEvidenceParity(
+  issueCount: number,
+  issueEvidence: unknown,
+  completionOutcomes: unknown,
+  mergeOutcomes: unknown,
+): string[] {
+  const errors: string[] = [];
+
+  // Check issue_evidence is an object
+  if (!isRecord(issueEvidence)) {
+    errors.push('"issue_evidence" must be an object');
+    return errors;
+  }
+
+  // Check exact count match
+  const evidenceKeys = Object.keys(issueEvidence);
+  if (evidenceKeys.length !== issueCount) {
+    errors.push(
+      `issue_evidence has ${evidenceKeys.length} entries but issue_count is ${issueCount}`,
+    );
+  }
+
+  // Check completion_outcomes is an object
+  if (!isRecord(completionOutcomes)) {
+    errors.push('"completion_outcomes" must be an object');
+    return errors;
+  }
+
+  // Every completion outcome key must exist in issue_evidence
+  for (const key of Object.keys(completionOutcomes)) {
+    if (!(key in issueEvidence)) {
+      errors.push(
+        `issue_evidence missing key "${key}" present in completion_outcomes`,
+      );
+    }
+  }
+
+  // Every issue_evidence key must exist in completion_outcomes
+  for (const key of evidenceKeys) {
+    if (!(key in completionOutcomes)) {
+      errors.push(
+        `completion_outcomes missing key "${key}" present in issue_evidence`,
+      );
+    }
+  }
+
+  // Check merge_outcomes parity (only if it's a non-empty object)
+  if (isRecord(mergeOutcomes) && Object.keys(mergeOutcomes).length > 0) {
+    for (const key of Object.keys(mergeOutcomes)) {
+      if (!(key in issueEvidence)) {
+        errors.push(
+          `issue_evidence missing key "${key}" present in merge_outcomes`,
+        );
+      }
+    }
+  }
+
+  return errors;
+}
+
+// ---------------------------------------------------------------------------
 // validateEvalRunResult
 // ---------------------------------------------------------------------------
 
@@ -475,6 +539,16 @@ export function validateEvalRunResult(data: unknown): ValidationResult {
       errors.push('"timing.elapsed_ms" must be a number');
     }
   }
+
+  // ── evidence parity ───────────────────────────────────────────────────────
+
+  const parityErrors = validateEvidenceParity(
+    data["issue_count"] as number,
+    data["issue_evidence"],
+    data["completion_outcomes"],
+    data["merge_outcomes"],
+  );
+  errors.push(...parityErrors);
 
   return { valid: errors.length === 0, errors };
 }
