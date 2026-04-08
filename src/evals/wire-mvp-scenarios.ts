@@ -142,6 +142,50 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function parseManifestScenario(
+  scenario: unknown,
+  manifestPath: string,
+): EvalScenario {
+  if (!isRecord(scenario)) {
+    throw new Error(`Invalid scenario entry in ${manifestPath}`);
+  }
+
+  const {
+    id,
+    name,
+    description,
+    fixture_path,
+    expected_outcomes,
+  } = scenario;
+
+  if (
+    typeof id !== "string"
+    || typeof name !== "string"
+    || typeof description !== "string"
+    || typeof fixture_path !== "string"
+    || !isRecord(expected_outcomes)
+    || typeof expected_outcomes["min_completion_rate"] !== "number"
+    || typeof expected_outcomes["expects_human_intervention"] !== "boolean"
+    || typeof expected_outcomes["expects_janus"] !== "boolean"
+    || typeof expected_outcomes["expects_restart_recovery"] !== "boolean"
+  ) {
+    throw new Error(`Invalid scenario entry in ${manifestPath}`);
+  }
+
+  return {
+    id,
+    name,
+    description,
+    fixture_path,
+    expected_outcomes: {
+      min_completion_rate: expected_outcomes["min_completion_rate"],
+      expects_human_intervention: expected_outcomes["expects_human_intervention"],
+      expects_janus: expected_outcomes["expects_janus"],
+      expects_restart_recovery: expected_outcomes["expects_restart_recovery"],
+    },
+  };
+}
+
 export function isMvpScenarioId(value: string): value is MvpScenarioId {
   return (MVP_GATE_SCENARIO_IDS as readonly string[]).includes(value);
 }
@@ -163,13 +207,10 @@ export function loadMvpGateManifest(repoRoot: string): MvpGateManifest {
     throw new Error(`Invalid MVP gate manifest at ${manifestPath}`);
   }
 
-  const scenarioIds = parsed["scenarios"].map((scenario) => {
-    if (!isRecord(scenario) || typeof scenario["id"] !== "string") {
-      throw new Error(`Invalid scenario entry in ${manifestPath}`);
-    }
-
-    return scenario["id"];
-  });
+  const scenarios = parsed["scenarios"].map((scenario) =>
+    parseManifestScenario(scenario, manifestPath),
+  );
+  const scenarioIds = scenarios.map((scenario) => scenario.id);
 
   if (scenarioIds.length !== MVP_GATE_SCENARIO_IDS.length) {
     throw new Error(
@@ -185,5 +226,5 @@ export function loadMvpGateManifest(repoRoot: string): MvpGateManifest {
     }
   }
 
-  return parsed as MvpGateManifest;
+  return { scenarios };
 }
