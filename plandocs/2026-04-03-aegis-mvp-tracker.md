@@ -351,18 +351,20 @@
 
 ### S16B - Release Metrics and Evidence Gate (aegis-fjm.20)
 
-- Status: blocked
-- Updated: 2026-04-07T18:58:26Z
-- Child completion: 0/4
+- Status: closed
+- Updated: 2026-04-08T22:15:36Z
+- Child completion: 4/4
 - Depends on: S02, S16A
-- Outcome: MVP metrics, thresholds, and evidence reporting are computed and enforced.
+- Outcome: MVP metrics, thresholds, and evidence reporting are computed and enforced. Release report generator emits pass/fail against PRD thresholds with durable evidence links.
 - Automated gate: npm run test -- tests/unit/evals/compute-metrics.test.ts tests/integration/evals/release-gate.test.ts
 - Manual gate: The release report shows pass or fail against the PRD thresholds and links to the scenario artifacts that justify the decision.
-- Automated evidence: pending
-- Manual evidence: pending
+- Automated evidence: passed: npm run test -- tests/unit/evals/compute-metrics.test.ts tests/integration/evals/release-gate.test.ts; npm run test (1293 tests, 0 regressions); npm run build; npm run lint on 2026-04-08
+- Manual evidence: passed: generateReleaseGateReportFromDisk discovers persisted eval results, validates them, computes metrics, and writes report under .aegis/evals/reports/. Janus minority path correctly fails at exactly 5/10. Evidence parity validation rejects mismatched issue_evidence/completion_outcomes/merge_outcomes. Clarification denominator includes missed clarifications. Restart recovery reports actual recovery status. 3-reviewer consensus PASS.
+- Evidence notes: S16B closed after remediation (aegis-75i). 6 blocking issues addressed: durable evidence paths, parity validation, clarification denominator, restart recovery, Janus < 5 boundary, release report generator. Rework loop counting fixed to include all issues. PR dkchar/aegis#52 to main.
+- Evidence updated: 2026-04-08T22:15:36Z
 - Children:
-  - contract: aegis-fjm.20.1 [open] updated 2026-04-07T18:58:27Z
-  - lane_a: aegis-fjm.20.2 [open] updated 2026-04-07T18:58:27Z
-  - lane_b: aegis-fjm.20.3 [open] updated 2026-04-07T18:58:27Z
-  - gate: aegis-fjm.20.4 [open] updated 2026-04-07T18:58:28Z
+  - contract: aegis-fjm.20.1 [closed] updated 2026-04-08T19:18:39Z
+  - lane_a: aegis-fjm.20.2 [closed] updated 2026-04-08T20:26:41Z
+  - lane_b: aegis-fjm.20.3 [closed] updated 2026-04-08T19:29:10Z
+  - gate: aegis-fjm.20.4 [closed] updated 2026-04-08T20:26:45Z
 
