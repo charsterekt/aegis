@@ -3,6 +3,7 @@ import fs from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
+import { runScenario } from "../../../src/evals/run-scenario.js";
 import {
   MVP_GATE_SCENARIO_IDS,
   MVP_GATE_SCENARIO_BINDINGS,
@@ -27,8 +28,53 @@ interface ScenarioManifest {
   }>;
 }
 
+interface FixtureDefinition {
+  issues: Array<{
+    id: string;
+    expected_completion: string;
+    expected_merge: string;
+  }>;
+  human_interventions: string[];
+}
+
 function loadCoreSuiteManifest(): ScenarioManifest {
   return JSON.parse(fs.readFileSync(coreSuitePath, "utf8")) as ScenarioManifest;
+}
+
+function loadFixtureDefinition(relativeFixturePath: string): FixtureDefinition {
+  const fixturePath = path.join(repoRoot, "evals", "fixtures", relativeFixturePath);
+  return JSON.parse(fs.readFileSync(fixturePath, "utf8")) as FixtureDefinition;
+}
+
+async function expectScenarioToRunWithCompleteArtifacts(
+  scenarioId: string,
+): Promise<void> {
+  const manifest = loadMvpGateManifest(repoRoot);
+  const scenario = manifest.scenarios.find((entry) => entry.id === scenarioId);
+
+  if (!scenario) {
+    throw new Error(`Scenario ${scenarioId} not found in MVP gate manifest`);
+  }
+
+  const fixture = loadFixtureDefinition(scenario.fixture_path);
+  const result = await runScenario({ scenario, projectRoot: repoRoot });
+
+  expect(result.scenario_id).toBe(scenarioId);
+  expect(result.issue_count).toBe(fixture.issues.length);
+  expect(Object.keys(result.completion_outcomes).sort()).toEqual(
+    fixture.issues.map((issue) => issue.id).sort(),
+  );
+  expect(Object.keys(result.merge_outcomes).sort()).toEqual(
+    fixture.issues.map((issue) => issue.id).sort(),
+  );
+  expect(result.human_intervention_issue_ids.sort()).toEqual(
+    [...fixture.human_interventions].sort(),
+  );
+
+  for (const issue of fixture.issues) {
+    expect(result.completion_outcomes[issue.id]).toBe(issue.expected_completion);
+    expect(result.merge_outcomes[issue.id]).toBe(issue.expected_merge);
+  }
 }
 
 describe("S16A contract seed", () => {
@@ -70,7 +116,7 @@ describe("S16A contract seed", () => {
     ).toEqual([...MVP_GATE_SCENARIO_IDS].sort());
     expect(
       LANE_A_MVP_SCENARIO_IDS.filter((scenarioId) =>
-        LANE_B_MVP_SCENARIO_IDS.includes(scenarioId),
+        (LANE_B_MVP_SCENARIO_IDS as readonly string[]).includes(scenarioId),
       ),
     ).toEqual([]);
   });
@@ -139,11 +185,15 @@ describe("S16A contract seed", () => {
 });
 
 describe("S16A lane execution scaffolding", () => {
-  for (const scenarioId of LANE_A_MVP_SCENARIO_IDS) {
-    it.todo(`lane A runs ${scenarioId} through the landed Oracle/Titan/merge pipeline`);
-  }
+  it("lane A scenarios run through the landed Oracle, Titan, merge, and restart paths", async () => {
+    for (const scenarioId of LANE_A_MVP_SCENARIO_IDS) {
+      await expectScenarioToRunWithCompleteArtifacts(scenarioId);
+    }
+  });
 
-  for (const scenarioId of LANE_B_MVP_SCENARIO_IDS) {
-    it.todo(`lane B runs ${scenarioId} through the landed merge, Janus, restart, and polling paths`);
-  }
+  it("lane B scenarios run through the landed merge, Janus, restart, and polling paths", async () => {
+    for (const scenarioId of LANE_B_MVP_SCENARIO_IDS) {
+      await expectScenarioToRunWithCompleteArtifacts(scenarioId);
+    }
+  });
 });
