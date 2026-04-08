@@ -314,20 +314,21 @@
 
 ### S15B - Janus Escalation Path (aegis-fjm.19)
 
-- Status: blocked
-- Updated: 2026-04-07T23:09:15Z
-- Child completion: 1/4 (contract ready)
+- Status: closed
+- Updated: 2026-04-08T00:46:14Z
 - Depends on: S14
 - Outcome: Tier 3 integration cases can escalate to Janus safely without becoming the happy path.
 - Automated gate: npm run test -- tests/unit/castes/janus/janus-parser.test.ts tests/integration/merge/janus-escalation.test.ts
 - Manual gate: One Tier 3 integration case requeues safely after Janus success, and one semantic-ambiguity case emits a human-decision artifact instead of unsafe auto-resolution.
-- Automated evidence: pending
-- Manual evidence: pending
+- Automated evidence: passed: npm run test -- tests/unit/castes/janus/janus-parser.test.ts tests/integration/merge/janus-escalation.test.ts tests/integration/core/run-janus.test.ts tests/unit/merge/queue-worker.test.ts (139 tests); npm run test (65 files, 1251 tests, 3 pre-existing failures S00/S06); npm run build; npm run lint on 2026-04-08
+- Manual evidence: passed: processJanusItem transitions dispatch state to resolving_integration before runJanus dispatch per SPECv2 §12.6 step 7; Janus success requeues item to queued for fresh mechanical pass; semantic ambiguity produces manual_decision_required artifact not auto-resolution; Janus failure preserves labor and sets janus_failed terminal status; reaper handles janus caste with labor preservation and QueuedForMerge next stage
+- Evidence notes: S15B gate closed after 2-round review with consensus. Round 1: 2 CRITICAL (processJanusItem stub not calling runJanus, no resolving_integration transition) + 7 IMPORTANT fixed. Round 2: 2 CRITICAL (missing transitionStage before runJanus, conflictFileCount || instead of +) + 4 IMPORTANT (processedCount on crash, stale state on missing runtime) fixed. New modules: janus-prompt.ts, janus-parser.ts, run-janus.ts, tiered-conflict-policy.ts, janus-integration.ts, janus-outcome-artifact.ts. Updated: queue-worker.ts (full Janus wiring), merge-queue-store.ts (isTerminalStatus), reaper.ts + reaper-impl.ts (janus caste), event-bus.ts (janus_escalation SSE), stage-transition.ts (resolving_integration→queued_for_merge). PR dkchar/aegis#50.
+- Evidence updated: 2026-04-08T00:46:14+01:00
 - Children:
-  - contract: aegis-fjm.19.1 [open] updated 2026-04-07T18:58:19Z
-  - lane_a: aegis-fjm.19.2 [open] updated 2026-04-07T18:58:19Z
-  - lane_b: aegis-fjm.19.3 [open] updated 2026-04-07T18:58:20Z
-  - gate: aegis-fjm.19.4 [open] updated 2026-04-07T18:58:20Z
+  - contract: aegis-fjm.19.1 [closed] updated 2026-04-07T23:51:47Z
+  - lane_a: aegis-fjm.19.2 [closed] updated 2026-04-07T23:52:03Z
+  - lane_b: aegis-fjm.19.3 [closed] updated 2026-04-07T23:52:05Z
+  - gate: aegis-fjm.19.4 [closed] updated 2026-04-08T00:45:47Z
 
 ### S16A - Benchmark Scenario Wiring (aegis-fjm.17)
 
