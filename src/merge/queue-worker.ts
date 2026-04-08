@@ -38,7 +38,8 @@ import {
   type JanusInvocationPolicy,
 } from "./tiered-conflict-policy.js";
 import type { AgentRuntime } from "../runtime/agent-runtime.js";
-import { loadDispatchState } from "../core/dispatch-state.js";
+import { loadDispatchState, saveDispatchState } from "../core/dispatch-state.js";
+import { DispatchStage, transitionStage } from "../core/stage-transition.js";
 import { runJanus } from "../core/run-janus.js";
 import { DEFAULT_AEGIS_CONFIG } from "../config/defaults.js";
 
@@ -282,7 +283,7 @@ export async function processNextQueueItem(
         const mergeDetail = mergeResult.detail ?? "";
         // Count actual conflict markers for accurate tier classification
         const conflictFileCount = (mergeDetail.match(/CONFLICT\s*\(/g) ?? []).length
-          || (mergeDetail.match(/<<<<<<<\s/g) ?? []).length;
+          + (mergeDetail.match(/<<<<<<<\s/g) ?? []).length;
         const classification = classifyPolicyConflictTier(
           mergeDetail,
           1, // exit code non-zero since we're in MERGE_FAILED
@@ -417,13 +418,29 @@ async function processJanusItem(
 
   // Check we have the required dependencies for Janus dispatch
   if (!config.runtime) {
+    // No runtime available — transition to manual_decision_required to avoid infinite loop
+    const updatedState: MergeQueueState = {
+      schemaVersion: state.schemaVersion,
+      items: state.items.map((queueItem) =>
+        queueItem.issueId === item.issueId
+          ? {
+              ...queueItem,
+              status: "manual_decision_required" as const,
+              lastError: "Janus dispatch requires a runtime adapter",
+              updatedAt: new Date().toISOString(),
+            }
+          : { ...queueItem },
+      ),
+      processedCount: state.processedCount + 1,
+    };
+
     return {
-      updatedState: state,
+      updatedState,
       result: {
         issueId: item.issueId,
         success: false,
         error: "Janus dispatch requires a runtime adapter",
-        newStatus: "janus_required",
+        newStatus: "manual_decision_required",
       },
     };
   }
@@ -466,6 +483,11 @@ async function processJanusItem(
   // Build the labor path for Janus
   const laborPath = resolveLaborPath(config.projectRoot, item.issueId);
 
+  // Transition dispatch state to resolving_integration per SPECv2 §12.6 step 7
+  const updatedRecord = transitionStage(record, DispatchStage.ResolvingIntegration);
+  dispatchState.records[item.issueId] = updatedRecord;
+  saveDispatchState(config.projectRoot, dispatchState);
+
   // Invoke runJanus (Lane A) to actually dispatch the Janus session
   const janusBudget = DEFAULT_AEGIS_CONFIG.budgets.janus;
 
@@ -479,13 +501,13 @@ async function processJanusItem(
       filesInvolved: [],
       previousMergeErrors: item.lastError ?? "",
       conflictTier: 3,
-      record,
+      record: updatedRecord,
       runtime: config.runtime,
       budget: janusBudget,
       projectRoot: config.projectRoot,
     });
   } catch (err) {
-    // Janus dispatch crashed — create manual decision artifact
+    // Janus dispatch crashed — increment processedCount and mark as failed
     const errorMessage = (err as Error).message;
     const updatedState: MergeQueueState = {
       schemaVersion: state.schemaVersion,
@@ -499,7 +521,7 @@ async function processJanusItem(
             }
           : { ...queueItem },
       ),
-      processedCount: state.processedCount,
+      processedCount: state.processedCount + 1,
     };
 
     return {

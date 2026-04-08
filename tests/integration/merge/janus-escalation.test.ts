@@ -992,7 +992,9 @@ describe("Integration with merge queue worker Janus flow", () => {
 
     expect(result).not.toBeNull();
     expect(result!.result.issueId).toBe("aegis-fjm.5");
-    expect(result!.result.newStatus).toBe("janus_required");
+    // Without a runtime adapter, the item transitions to manual_decision_required
+    // to avoid infinite looping on janus_required status
+    expect(result!.result.newStatus).toBe("manual_decision_required");
     // Should emit janus_escalation event
     expect(publisher.events.some((e) => e.type === "merge.janus_escalation")).toBe(true);
   });
