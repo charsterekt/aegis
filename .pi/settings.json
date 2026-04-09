@@ -1,0 +1,5 @@
+{
+  "defaultProvider": "google",
+  "defaultModel": "gemma-4-31b-it",
+  "defaultThinkingLevel": "high"
+}

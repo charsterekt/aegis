@@ -37,9 +37,9 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@mariozechner/pi-agent-core": "^0.57.1",
-    "@mariozechner/pi-ai": "^0.57.1",
-    "@mariozechner/pi-coding-agent": "^0.57.1"
+    "@mariozechner/pi-agent-core": "^0.66.1",
+    "@mariozechner/pi-ai": "^0.66.1",
+    "@mariozechner/pi-coding-agent": "^0.66.1"
   },
   "devDependencies": {
     "@types/node": "^25.4.0",
