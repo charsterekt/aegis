@@ -1,6 +1,6 @@
 # Aegis MVP Tracker
 
-- Refreshed: 2026-04-09T18:00:11+01:00
+- Refreshed: 2026-04-10T14:52:27+01:00
 - Source spec: SPECv2.md
 - Design doc: docs/superpowers/specs/2026-04-03-aegis-mvp-slicing-design.md
 - Plan doc: docs/superpowers/plans/2026-04-03-aegis-mvp-slice-plan.md
@@ -32,6 +32,17 @@
   - `aegis-5ji`: Olympus now renders a single command-result surface and uses backend result text instead of duplicate placeholder success messaging.
 - Deferred follow-up: `aegis-aru` remains open. Live mock-run sanity still reproduced the Google Gemma thinking-budget failure after investigation, so that runtime fix was not included in this batch.
 - Verification on 2026-04-10: `npm run lint`; `npm run build`; `npm run test` all passed in the worktree. Mock-run sanity also passed for `init`, `status`, `start`, `GET /`, `GET /api/state`, `POST /api/steer` with `action=status`, `GET /api/events`, `stop`, and clean `git status -sb` after cleanup.
+
+## 2026-04-10 Remaining Bug Parity
+
+- Closed remaining non-epic bug follow-ups in this batch: `aegis-r5s`, `aegis-p0m`, `aegis-aru`, and `aegis-vzn`.
+- Scope of the bugfixes:
+  - `aegis-r5s`: repaired the shared-server Beads tracker history so the local tracker again shares ancestry with origin and `bd dolt pull` / `bd dolt push` succeed.
+  - `aegis-p0m`: Olympus settings now uses the visible overlay as the actual dialog root, so accessibility and automation target the visible bounds instead of a zero-height wrapper.
+  - `aegis-aru`: Google Gemma Oracle sessions now suppress unsupported Pi reasoning metadata, and Oracle assessment parsing accepts fenced JSON output so seeded scout runs complete instead of failing.
+  - `aegis-vzn`: `initProject()` and the mock-run baseline `.gitignore` now ignore `.aegis/oracle/`, so successful scout runs do not dirty the disposable mock repo.
+- Verification on 2026-04-10: `npm run lint`; `npm run build`; `npm run test`; `bd dolt pull`; `bd dolt push`; `npm run mock:seed`; seeded mock-run scout via `executeProjectDirectCommand` returned `handled` with `ready for implementation`; `git status -sb` in `aegis-mock-run` stayed clean after the scout.
+- Queue parity on 2026-04-10: `bd ready --json` returned `[]`.
 
 ## Slice Epics
 

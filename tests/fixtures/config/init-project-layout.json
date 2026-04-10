@@ -17,6 +17,7 @@
     ".aegis/mnemosyne.jsonl",
     ".aegis/runtime-state.json",
     ".aegis/labors/",
-    ".aegis/evals/"
+    ".aegis/evals/",
+    ".aegis/oracle/"
   ]
 }

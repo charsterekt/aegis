@@ -107,6 +107,7 @@ describe("S00 project skeleton contract", () => {
     const gitIgnoreContents = readFileSync(path.join(repoRoot, ".gitignore"), "utf8");
 
     expect(gitIgnoreContents).toContain(".aegis/evals/");
+    expect(gitIgnoreContents).toContain(".aegis/oracle/");
     expect(gitIgnoreContents).toContain(".aegis-cli-*");
   });
 

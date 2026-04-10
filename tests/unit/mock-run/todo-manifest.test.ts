@@ -11,6 +11,7 @@ describe("todo mock-run manifest", () => {
   it("defines the deterministic baseline repo and issue graph", () => {
     expect(TODO_BASELINE_FILES["README.md"]).toContain("Todo System Mock Run");
     expect(TODO_BASELINE_FILES[".pi/settings.json"]).toContain("gemma-4-31b-it");
+    expect(TODO_BASELINE_FILES[".gitignore"]).toContain(".aegis/oracle/");
 
     expect(TODO_MOCK_RUN_ISSUES.map((issue) => issue.key)).toEqual([
       "todo-system",

@@ -53,6 +53,12 @@ const ORACLE_ASSESSMENT_KEYS = new Set([
   "ready",
 ]);
 
+function unwrapJsonCodeFence(raw: string): string {
+  const trimmed = raw.trim();
+  const fenceMatch = trimmed.match(/^```(?:json)?\r?\n([\s\S]*?)\r?\n```$/i);
+  return fenceMatch ? fenceMatch[1] : raw;
+}
+
 function assertPlainObject(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new OracleAssessmentParseError(
@@ -102,7 +108,7 @@ function assertComplexity(value: unknown): OracleComplexity {
 export function parseOracleAssessment(raw: string): OracleAssessment {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(unwrapJsonCodeFence(raw));
   } catch (err) {
     throw new OracleAssessmentParseError(
       "invalid_json",

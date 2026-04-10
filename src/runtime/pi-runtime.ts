@@ -412,6 +412,26 @@ function resolveSessionModel(modelReference?: string) {
     throw new Error(`Unknown Pi model "${modelReference}".`);
   }
 
+  return normalizePiModel(model);
+}
+
+type PiModel = ReturnType<typeof getModels>[number];
+
+function normalizePiModel(model: PiModel): PiModel {
+  if (
+    model.provider === "google"
+    && /^gemma-/i.test(model.id)
+    && model.reasoning === true
+  ) {
+    // The current Pi Google adapter sends thinkingBudget=0 when reasoning is
+    // disabled for Gemma, which the backend rejects. Treat Gemma as
+    // non-reasoning until upstream capability metadata is corrected.
+    return {
+      ...model,
+      reasoning: false,
+    };
+  }
+
   return model;
 }
 
