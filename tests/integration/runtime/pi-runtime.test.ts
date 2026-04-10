@@ -203,7 +203,25 @@ describe("PiRuntime — session spawn", () => {
 
     expect(mockCreateAgentSession).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: getModel("google", "gemma-4-31b-it"),
+        model: expect.objectContaining({
+          provider: "google",
+          id: "gemma-4-31b-it",
+        }),
+      }),
+    );
+  });
+
+  it("spawn() disables Pi reasoning metadata for Google Gemma models", async () => {
+    const runtime = new PiRuntime();
+    await runtime.spawn(makeOpts({ model: "pi:gemma-4-31b-it" }));
+
+    expect(mockCreateAgentSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: expect.objectContaining({
+          provider: "google",
+          id: "gemma-4-31b-it",
+          reasoning: false,
+        }),
       }),
     );
   });

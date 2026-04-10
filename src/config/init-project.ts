@@ -33,6 +33,7 @@ export const DEFAULT_GITIGNORE_ENTRIES = [
   ".aegis/runtime-state.json",
   ".aegis/labors/",
   ".aegis/evals/",
+  ".aegis/oracle/",
 ] as const;
 
 export interface InitProjectPlan {

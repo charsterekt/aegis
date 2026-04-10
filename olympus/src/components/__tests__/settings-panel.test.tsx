@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { render } from "@testing-library/react";
 import { SettingsPanel } from "../settings-panel";
 
 describe("SettingsPanel", () => {
@@ -7,6 +7,17 @@ describe("SettingsPanel", () => {
     const { container } = render(<SettingsPanel isOpen={true} onClose={vi.fn()} />);
     expect(container.querySelector('[role="dialog"]')).toBeTruthy();
     expect(container.textContent).toContain("Settings");
+  });
+
+  it("uses the visible overlay as the accessible dialog root", () => {
+    const { container } = render(<SettingsPanel isOpen={true} onClose={vi.fn()} />);
+    const overlay = container.querySelector(".settings-overlay");
+
+    expect(overlay).toBeTruthy();
+    expect(overlay).toBe(container.querySelector('[data-testid="settings-panel"]'));
+    expect(overlay?.getAttribute("role")).toBe("dialog");
+    expect(overlay?.getAttribute("aria-label")).toBe("Settings");
+    expect(overlay?.getAttribute("aria-modal")).toBe("true");
   });
 
   it("does not render when isOpen is false", () => {

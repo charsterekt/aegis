@@ -153,6 +153,19 @@ describe("parseOracleAssessment", () => {
     expect(() => parseOracleAssessment(raw)).toThrow(/extra_notes/i);
   });
 
+  it("accepts valid assessment JSON wrapped in a fenced code block", () => {
+    const raw = `\`\`\`json
+${JSON.stringify(makeAssessment())}
+\`\`\``;
+
+    expect(parseOracleAssessment(raw)).toEqual({
+      files_affected: ["src/core/run-oracle.ts", "src/tracker/create-derived-issues.ts"],
+      estimated_complexity: "moderate",
+      decompose: false,
+      ready: true,
+    });
+  });
+
   it("rejects malformed JSON", () => {
     expect(() => parseOracleAssessment("{ not json")).toThrow(OracleAssessmentParseError);
     expect(() => parseOracleAssessment("{ not json")).toThrow(/JSON/i);

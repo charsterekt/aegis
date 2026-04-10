@@ -13,6 +13,7 @@ export const TODO_BASELINE_FILES: Record<string, string> = {
 .aegis/labors/
 .aegis/evals/
 .aegis/mock-run-manifest.json
+.aegis/oracle/
 `,
   "README.md": `# Todo System Mock Run
 
