@@ -1,5 +1,11 @@
 {
   "defaultProvider": "google",
   "defaultModel": "gemma-4-31b-it",
-  "defaultThinkingLevel": "high"
+  "defaultThinkingLevel": "high",
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    }
+  }
 }
