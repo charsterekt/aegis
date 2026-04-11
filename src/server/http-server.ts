@@ -15,6 +15,10 @@ import {
   SSE_EVENT_STREAM_PATH,
 } from "../events/sse-stream.js";
 import {
+  createDashboardStateStore,
+  type DashboardStateStore,
+} from "./dashboard-state-store.js";
+import {
   createOperatingModeState,
   enableAutoMode,
   disableAutoMode,
@@ -284,10 +288,12 @@ export function createHttpServerController(
   });
   const shellHtml = resolveOlympusShell();
   let currentScopeAllocation: ScopeAllocation = { dispatchable: [], suppressed: [] };
+  const dashboardStateStore: DashboardStateStore = createDashboardStateStore();
 
   function publishEvent(event: AegisLiveEvent) {
     replayBus.publish(event);
     bindings.eventPublisher?.publish(event);
+    dashboardStateStore.apply(event);
   }
 
   function getCurrentMode(): OrchestrationMode {
@@ -379,24 +385,19 @@ export function createHttpServerController(
   }
 
   function buildDashboardStateSnapshot() {
+    const storeSnapshot = dashboardStateStore.snapshot();
     const cfg = loadConfig(projectRoot);
     const dailyHardStop = cfg.economics?.daily_hard_stop_usd ?? null;
 
     return {
+      ...storeSnapshot,
       status: {
+        ...storeSnapshot.status,
         mode: getCurrentMode(),
         isRunning: lifecycleState === "running",
         uptimeSeconds: startedAt === null ? 0 : Math.floor((Date.now() - startedAt) / 1000),
-        activeAgents: 0,
-        queueDepth: 0,
         paused: operatingModeState.paused,
       },
-      spend: {
-        metering: "unknown" as const,
-        totalInputTokens: 0,
-        totalOutputTokens: 0,
-      },
-      agents: [],
       config: {
         runtime: cfg.runtime ?? "pi",
         pollIntervalSec: cfg.thresholds?.poll_interval_seconds ?? 10,
