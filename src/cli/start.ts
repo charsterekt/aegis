@@ -119,6 +119,7 @@ export interface StartResult {
 export interface StartCommandOptions {
   verifyTracker?: (root: string) => void;
   verifyGitRepo?: () => void;
+  probeBeadsCli?: () => StartupPreflightProbeResult;
   openBrowser?: (url: string) => boolean;
   registerSignalHandlers?: boolean;
   httpServerBindings?: HttpServerBindings;
@@ -279,8 +280,12 @@ function probeBeadsRepository(
   };
 }
 
-export function verifyTrackerRepository(root: string, probe: TrackerProbe = runTrackerProbe) {
-  const cliProbe = probeBeadsCli();
+export function verifyTrackerRepository(
+  root: string,
+  probe: TrackerProbe = runTrackerProbe,
+  probeCli: () => StartupPreflightProbeResult = probeBeadsCli,
+) {
+  const cliProbe = probeCli();
   if (!cliProbe.ok) {
     throw new Error(cliProbe.detail ?? "Beads CLI check failed.");
   }
@@ -571,12 +576,13 @@ export async function startAegis(
   const verifyGitRepo = options.verifyGitRepo ?? (() => {
     verifyGitRepository(repoRoot);
   });
+  const beadsCliProbe = options.probeBeadsCli ?? probeBeadsCli;
   const openBrowser = options.openBrowser ?? openBrowserUrl;
   let config: AegisConfig | undefined;
 
   const preflight = runStartupPreflight(repoRoot, {
     verifyGitRepo,
-    probeBeadsCli,
+    probeBeadsCli: beadsCliProbe,
     probeBeadsRepo: () => {
       try {
         verifyTracker(repoRoot);

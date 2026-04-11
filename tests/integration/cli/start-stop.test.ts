@@ -320,6 +320,11 @@ describe("S06 launch lifecycle contract seed", () => {
         options?: {
           verifyTracker?: () => void;
           verifyGitRepo?: () => void;
+          probeBeadsCli?: () => {
+            ok: boolean;
+            detail?: string;
+            fix?: string;
+          };
         },
       ) => Promise<unknown>;
     };
@@ -331,6 +336,7 @@ describe("S06 launch lifecycle contract seed", () => {
         {
           verifyGitRepo: () => undefined,
           verifyTracker: () => undefined,
+          probeBeadsCli: () => ({ ok: true, detail: "Beads CLI is available." }),
         },
       ),
     ).rejects.toThrow("Aegis startup preflight blocked.");
@@ -358,6 +364,11 @@ describe("S06 launch lifecycle contract seed", () => {
         options?: {
           verifyTracker?: () => void;
           verifyGitRepo?: () => void;
+          probeBeadsCli?: () => {
+            ok: boolean;
+            detail?: string;
+            fix?: string;
+          };
           openBrowser?: (url: string) => boolean;
         },
       ) => Promise<{
@@ -376,6 +387,7 @@ describe("S06 launch lifecycle contract seed", () => {
       {
         verifyGitRepo: () => undefined,
         verifyTracker: () => undefined,
+        probeBeadsCli: () => ({ ok: true, detail: "Beads CLI is available." }),
         openBrowser,
       },
     );
@@ -393,6 +405,7 @@ describe("S06 launch lifecycle contract seed", () => {
       {
         verifyGitRepo: () => undefined,
         verifyTracker: () => undefined,
+        probeBeadsCli: () => ({ ok: true, detail: "Beads CLI is available." }),
         openBrowser: openBrowserDisabled,
       },
     );
@@ -440,6 +453,11 @@ describe("S06 launch lifecycle contract seed", () => {
         options?: {
           verifyTracker?: () => void;
           verifyGitRepo?: () => void;
+          probeBeadsCli?: () => {
+            ok: boolean;
+            detail?: string;
+            fix?: string;
+          };
           openBrowser?: (url: string) => boolean;
           registerSignalHandlers?: boolean;
         },
@@ -465,6 +483,7 @@ describe("S06 launch lifecycle contract seed", () => {
         {
           verifyGitRepo: () => undefined,
           verifyTracker: () => undefined,
+          probeBeadsCli: () => ({ ok: true, detail: "Beads CLI is available." }),
           openBrowser: vi.fn(() => true),
           registerSignalHandlers: false,
         },
@@ -502,6 +521,11 @@ describe("S06 launch lifecycle contract seed", () => {
         options?: {
           verifyTracker?: () => void;
           verifyGitRepo?: () => void;
+          probeBeadsCli?: () => {
+            ok: boolean;
+            detail?: string;
+            fix?: string;
+          };
           openBrowser?: (url: string) => boolean;
           registerSignalHandlers?: boolean;
         },
@@ -518,6 +542,7 @@ describe("S06 launch lifecycle contract seed", () => {
       {
         verifyGitRepo: () => undefined,
         verifyTracker: () => undefined,
+        probeBeadsCli: () => ({ ok: true, detail: "Beads CLI is available." }),
         openBrowser: vi.fn(() => true),
         registerSignalHandlers: false,
       },
@@ -550,6 +575,7 @@ describe("S06 launch lifecycle contract seed", () => {
           {
             verifyGitRepo: () => undefined,
             verifyTracker: () => undefined,
+            probeBeadsCli: () => ({ ok: true, detail: "Beads CLI is available." }),
             registerSignalHandlers: false,
           },
         ),
@@ -586,6 +612,11 @@ describe("S06 launch lifecycle contract seed", () => {
         options?: {
           verifyTracker?: () => void;
           verifyGitRepo?: () => void;
+          probeBeadsCli?: () => {
+            ok: boolean;
+            detail?: string;
+            fix?: string;
+          };
           registerSignalHandlers?: boolean;
         },
       ) => Promise<unknown>;
@@ -598,6 +629,7 @@ describe("S06 launch lifecycle contract seed", () => {
         {
           verifyGitRepo: () => undefined,
           verifyTracker: () => undefined,
+          probeBeadsCli: () => ({ ok: true, detail: "Beads CLI is available." }),
           registerSignalHandlers: false,
         },
       ),

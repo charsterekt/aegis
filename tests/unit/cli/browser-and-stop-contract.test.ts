@@ -80,6 +80,11 @@ describe("S06 browser and stop runtime safeguards", () => {
         options?: {
           verifyTracker?: (root: string) => void;
           verifyGitRepo?: () => void;
+          probeBeadsCli?: () => {
+            ok: boolean;
+            detail?: string;
+            fix?: string;
+          };
           openBrowser?: (url: string) => boolean;
           registerSignalHandlers?: boolean;
         },
@@ -92,6 +97,7 @@ describe("S06 browser and stop runtime safeguards", () => {
       {
         verifyTracker,
         verifyGitRepo: () => undefined,
+        probeBeadsCli: () => ({ ok: true, detail: "Beads CLI is available." }),
         openBrowser,
         registerSignalHandlers: false,
       },

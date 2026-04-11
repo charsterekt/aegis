@@ -101,6 +101,7 @@ describe("live direct CLI commands", () => {
       {
         verifyTracker: () => undefined,
         verifyGitRepo: () => undefined,
+        probeBeadsCli: () => ({ ok: true, detail: "Beads CLI is available." }),
         registerSignalHandlers: false,
       },
     );
@@ -132,6 +133,7 @@ describe("live direct CLI commands", () => {
       {
         verifyTracker: () => undefined,
         verifyGitRepo: () => undefined,
+        probeBeadsCli: () => ({ ok: true, detail: "Beads CLI is available." }),
         registerSignalHandlers: false,
         httpServerBindings: {
           executeCommand: async (
