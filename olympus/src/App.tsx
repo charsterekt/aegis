@@ -162,7 +162,6 @@ export function App(): JSX.Element {
         <SettingsPanel
           isOpen={settingsOpen}
           onClose={() => setSettingsOpen(false)}
-          config={state?.config ?? null}
         />
       )}
 
