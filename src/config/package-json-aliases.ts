@@ -24,6 +24,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function splitLeadingByteOrderMark(source: string): {
+  bom: string;
+  text: string;
+} {
+  if (!source.startsWith("\uFEFF")) {
+    return {
+      bom: "",
+      text: source,
+    };
+  }
+
+  return {
+    bom: "\uFEFF",
+    text: source.slice(1),
+  };
+}
+
 function skipWhitespace(source: string, index: number): number {
   let cursor = index;
 
@@ -189,6 +206,78 @@ function scanObjectProperties(
   return properties;
 }
 
+function hasDuplicateKeysInValue(source: string, valueStart: number): boolean {
+  const valueType = source[valueStart];
+
+  if (valueType === "{") {
+    return hasDuplicateKeysInObject(source, valueStart);
+  }
+
+  if (valueType === "[") {
+    return hasDuplicateKeysInArray(source, valueStart);
+  }
+
+  return false;
+}
+
+function hasDuplicateKeysInObject(source: string, objectStart: number): boolean {
+  const firstPropertyStart = skipWhitespace(source, objectStart + 1);
+  const properties = scanObjectProperties(source, objectStart);
+
+  if (
+    firstPropertyStart < source.length
+    && source[firstPropertyStart] !== "}"
+    && properties.length === 0
+  ) {
+    return true;
+  }
+
+  const seenKeys = new Set<string>();
+
+  for (const property of properties) {
+    if (seenKeys.has(property.name)) {
+      return true;
+    }
+    seenKeys.add(property.name);
+
+    if (hasDuplicateKeysInValue(source, property.valueStart)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function hasDuplicateKeysInArray(source: string, arrayStart: number): boolean {
+  let cursor = skipWhitespace(source, arrayStart + 1);
+
+  while (cursor < source.length) {
+    if (source[cursor] === "]") {
+      return false;
+    }
+
+    if (hasDuplicateKeysInValue(source, cursor)) {
+      return true;
+    }
+
+    const valueEnd = findValueEnd(source, cursor);
+    const next = skipWhitespace(source, valueEnd);
+
+    if (source[next] === ",") {
+      cursor = skipWhitespace(source, next + 1);
+      continue;
+    }
+
+    if (source[next] === "]") {
+      return false;
+    }
+
+    return true;
+  }
+
+  return true;
+}
+
 function detectLineBreak(source: string): string {
   return source.includes("\r\n") ? "\r\n" : "\n";
 }
@@ -341,10 +430,14 @@ function patchMissingScriptsProperty(
 export function ensureAegisPackageJsonAliases(
   packageJsonText: string,
 ): EnsurePackageJsonAliasesResult {
+  const {
+    bom,
+    text: normalizedPackageJsonText,
+  } = splitLeadingByteOrderMark(packageJsonText);
   let parsedPackageJson: unknown;
 
   try {
-    parsedPackageJson = JSON.parse(packageJsonText) as unknown;
+    parsedPackageJson = JSON.parse(normalizedPackageJsonText) as unknown;
   } catch {
     return {
       changed: false,
@@ -377,6 +470,21 @@ export function ensureAegisPackageJsonAliases(
     };
   }
 
+  const rootStart = skipWhitespace(normalizedPackageJsonText, 0);
+  if (normalizedPackageJsonText[rootStart] !== "{") {
+    return {
+      changed: false,
+      packageJsonText,
+    };
+  }
+
+  if (hasDuplicateKeysInValue(normalizedPackageJsonText, rootStart)) {
+    return {
+      changed: false,
+      packageJsonText,
+    };
+  }
+
   const missingEntries = Object.entries(AEGIS_PACKAGE_JSON_ALIASES)
     .filter(([name]) => !isRecord(scripts) || !(name in scripts));
 
@@ -387,30 +495,16 @@ export function ensureAegisPackageJsonAliases(
     };
   }
 
-  const rootStart = skipWhitespace(packageJsonText, 0);
-  if (packageJsonText[rootStart] !== "{") {
-    return {
-      changed: false,
-      packageJsonText,
-    };
-  }
-
-  const rootEndExclusive = findValueEnd(packageJsonText, rootStart);
+  const rootEndExclusive = findValueEnd(normalizedPackageJsonText, rootStart);
   const rootEnd = rootEndExclusive - 1;
-  const lineBreak = detectLineBreak(packageJsonText);
-  const rootIndentUnit = detectIndentUnit(packageJsonText, rootStart, rootEnd, "  ");
-  const topLevelProperties = scanObjectProperties(packageJsonText, rootStart);
-  const topLevelKeys = new Set<string>();
-
-  for (const property of topLevelProperties) {
-    if (topLevelKeys.has(property.name)) {
-      return {
-        changed: false,
-        packageJsonText,
-      };
-    }
-    topLevelKeys.add(property.name);
-  }
+  const lineBreak = detectLineBreak(normalizedPackageJsonText);
+  const rootIndentUnit = detectIndentUnit(
+    normalizedPackageJsonText,
+    rootStart,
+    rootEnd,
+    "  ",
+  );
+  const topLevelProperties = scanObjectProperties(normalizedPackageJsonText, rootStart);
 
   const topLevelScriptsProperties = topLevelProperties
     .filter((property) => property.name === "scripts")
@@ -428,10 +522,11 @@ export function ensureAegisPackageJsonAliases(
   }
 
   if (isRecord(scripts)) {
-    const scriptsRange = topLevelScriptsProperties[0] ?? findObjectProperty(packageJsonText, rootStart, "scripts");
+    const scriptsRange = topLevelScriptsProperties[0]
+      ?? findObjectProperty(normalizedPackageJsonText, rootStart, "scripts");
     if (
       scriptsRange === null
-      || packageJsonText[scriptsRange.valueStart] !== "{"
+      || normalizedPackageJsonText[scriptsRange.valueStart] !== "{"
     ) {
       return {
         changed: false,
@@ -439,20 +534,8 @@ export function ensureAegisPackageJsonAliases(
       };
     }
 
-    const scriptProperties = scanObjectProperties(packageJsonText, scriptsRange.valueStart);
-    const scriptKeys = new Set<string>();
-    for (const property of scriptProperties) {
-      if (scriptKeys.has(property.name)) {
-        return {
-          changed: false,
-          packageJsonText,
-        };
-      }
-      scriptKeys.add(property.name);
-    }
-
     const patchedPackageJsonText = patchExistingScriptsObject(
-      packageJsonText,
+      normalizedPackageJsonText,
       scriptsRange,
       missingEntries,
       lineBreak,
@@ -467,12 +550,12 @@ export function ensureAegisPackageJsonAliases(
 
     return {
       changed: true,
-      packageJsonText: patchedPackageJsonText,
+      packageJsonText: `${bom}${patchedPackageJsonText}`,
     };
   }
 
   const patchedPackageJsonText = patchMissingScriptsProperty(
-    packageJsonText,
+    normalizedPackageJsonText,
     rootStart,
     rootEnd,
     missingEntries,
@@ -487,6 +570,6 @@ export function ensureAegisPackageJsonAliases(
 
   return {
     changed: true,
-    packageJsonText: patchedPackageJsonText,
+    packageJsonText: `${bom}${patchedPackageJsonText}`,
   };
 }

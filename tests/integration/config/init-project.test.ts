@@ -415,6 +415,72 @@ describe("S01 init project contract seed", () => {
     }
   });
 
+  it("leaves package.json unchanged when a nested object has duplicate keys", () => {
+    const tempRepo = createTempRepo();
+    const packageJsonPath = path.join(tempRepo, "package.json");
+    const packageJson = `{
+  "name": "demo",
+  "exports": {
+    ".": "./a.js",
+    ".": "./b.js"
+  }
+}
+`;
+
+    try {
+      writeFileSync(packageJsonPath, packageJson, "utf8");
+
+      initProject(tempRepo);
+
+      expect(readFileSync(packageJsonPath, "utf8")).toBe(packageJson);
+    } finally {
+      rmSync(tempRepo, { recursive: true, force: true });
+    }
+  });
+
+  it("adds aliases to a BOM-prefixed package.json and preserves the BOM", () => {
+    const tempRepo = createTempRepo();
+    const packageJsonPath = path.join(tempRepo, "package.json");
+    const packageJson = `\uFEFF{
+  "name": "demo-repo",
+  "scripts": {
+    "start": "vite"
+  }
+}
+`;
+
+    try {
+      writeFileSync(packageJsonPath, packageJson, "utf8");
+
+      initProject(tempRepo);
+
+      const updatedPackageJson = readFileSync(packageJsonPath, "utf8");
+      expect(updatedPackageJson).toBe(`\uFEFF{
+  "name": "demo-repo",
+  "scripts": {
+    "start": "vite",
+    "aegis:init": "aegis init",
+    "aegis:start": "aegis start",
+    "aegis:status": "aegis status",
+    "aegis:stop": "aegis stop"
+  }
+}
+`);
+      expect(JSON.parse(updatedPackageJson.slice(1)) as { scripts: Record<string, string> }).toEqual({
+        name: "demo-repo",
+        scripts: {
+          start: "vite",
+          "aegis:init": "aegis init",
+          "aegis:start": "aegis start",
+          "aegis:status": "aegis status",
+          "aegis:stop": "aegis stop",
+        },
+      });
+    } finally {
+      rmSync(tempRepo, { recursive: true, force: true });
+    }
+  });
+
   it("does not rewrite package.json on a second initProject run after aliases are installed", () => {
     const tempRepo = createTempRepo();
     const packageJsonPath = path.join(tempRepo, "package.json");
