@@ -16,6 +16,10 @@ interface JsonPropertyRange {
   valueEnd: number;
 }
 
+interface JsonObjectProperty extends JsonPropertyRange {
+  name: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -128,8 +132,21 @@ function findObjectProperties(
   objectStart: number,
   propertyName: string,
 ): JsonPropertyRange[] {
+  return scanObjectProperties(source, objectStart)
+    .filter((property) => property.name === propertyName)
+    .map(({ keyStart, valueStart, valueEnd }) => ({
+      keyStart,
+      valueStart,
+      valueEnd,
+    }));
+}
+
+function scanObjectProperties(
+  source: string,
+  objectStart: number,
+): JsonObjectProperty[] {
   let cursor = skipWhitespace(source, objectStart + 1);
-  const properties: JsonPropertyRange[] = [];
+  const properties: JsonObjectProperty[] = [];
 
   while (cursor < source.length) {
     if (source[cursor] === "}") {
@@ -152,13 +169,12 @@ function findObjectProperties(
     const valueEnd = findValueEnd(source, valueStart);
     const next = skipWhitespace(source, valueEnd);
 
-    if (key === propertyName) {
-      properties.push({
-        keyStart,
-        valueStart,
-        valueEnd,
-      });
-    }
+    properties.push({
+      name: key,
+      keyStart,
+      valueStart,
+      valueEnd,
+    });
 
     if (source[next] === ",") {
       cursor = skipWhitespace(source, next + 1);
@@ -366,7 +382,26 @@ export function ensureAegisPackageJsonAliases(
   const rootEnd = rootEndExclusive - 1;
   const lineBreak = detectLineBreak(packageJsonText);
   const rootIndentUnit = detectIndentUnit(packageJsonText, rootStart, rootEnd, "  ");
-  const topLevelScriptsProperties = findObjectProperties(packageJsonText, rootStart, "scripts");
+  const topLevelProperties = scanObjectProperties(packageJsonText, rootStart);
+  const topLevelKeys = new Set<string>();
+
+  for (const property of topLevelProperties) {
+    if (topLevelKeys.has(property.name)) {
+      return {
+        changed: false,
+        packageJsonText,
+      };
+    }
+    topLevelKeys.add(property.name);
+  }
+
+  const topLevelScriptsProperties = topLevelProperties
+    .filter((property) => property.name === "scripts")
+    .map(({ keyStart, valueStart, valueEnd }) => ({
+      keyStart,
+      valueStart,
+      valueEnd,
+    }));
 
   if (topLevelScriptsProperties.length > 1) {
     return {
@@ -385,6 +420,18 @@ export function ensureAegisPackageJsonAliases(
         changed: false,
         packageJsonText,
       };
+    }
+
+    const scriptProperties = scanObjectProperties(packageJsonText, scriptsRange.valueStart);
+    const scriptKeys = new Set<string>();
+    for (const property of scriptProperties) {
+      if (scriptKeys.has(property.name)) {
+        return {
+          changed: false,
+          packageJsonText,
+        };
+      }
+      scriptKeys.add(property.name);
     }
 
     return {

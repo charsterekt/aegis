@@ -308,6 +308,28 @@ describe("S01 init project contract seed", () => {
     }
   });
 
+  it("leaves package.json unchanged when scripts object has duplicate keys", () => {
+    const tempRepo = createTempRepo();
+    const packageJsonPath = path.join(tempRepo, "package.json");
+    const packageJson = `{
+  "scripts": {
+    "start": "vite",
+    "start": "webpack"
+  }
+}
+`;
+
+    try {
+      writeFileSync(packageJsonPath, packageJson, "utf8");
+
+      initProject(tempRepo);
+
+      expect(readFileSync(packageJsonPath, "utf8")).toBe(packageJson);
+    } finally {
+      rmSync(tempRepo, { recursive: true, force: true });
+    }
+  });
+
   it("leaves package.json unchanged when top-level scripts keys are duplicated", () => {
     const tempRepo = createTempRepo();
     const packageJsonPath = path.join(tempRepo, "package.json");
@@ -320,6 +342,27 @@ describe("S01 init project contract seed", () => {
   "scripts": {
     "test": "vitest"
   }
+}
+`;
+
+    try {
+      writeFileSync(packageJsonPath, packageJson, "utf8");
+
+      initProject(tempRepo);
+
+      expect(readFileSync(packageJsonPath, "utf8")).toBe(packageJson);
+    } finally {
+      rmSync(tempRepo, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves package.json unchanged when a non-scripts top-level key is duplicated", () => {
+    const tempRepo = createTempRepo();
+    const packageJsonPath = path.join(tempRepo, "package.json");
+    const packageJson = `{
+  "name": "demo",
+  "private": true,
+  "private": false
 }
 `;
 
