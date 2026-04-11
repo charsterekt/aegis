@@ -17,7 +17,19 @@ import type { CommandResult } from "./components/command-bar";
 import type { DashboardState } from "./types/dashboard-state";
 import type { LoopPhaseLogs, LoopState } from "./components/loop-panel";
 import type { SelectedIssue } from "./components/operator-sidebar";
-import { STEER_COMMAND_REFERENCE } from "../src/shared/steer-command-reference.js";
+
+/**
+ * Mirrors STEER_COMMAND_REFERENCE from src/shared/steer-command-reference.ts.
+ * Olympus cannot import directly from the root workspace, so we keep this
+ * local constant in sync with the canonical list.
+ */
+const STEER_REFERENCE = [
+  "status",
+  "pause",
+  "resume",
+  "focus <issue-id>",
+  "kill <agent-id>",
+];
 
 // Inject global styles on first render
 injectGlobalStyles();
@@ -79,7 +91,6 @@ const EMPTY_PHASE_LOGS: LoopPhaseLogs = {
 const SIDEBAR_READY_QUEUE: string[] = [];
 const SIDEBAR_ISSUE_GRAPH: string[] = [];
 const SIDEBAR_SELECTED_ISSUE: SelectedIssue | null = null;
-const STEER_REFERENCE: string[] = STEER_COMMAND_REFERENCE.map((entry) => entry.command);
 
 export function App(): JSX.Element {
   const { state, isConnected, error, sendCommand } = useSse();
