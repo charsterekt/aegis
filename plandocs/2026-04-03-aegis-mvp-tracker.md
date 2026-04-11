@@ -56,6 +56,20 @@
 - Verification on 2026-04-10: focused server and Olympus tests for the new routes and controls passed; adjacent touched-surface tests passed; `npm run lint`; `npm run build`; `npm run test` all passed; mock-run sanity passed for `init`, `status`, `start`, `GET /`, `GET /api/state`, `GET /api/issues/ready`, `GET /api/config`, `POST /api/config`, `GET /api/events`, `stop`, and clean `git status -sb` in `aegis-mock-run`.
 - Queue parity on 2026-04-10: `bd ready --json` returned `[]`; after this batch only the coordination epic `aegis-0yq` remains in progress.
 
+## 2026-04-11 Olympus Operator Console Layout (Tasks 2 & 3)
+
+- Closed operator-console layout tasks 2 and 3 from `docs/superpowers/plans/2026-04-11-olympus-operator-workflow.md`.
+- Scope of this slice:
+  - **Task 2 (sidebar + steer):** Added `OperatorSidebar` with ready queue, issue graph, selected-issue card, and `SteerPanel` (command input + reference cheat sheet). Wired into `App.tsx` as a left sidebar in a flex layout.
+  - **Task 3 (execution sections):** Added `MergeQueuePanel`, `ActiveSessionsPanel`, `RecentSessionsTray`, and `JanusPopup` shell components. Wired into `App.tsx` main lane in the approved section order: Aegis Loop → Merge Queue → Active Agent Sessions → Completed Sessions → Agent Grid → Command Bar.
+  - All components are typed, styled with existing Olympus tokens, and covered by unit tests.
+  - Added app-level tests verifying the approved section order and confirming the legacy `Start Run` flow is absent.
+- Components created: `operator-sidebar.tsx`, `steer-panel.tsx`, `merge-queue-panel.tsx`, `active-sessions-panel.tsx`, `recent-sessions-tray.tsx`, `janus-popup.tsx`.
+- Tests created: `operator-sidebar.test.tsx`, `merge-queue-panel.test.tsx`, `active-sessions-panel.test.tsx`, plus 2 new `app.test.tsx` cases.
+- Note: panels are wired with placeholder empty data. Real observability/SSE wiring is the next phase (`docs/superpowers/plans/2026-04-11-live-execution-observability.md`).
+- Verification on 2026-04-11: `npm run lint`; `npm run build`; `npm run test` (85 files, 1371 tests, 11 todo) all passed.
+- Committed as `97a47d8` on `main`, pushed to `origin/main`.
+
 ## Slice Epics
 
 ### S00 - Project Skeleton and Toolchain (aegis-fjm.1)
