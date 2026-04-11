@@ -7,9 +7,10 @@ import { TopBar } from "./components/top-bar";
 import { SettingsPanel } from "./components/settings-panel";
 import { AgentGrid } from "./components/agent-grid";
 import { CommandBar } from "./components/command-bar";
-import { StartRunDialog } from "./components/start-run-dialog";
+import { LoopPanel } from "./components/loop-panel";
 import type { CommandResult } from "./components/command-bar";
-import type { ScoutResult } from "./components/start-run-dialog";
+import type { DashboardState } from "./types/dashboard-state";
+import type { LoopPhaseLogs, LoopState } from "./components/loop-panel";
 
 // Inject global styles on first render
 injectGlobalStyles();
@@ -35,10 +36,28 @@ function resultMessageOrFallback(result: SteerResult, fallback: string): string 
   return result.message?.trim() ? result.message : fallback;
 }
 
+function deriveLoopState(state: DashboardState | null): LoopState {
+  if (!state?.status.isRunning) {
+    return "idle";
+  }
+
+  if (state.status.paused) {
+    return "paused";
+  }
+
+  return "running";
+}
+
+const EMPTY_PHASE_LOGS: LoopPhaseLogs = {
+  poll: [],
+  dispatch: [],
+  monitor: [],
+  reap: [],
+};
+
 export function App(): JSX.Element {
   const { state, isConnected, error, sendCommand } = useSse();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [startRunOpen, setStartRunOpen] = useState(false);
   const [commandResults, setCommandResults] = useState<CommandResult[]>([]);
 
   /** Auto-dismiss the oldest error card after a timeout. */
@@ -51,47 +70,31 @@ export function App(): JSX.Element {
     return () => clearTimeout(timer);
   }, [commandResults]);
 
-  const handleAutoToggle = useCallback(
-    async (enabled: boolean) => {
-      try {
-        const result = await sendCommand(enabled ? "auto_on" : "auto_off");
-        setCommandResults((prev) => [
-          ...prev,
-          { command: enabled ? "auto_on" : "auto_off", success: true, result: result.message, timestamp: Date.now() },
-        ]);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        setCommandResults((prev) => [
-          ...prev,
-          { command: enabled ? "auto_on" : "auto_off", success: false, error: msg, timestamp: Date.now() },
-        ]);
-      }
-    },
-    [sendCommand],
-  );
+  const recordCommandResult = useCallback((result: CommandResult) => {
+    setCommandResults((prev) => [...prev, result]);
+  }, []);
 
   const handleKill = useCallback(
     async (agentId: string) => {
       try {
         const result = await sendCommand("kill", { agentId });
-        setCommandResults((prev) => [
-          ...prev,
-          {
-            command: `kill ${agentId}`,
-            success: true,
-            result: resultMessageOrFallback(result, `Agent ${agentId} kill signal sent`),
-            timestamp: Date.now(),
-          },
-        ]);
+        recordCommandResult({
+          command: `kill ${agentId}`,
+          success: true,
+          result: resultMessageOrFallback(result, `Agent ${agentId} kill signal sent`),
+          timestamp: Date.now(),
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
-        setCommandResults((prev) => [
-          ...prev,
-          { command: `kill ${agentId}`, success: false, error: msg, timestamp: Date.now() },
-        ]);
+        recordCommandResult({
+          command: `kill ${agentId}`,
+          success: false,
+          error: msg,
+          timestamp: Date.now(),
+        });
       }
     },
-    [sendCommand],
+    [recordCommandResult, sendCommand],
   );
 
   const handleCommand = useCallback(
@@ -101,68 +104,50 @@ export function App(): JSX.Element {
         if (!isHandledResult(result)) {
           throw new Error(resultMessageOrFallback(result, `Command "${command}" was not accepted.`));
         }
-        setCommandResults((prev) => [
-          ...prev,
-          {
-            command,
-            success: true,
-            result: resultMessageOrFallback(result, "OK"),
-            timestamp: Date.now(),
-          },
-        ]);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        setCommandResults((prev) => [
-          ...prev,
-          { command, success: false, error: msg, timestamp: Date.now() },
-        ]);
-      }
-    },
-    [sendCommand],
-  );
-
-  const handleScout = useCallback(
-    async (issueId: string): Promise<ScoutResult> => {
-      try {
-        const result: SteerResult = await sendCommand("scout", { issueId });
-        if (!isHandledResult(result)) {
-          return {
-            ok: false,
-            message: resultMessageOrFallback(result, `Scout failed for ${issueId}.`),
-            raw: result.raw,
-          };
-        }
-        return {
-          ok: true,
-          message: resultMessageOrFallback(result, `Scouted ${issueId}.`),
-          assessment: (result.raw?.assessment as string) ?? undefined,
-          raw: result.raw,
-        };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        return { ok: false, message: msg };
-      }
-    },
-    [sendCommand],
-  );
-
-  const handleImplement = useCallback(
-    async (issueId: string): Promise<void> => {
-      const result = await sendCommand("implement", { issueId });
-      if (!isHandledResult(result)) {
-        throw new Error(resultMessageOrFallback(result, `Implementation failed for ${issueId}.`));
-      }
-      setCommandResults((prev) => [
-        ...prev,
-        {
-          command: `implement ${issueId}`,
+        recordCommandResult({
+          command,
           success: true,
-          result: resultMessageOrFallback(result, `Implementation started for ${issueId}`),
+          result: resultMessageOrFallback(result, "OK"),
           timestamp: Date.now(),
-        },
-      ]);
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        recordCommandResult({
+          command,
+          success: false,
+          error: msg,
+          timestamp: Date.now(),
+        });
+      }
     },
-    [sendCommand],
+    [recordCommandResult, sendCommand],
+  );
+
+  const runLoopCommand = useCallback(
+    async (command: string, successFallback: string) => {
+      try {
+        const result: SteerResult = await sendCommand(command);
+        if (!isHandledResult(result)) {
+          throw new Error(resultMessageOrFallback(result, successFallback));
+        }
+
+        recordCommandResult({
+          command,
+          success: true,
+          result: resultMessageOrFallback(result, successFallback),
+          timestamp: Date.now(),
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        recordCommandResult({
+          command,
+          success: false,
+          error: msg,
+          timestamp: Date.now(),
+        });
+      }
+    },
+    [recordCommandResult, sendCommand],
   );
 
   return (
@@ -170,9 +155,7 @@ export function App(): JSX.Element {
       <TopBar
         state={state}
         isConnected={isConnected}
-        onAutoToggle={handleAutoToggle}
         onSettingsOpen={() => setSettingsOpen(true)}
-        onStartRun={() => setStartRunOpen(true)}
       />
 
       {settingsOpen && (
@@ -183,13 +166,6 @@ export function App(): JSX.Element {
         />
       )}
 
-      <StartRunDialog
-        isOpen={startRunOpen}
-        onClose={() => setStartRunOpen(false)}
-        onScout={handleScout}
-        onImplement={handleImplement}
-      />
-
       {error && (
         <div data-testid="error-banner" role="alert" className="error-banner">
           {error}
@@ -197,6 +173,16 @@ export function App(): JSX.Element {
       )}
 
       <main data-testid="app-main" className="app-main">
+        <LoopPanel
+          loopState={deriveLoopState(state)}
+          phaseLogs={EMPTY_PHASE_LOGS}
+          onStart={() => runLoopCommand("auto_on", "Aegis loop started")}
+          onPause={() => runLoopCommand("pause", "Aegis loop paused")}
+          onResume={() => runLoopCommand("resume", "Aegis loop resumed")}
+          onStop={() => runLoopCommand("stop", "Aegis loop stopped")}
+          disabled={!isConnected}
+        />
+
         <AgentGrid
           agents={state?.agents ?? []}
           onKill={handleKill}
