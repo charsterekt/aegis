@@ -361,6 +361,7 @@ describe("S06 launch lifecycle contract seed", () => {
           openBrowser?: (url: string) => boolean;
         },
       ) => Promise<{
+        url: string;
         runtime: {
           stop: () => Promise<void>;
         };
