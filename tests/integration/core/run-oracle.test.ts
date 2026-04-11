@@ -1196,4 +1196,48 @@ describe("runOracle", () => {
     expect(result.readyForImplementation).toBe(false);
     expect(result.failureReason).toBeNull();
   });
+
+  it("emits dashboard events for session lifecycle and loop phase", async () => {
+    const publishedEvents: import("../../../src/events/event-bus.js").AegisLiveEvent[] = [];
+    const mockPublisher = {
+      publish: (event: import("../../../src/events/event-bus.js").AegisLiveEvent) => {
+        publishedEvents.push(event);
+      },
+      subscribe: () => () => {},
+    };
+
+    await runOracle({
+      issue: makeIssue(),
+      record: makeRecord(),
+      runtime: makeRuntime(JSON.stringify({
+        files_affected: ["src/core/run-oracle.ts"],
+        estimated_complexity: "moderate",
+        decompose: false,
+        ready: true,
+      })),
+      tracker: makeTracker(),
+      budget,
+      projectRoot,
+      operatingMode: "conversational",
+      allowComplexAutoDispatch: false,
+      eventPublisher: mockPublisher,
+    });
+
+    expect(publishedEvents.some((event) =>
+      event.type === "loop.phase_log"
+      && event.payload.phase === "dispatch"
+      && (event.payload as any).line.includes("oracle ->"),
+    )).toBe(true);
+
+    expect(publishedEvents.some((event) =>
+      event.type === "agent.session_started"
+      && (event.payload as any).caste === "oracle",
+    )).toBe(true);
+
+    expect(publishedEvents.some((event) =>
+      event.type === "agent.session_ended"
+      && (event.payload as any).caste === "oracle"
+      && (event.payload as any).outcome === "completed",
+    )).toBe(true);
+  });
 });

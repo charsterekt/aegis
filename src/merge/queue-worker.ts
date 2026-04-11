@@ -29,6 +29,9 @@ import {
   createMergeQueueStateEvent,
 } from "../events/merge-events.js";
 import {
+  createMergeQueueLog,
+} from "../events/dashboard-events.js";
+import {
   handleJanusResult,
   janusRequeue,
 } from "./janus-integration.js";
@@ -223,6 +226,12 @@ export async function processNextQueueItem(
     ),
   });
 
+  config.eventPublisher.publish(createMergeQueueLog(
+    nextItem.issueId,
+    "active",
+    updatedItem.attemptCount,
+  ));
+
   try {
     // Step 1: Resolve labor path for this issue
     const laborPath = resolveLaborPath(config.projectRoot, nextItem.issueId);
@@ -264,6 +273,12 @@ export async function processNextQueueItem(
           gateErrors,
         ),
       });
+
+      config.eventPublisher.publish(createMergeQueueLog(
+        nextItem.issueId,
+        "merge_failed",
+        updatedItem.attemptCount,
+      ));
 
       // Update queue item status
       const finalState: MergeQueueState = {
@@ -342,6 +357,12 @@ export async function processNextQueueItem(
         mergeResult.detail,
       ),
     });
+
+    config.eventPublisher.publish(createMergeQueueLog(
+      nextItem.issueId,
+      mergeResult.outcome.toLowerCase(),
+      updatedItem.attemptCount,
+    ));
 
     // Step 7: Determine final queue item status with Janus escalation check
     let finalStatus: QueueItem["status"];

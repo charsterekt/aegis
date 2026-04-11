@@ -32,7 +32,9 @@ import {
   type LaborPreservationRequest,
 } from "../../../src/merge/preserve-labor.js";
 import { runGates, defaultGateConfig } from "../../../src/merge/run-gates.js";
-import type { MergeOutcomeEventPayload } from "../../../src/events/merge-events.js";
+import { processNextQueueItem, type QueueWorkerConfig } from "../../../src/merge/queue-worker.js";
+import type { MergeQueueState, QueueItem } from "../../../src/merge/merge-queue-store.js";
+import type { LiveEventPublisher, AegisLiveEvent } from "../../../src/events/event-bus.js";
 
 let testDir: string;
 let projectRoot: string;
@@ -450,5 +452,70 @@ describe("restart safety during merge processing", () => {
     const metadata = JSON.parse(readFileSync(metadataPath, "utf-8"));
     expect(metadata.issueId).toBe("aegis-fjm.1");
     expect(metadata.reason).toBe("Testing restart safety");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dashboard event emission from queue worker
+// ---------------------------------------------------------------------------
+
+describe("queue worker dashboard events", () => {
+  it("emits merge.queue_log and merge.outcome events when processing a merge attempt", async () => {
+    createCandidateBranch("aegis/event-test", "event test content");
+
+    // Create a minimal package.json so gates don't immediately fail
+    writeFileSync(
+      join(laborPath, "package.json"),
+      JSON.stringify({
+        name: "test-labor",
+        scripts: { lint: "echo ok", build: "echo ok", test: "echo ok" },
+      }),
+    );
+
+    const publishedEvents: AegisLiveEvent[] = [];
+    const mockPublisher: LiveEventPublisher = {
+      publish: (event: AegisLiveEvent) => { publishedEvents.push(event); },
+      subscribe: () => () => {},
+    };
+
+    const queueState: MergeQueueState = {
+      schemaVersion: 1,
+      items: [{
+        issueId: "aegis-fjm.1",
+        candidateBranch: "aegis/event-test",
+        targetBranch: "main",
+        status: "queued",
+        attemptCount: 0,
+        lastError: null,
+        updatedAt: new Date().toISOString(),
+      }],
+      processedCount: 0,
+    };
+
+    const config: QueueWorkerConfig = {
+      projectRoot,
+      eventPublisher: mockPublisher,
+      janusEnabled: false,
+      maxRetryAttempts: 3,
+      targetBranch: "main",
+    };
+
+    const result = await processNextQueueItem(queueState, config);
+
+    expect(result).not.toBeNull();
+    // The merge may or may not succeed depending on gate setup;
+    // we care about event emission, not merge success.
+    expect(publishedEvents.length).toBeGreaterThan(0);
+
+    expect(publishedEvents.some((event) =>
+      event.type === "merge.queue_log"
+      && event.payload.issueId === "aegis-fjm.1"
+      && event.payload.status === "active",
+    )).toBe(true);
+
+    expect(publishedEvents.some((event) =>
+      event.type === "merge.outcome"
+      && event.payload.issueId === "aegis-fjm.1",
+    )).toBe(true);
   });
 });

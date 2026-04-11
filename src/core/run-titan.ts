@@ -12,6 +12,12 @@ import type { FileScope } from "./scope-allocator.js";
 import { DispatchStage, transitionStage } from "./stage-transition.js";
 import type { LaborCreationPlan } from "../labor/create-labor.js";
 import type { AgentRuntime, AgentEvent } from "../runtime/agent-runtime.js";
+import type { LiveEventPublisher } from "../events/event-bus.js";
+import {
+  createLoopPhaseLog,
+  createAgentSessionStarted,
+  createAgentSessionEnded,
+} from "../events/dashboard-events.js";
 import type { AegisIssue, AegisIssue as CreatedIssue, CreateIssueInput } from "../tracker/issue-model.js";
 import { buildRelevantLearningsPrompt } from "../memory/select-learnings.js";
 
@@ -105,6 +111,7 @@ export interface RunTitanInput {
   projectRoot: string;
   mnemosyne?: { prompt_token_budget: number };
   model?: string;
+  eventPublisher?: LiveEventPublisher;
 }
 
 export interface RunTitanResult {
@@ -340,6 +347,19 @@ export async function runTitan(input: RunTitanInput): Promise<RunTitanResult> {
       `runTitan requires a dispatch record in stage=${DispatchStage.Implementing}`,
     );
   }
+
+  const ep = input.eventPublisher;
+  const sessionId = input.record.runningAgent?.sessionId ?? `titan-${input.issue.id}`;
+
+  ep?.publish(createLoopPhaseLog("dispatch", `titan -> ${input.issue.id}`, input.issue.id));
+  ep?.publish(createAgentSessionStarted(
+    sessionId,
+    "titan",
+    input.issue.id,
+    input.record.stage,
+    input.model ?? DEFAULT_AEGIS_CONFIG.models.titan,
+  ));
+
   const projectRoot = resolveTitanProjectRoot(input);
   const mnemosyneConfig = input.mnemosyne ?? DEFAULT_AEGIS_CONFIG.mnemosyne;
   const relevantLearnings = buildRelevantLearningsPrompt(
@@ -381,6 +401,7 @@ export async function runTitan(input: RunTitanInput): Promise<RunTitanResult> {
     };
 
     if (payload.outcome === "success") {
+      ep?.publish(createAgentSessionEnded(sessionId, "titan", input.issue.id, "completed"));
       return {
         prompt,
         outcome: "success",
@@ -425,6 +446,8 @@ export async function runTitan(input: RunTitanInput): Promise<RunTitanResult> {
       };
     }
 
+    ep?.publish(createAgentSessionEnded(sessionId, "titan", input.issue.id, "failed"));
+
     // Clarification or failure ends the current Titan attempt; the origin issue
     // remains open in Beads and clarification work can block its redispatch.
     return {
@@ -441,6 +464,7 @@ export async function runTitan(input: RunTitanInput): Promise<RunTitanResult> {
       failureReason: payload.outcome === "failure" ? payload.summary : null,
     };
   } catch (error) {
+    ep?.publish(createAgentSessionEnded(sessionId, "titan", input.issue.id, "failed"));
     return {
       prompt,
       outcome: "failure",

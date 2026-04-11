@@ -25,6 +25,11 @@ import type {
   AgentEvent,
   AgentRuntime,
 } from "../runtime/agent-runtime.js";
+import type { LiveEventPublisher } from "../events/event-bus.js";
+import {
+  createAgentSessionStarted,
+  createAgentSessionEnded,
+} from "../events/dashboard-events.js";
 import { DEFAULT_AEGIS_CONFIG } from "../config/defaults.js";
 import type {
   AegisIssue,
@@ -53,6 +58,7 @@ export interface RunSentinelInput {
   budget: BudgetLimit;
   projectRoot: string;
   model?: string;
+  eventPublisher?: LiveEventPublisher;
 }
 
 export interface RunSentinelResult {
@@ -239,6 +245,17 @@ export async function runSentinel(input: RunSentinelInput): Promise<RunSentinelR
     );
   }
 
+  const ep = input.eventPublisher;
+  const sessionId = input.record.runningAgent?.sessionId ?? `sentinel-${input.issue.id}`;
+
+  ep?.publish(createAgentSessionStarted(
+    sessionId,
+    "sentinel",
+    input.issue.id,
+    input.record.stage,
+    input.model ?? DEFAULT_AEGIS_CONFIG.models.sentinel,
+  ));
+
   const promptContract = createSentinelPromptContract({
     issueId: input.issue.id,
     issueTitle: input.issue.title,
@@ -269,6 +286,7 @@ export async function runSentinel(input: RunSentinelInput): Promise<RunSentinelR
     );
 
     if (verdict.verdict === "pass") {
+      ep?.publish(createAgentSessionEnded(sessionId, "sentinel", input.issue.id, "completed"));
       return {
         prompt,
         verdict,
@@ -290,6 +308,8 @@ export async function runSentinel(input: RunSentinelInput): Promise<RunSentinelR
     );
     createdFixIssues.push(...fixIssues);
 
+    ep?.publish(createAgentSessionEnded(sessionId, "sentinel", input.issue.id, "completed"));
+
     return {
       prompt,
       verdict,
@@ -302,6 +322,7 @@ export async function runSentinel(input: RunSentinelInput): Promise<RunSentinelR
       failureReason: verdict.reviewSummary,
     };
   } catch (error) {
+    ep?.publish(createAgentSessionEnded(sessionId, "sentinel", input.issue.id, "failed"));
     // Fail closed: parse errors, runtime crashes, and session aborts all
     // land the record in the failed stage.
     return {

@@ -18,6 +18,12 @@ import type {
   AgentEvent,
   AgentRuntime,
 } from "../runtime/agent-runtime.js";
+import type { LiveEventPublisher } from "../events/event-bus.js";
+import {
+  createLoopPhaseLog,
+  createAgentSessionStarted,
+  createAgentSessionEnded,
+} from "../events/dashboard-events.js";
 import type {
   AegisIssue,
   AegisIssue as CreatedIssue,
@@ -55,6 +61,7 @@ export interface RunOracleInput {
   allowComplexAutoDispatch: boolean;
   mnemosyne?: { prompt_token_budget: number };
   model?: string;
+  eventPublisher?: LiveEventPublisher;
 }
 
 export interface RunOracleResult {
@@ -499,6 +506,18 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
     );
   }
 
+  const ep = input.eventPublisher;
+  const sessionId = input.record.runningAgent?.sessionId ?? `oracle-${input.issue.id}`;
+
+  ep?.publish(createLoopPhaseLog("dispatch", `oracle -> ${input.issue.id}`, input.issue.id));
+  ep?.publish(createAgentSessionStarted(
+    sessionId,
+    "oracle",
+    input.issue.id,
+    input.record.stage,
+    input.model ?? DEFAULT_AEGIS_CONFIG.models.oracle,
+  ));
+
   const mnemosyneConfig = input.mnemosyne ?? DEFAULT_AEGIS_CONFIG.mnemosyne;
   let prompt = buildOraclePromptWithLearnings(
     input.issue,
@@ -555,6 +574,8 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
       materialization.blockerIds.size === 0 &&
       (assessment.blockers?.length ?? 0) === 0;
 
+    ep?.publish(createAgentSessionEnded(sessionId, "oracle", input.issue.id, "completed"));
+
     return {
       prompt,
       assessment,
@@ -576,6 +597,8 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
       rolledBackIssues = error.rolledBackIssues;
       createdIssues = error.survivingIssues;
     }
+
+    ep?.publish(createAgentSessionEnded(sessionId, "oracle", input.issue.id, "failed"));
 
     return {
       prompt,

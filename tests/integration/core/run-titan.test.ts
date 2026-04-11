@@ -647,4 +647,50 @@ describe("S09 Titan contract seed", () => {
       }),
     ).rejects.toThrow(/implementing/i);
   });
+
+  it("emits dashboard events for session lifecycle and loop phase", async () => {
+    const publishedEvents: import("../../../src/events/event-bus.js").AegisLiveEvent[] = [];
+    const mockPublisher = {
+      publish: (event: import("../../../src/events/event-bus.js").AegisLiveEvent) => {
+        publishedEvents.push(event);
+      },
+      subscribe: () => () => {},
+    };
+
+    await runTitan({
+      issue: makeIssue(),
+      record: makeRecord(),
+      labor: makeLaborPlan(),
+      runtime: makeRuntime(JSON.stringify({
+        outcome: "success",
+        summary: "Implemented Titan execution.",
+        files_changed: ["src/core/run-titan.ts"],
+        tests_and_checks_run: ["npm run test"],
+        known_risks: [],
+        follow_up_work: [],
+        learnings_written_to_mnemosyne: [],
+      })),
+      tracker: makeTracker(),
+      budget: { turns: 4, tokens: 8000 },
+      projectRoot: DEFAULT_PROJECT_ROOT,
+      eventPublisher: mockPublisher,
+    });
+
+    expect(publishedEvents.some((event) =>
+      event.type === "loop.phase_log"
+      && event.payload.phase === "dispatch"
+      && (event.payload as any).line.includes("titan ->"),
+    )).toBe(true);
+
+    expect(publishedEvents.some((event) =>
+      event.type === "agent.session_started"
+      && (event.payload as any).caste === "titan",
+    )).toBe(true);
+
+    expect(publishedEvents.some((event) =>
+      event.type === "agent.session_ended"
+      && (event.payload as any).caste === "titan"
+      && (event.payload as any).outcome === "completed",
+    )).toBe(true);
+  });
 });
