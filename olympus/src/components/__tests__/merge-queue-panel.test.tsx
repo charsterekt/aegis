@@ -53,4 +53,40 @@ describe("MergeQueuePanel", () => {
 
     expect(screen.getAllByText("Queue empty").length).toBeGreaterThan(0);
   });
+
+  it("has aria-label for accessibility", () => {
+    const { container } = render(
+      <MergeQueuePanel
+        queueLength={0}
+        currentItem={null}
+        lines={[]}
+      />,
+    );
+
+    expect(container.querySelector('[aria-label="Merge Queue"]')).toBeTruthy();
+  });
+
+  it("does not show current item when currentItem is null", () => {
+    render(
+      <MergeQueuePanel
+        queueLength={0}
+        currentItem={null}
+        lines={[]}
+      />,
+    );
+
+    expect(screen.queryByText("Current:")).toBeNull();
+  });
+
+  it("renders queue length badge for non-empty queue", () => {
+    render(
+      <MergeQueuePanel
+        queueLength={5}
+        currentItem={null}
+        lines={[]}
+      />,
+    );
+
+    expect(screen.getAllByText(/5 items in queue/).length).toBeGreaterThan(0);
+  });
 });

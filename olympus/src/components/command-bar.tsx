@@ -30,8 +30,6 @@ const COMMAND_OPTIONS: readonly CommandOption[] = [
   { value: "review", label: "Review", needsIssueId: true },
   { value: "process", label: "Process", needsIssueId: true },
   { value: "focus", label: "Focus", needsIssueId: true },
-  { value: "auto_on", label: "Auto On" },
-  { value: "auto_off", label: "Auto Off" },
   { value: "pause", label: "Pause" },
   { value: "resume", label: "Resume" },
   { value: "kill", label: "Kill Agent", needsAgentId: true },
