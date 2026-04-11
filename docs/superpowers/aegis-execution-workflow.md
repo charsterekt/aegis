@@ -24,7 +24,7 @@ Recommended worktree default until the repo standardizes one:
 
 ## Mock Run Seeder
 
-Use `npm run mock:seed` from `C:\dev\aegis` to recreate `aegis-mock-run\` from scratch with a deterministic todo-system issue graph.
+Use `npm run mock:seed` from `C:\dev\aegis` to recreate `aegis-mock-run\` from scratch with a deterministic scratchpad repo (no seeded application source). See [Mock Seed Guide](../mock-seed-guide.md) for details.
 
 After the seed completes:
 
