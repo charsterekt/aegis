@@ -17,6 +17,21 @@ afterEach(() => {
 });
 
 describe.skipIf(!bdSupport.supported)("seedMockRun", () => {
+  it("creates a seeded repo without example source files", async () => {
+    const sandboxRoot = mkdtempSync(path.join(tmpdir(), "aegis-mock-run-"));
+    tempRoots.push(sandboxRoot);
+
+    const result = await seedMockRun({
+      workspaceRoot: sandboxRoot,
+      repoName: "scratchpad",
+      beadsPrefix: "mockrunseed",
+    });
+
+    expect(existsSync(path.join(result.repoRoot, "src"))).toBe(false);
+    expect(existsSync(path.join(result.repoRoot, "tests"))).toBe(false);
+    expect(result.initialReadyKeys).toEqual(["foundation.contract"]);
+  }, 60_000);
+
   it("recreates the repo and verifies foundation.contract is the only initial ready issue", async () => {
     const sandboxRoot = mkdtempSync(path.join(tmpdir(), "aegis-mock-run-"));
     tempRoots.push(sandboxRoot);
