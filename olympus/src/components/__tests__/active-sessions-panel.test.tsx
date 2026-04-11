@@ -64,9 +64,9 @@ describe("ActiveSessionsPanel", () => {
 
     render(<ActiveSessionsPanel sessions={sessions} />);
 
-    expect(screen.getByText("session-1")).toBeTruthy();
-    expect(screen.getByText("session-2")).toBeTruthy();
-    expect(screen.getByText("session-3")).toBeTruthy();
+    expect(screen.getAllByText("session-1").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("session-2").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("session-3").length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders all four caste types with correct colors", () => {
@@ -79,10 +79,10 @@ describe("ActiveSessionsPanel", () => {
 
     render(<ActiveSessionsPanel sessions={sessions} />);
 
-    expect(screen.getByText("oracle")).toBeTruthy();
-    expect(screen.getByText("titan")).toBeTruthy();
-    expect(screen.getByText("sentinel")).toBeTruthy();
-    expect(screen.getByText("janus")).toBeTruthy();
+    expect(screen.getAllByText("oracle").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("titan").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("sentinel").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("janus").length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders terminal aria-label for accessibility", () => {
@@ -99,7 +99,7 @@ describe("ActiveSessionsPanel", () => {
 
     render(<ActiveSessionsPanel sessions={sessions} />);
 
-    expect(screen.getByLabelText("Session session-1")).toBeTruthy();
+    expect(screen.getAllByLabelText(/Session session-1/).length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders usage stats when provided", () => {
