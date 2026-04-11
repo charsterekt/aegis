@@ -1,14 +1,29 @@
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { initProject } from "../../../src/config/init-project.js";
+
 const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..");
+const temporaryRoots: string[] = [];
+
+function createTempRepo() {
+  const root = mkdtempSync(path.join(tmpdir(), "aegis-start-preflight-"));
+  temporaryRoots.push(root);
+  return root;
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.resetModules();
+
+  for (const root of temporaryRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 describe("S06 browser and stop runtime safeguards", () => {
@@ -42,6 +57,64 @@ describe("S06 browser and stop runtime safeguards", () => {
     await new Promise((resolve) => {
       setImmediate(resolve);
     });
+  });
+
+  it("prints the preflight report and does not open the browser when startup preflight is blocked", async () => {
+    const tempRepo = createTempRepo();
+    initProject(tempRepo);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const openBrowser = vi.fn(() => true);
+    const verifyTracker = vi.fn(() => {
+      throw new Error("Beads tracker is not initialized or healthy for this repository.");
+    });
+
+    const startModule = (await import(
+      pathToFileURL(path.join(repoRoot, "src", "cli", "start.ts")).href
+    )) as {
+      startAegis: (
+        root?: string,
+        overrides?: {
+          port?: number;
+          noBrowser?: boolean;
+        },
+        options?: {
+          verifyTracker?: (root: string) => void;
+          verifyGitRepo?: () => void;
+          probeBeadsCli?: () => {
+            ok: boolean;
+            detail?: string;
+            fix?: string;
+          };
+          openBrowser?: (url: string) => boolean;
+          registerSignalHandlers?: boolean;
+        },
+      ) => Promise<unknown>;
+    };
+
+    const blockedError = await startModule.startAegis(
+      tempRepo,
+      {},
+      {
+        verifyTracker,
+        verifyGitRepo: () => undefined,
+        probeBeadsCli: () => ({ ok: true, detail: "Beads CLI is available." }),
+        openBrowser,
+        registerSignalHandlers: false,
+      },
+    ).catch((error: unknown) => error);
+
+    expect(blockedError).toBeInstanceOf(Error);
+    expect(blockedError).toMatchObject({
+      message: "Aegis startup preflight blocked.",
+      report: expect.objectContaining({
+        overall: "blocked",
+        repoRoot: tempRepo,
+      }),
+    });
+    expect(openBrowser).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining("Aegis startup preflight: blocked"),
+    );
   });
 
   it("keeps the stop contract timeout aligned with the runtime default", async () => {

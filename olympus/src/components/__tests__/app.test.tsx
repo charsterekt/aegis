@@ -56,7 +56,7 @@ describe("App", () => {
   it("renders the top bar", () => {
     setMockUseSse();
     render(<App />);
-    expect(screen.getByRole("banner")).toBeTruthy();
+    expect(screen.getByTestId("top-bar")).toBeTruthy();
   });
 
   it("renders the app main container", () => {
@@ -77,6 +77,12 @@ describe("App", () => {
     setMockUseSse();
     render(<App />);
     expect(screen.getByTestId("command-bar")).toBeTruthy();
+  });
+
+  it("renders the aegis loop panel", () => {
+    setMockUseSse();
+    render(<App />);
+    expect(screen.getByRole("region", { name: "Aegis Loop" })).toBeTruthy();
   });
 
   it("shows error banner when useSse returns an error", () => {
@@ -147,89 +153,10 @@ describe("App", () => {
     expect(screen.queryByText("Command sent successfully")).toBeNull();
   });
 
-  it("keeps Start Run in an error state when scout is declined", async () => {
-    setMockReadyIssues(["aegis-aru"]);
-    const sendCommand = vi.fn().mockResolvedValue({
-      ok: true,
-      status: "declined",
-      message: "Scout failed for aegis-aru",
-      raw: {
-        status: "declined",
-      },
-    });
-    setMockUseSse({
-      isConnected: true,
-      sendCommand,
-    });
-
+  it("does not render the legacy Start Run flow", () => {
+    setMockUseSse({ isConnected: true });
     render(<App />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Start Run" }));
-    await waitFor(() => {
-      expect(apiClient.fetchReadyIssues).toHaveBeenCalledOnce();
-    });
-    fireEvent.change(screen.getByLabelText("Ready issue"), {
-      target: { value: "aegis-aru" },
-    });
-    fireEvent.click(screen.getByLabelText("Scout issue"));
-
-    await waitFor(() => {
-      expect(screen.getByText(/Scout Error:/)).toBeTruthy();
-    });
-
-    expect(screen.getByText(/Scout failed for aegis-aru/)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Proceed to Implement" })).toBeNull();
-  });
-
-  it("keeps Start Run open and shows the backend error when implement is declined", async () => {
-    setMockReadyIssues(["aegis-cgm"]);
-    const sendCommand = vi.fn(async (command: string) => {
-      if (command === "scout") {
-        return {
-          ok: true,
-          message: "Scouted aegis-cgm; ready for implementation.",
-          raw: {
-            assessment: "Oracle says this issue is ready.",
-          },
-        };
-      }
-
-      return {
-        ok: true,
-        status: "declined",
-        message: "Implementation failed for aegis-cgm",
-        raw: {
-          status: "declined",
-        },
-      };
-    });
-    setMockUseSse({
-      isConnected: true,
-      sendCommand,
-    });
-
-    render(<App />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Start Run" }));
-    await waitFor(() => {
-      expect(apiClient.fetchReadyIssues).toHaveBeenCalledOnce();
-    });
-    fireEvent.change(screen.getByLabelText("Ready issue"), {
-      target: { value: "aegis-cgm" },
-    });
-    fireEvent.click(screen.getByLabelText("Scout issue"));
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Proceed to Implement" })).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Proceed to Implement" }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/Implement Error:/)).toBeTruthy();
-    });
-
-    expect(screen.getByText(/Implementation failed for aegis-cgm/)).toBeTruthy();
-    expect(screen.getByRole("dialog", { name: "Start Run" })).toBeTruthy();
+    expect(screen.queryByText("Start Run")).toBeNull();
   });
 });

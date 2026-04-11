@@ -11,6 +11,7 @@ import {
   AEGIS_CONFIG_PATH,
   resolveProjectRelativePath,
 } from "./load-config.js";
+import { ensureAegisPackageJsonAliases } from "./package-json-aliases.js";
 import { AEGIS_DIRECTORY, RUNTIME_STATE_FILES } from "./schema.js";
 import { emptyDispatchState } from "../core/dispatch-state.js";
 
@@ -105,6 +106,32 @@ function updateGitIgnore(
   return true;
 }
 
+function updatePackageJsonAliases(repoRoot: string): void {
+  const packageJsonPath = path.join(repoRoot, "package.json");
+  if (!existsSync(packageJsonPath)) {
+    return;
+  }
+
+  let packageJsonText: string;
+
+  try {
+    packageJsonText = readFileSync(packageJsonPath, "utf8");
+  } catch {
+    return;
+  }
+
+  const result = ensureAegisPackageJsonAliases(packageJsonText);
+  if (!result.changed) {
+    return;
+  }
+
+  try {
+    writeFileSync(packageJsonPath, result.packageJsonText, "utf8");
+  } catch {
+    return;
+  }
+}
+
 export function initProject(root = process.cwd()): InitProjectResult {
   const plan = buildInitProjectPlan(root);
   const createdDirectories: string[] = [];
@@ -155,6 +182,7 @@ export function initProject(root = process.cwd()): InitProjectResult {
       resolveProjectRelativePath(plan.repoRoot, ".aegis/mnemosyne.jsonl"),
     );
   }
+  updatePackageJsonAliases(plan.repoRoot);
 
   return {
     repoRoot: plan.repoRoot,

@@ -28,20 +28,22 @@ describe("verifyTrackerRepository", () => {
       status: 0,
       stdout: "[]",
       stderr: "",
+    }), () => ({
+      ok: true,
+      detail: "Beads CLI is available.",
     }))).not.toThrow();
   });
 
   it("fails clearly when the Beads CLI is unavailable", () => {
     const root = createTempRoot();
-    const missingBdError = Object.assign(new Error("spawnSync bd ENOENT"), {
-      code: "ENOENT",
-    }) as NodeJS.ErrnoException;
 
     expect(() => verifyTrackerRepository(root, () => ({
-      status: null,
+      status: 0,
       stdout: "",
       stderr: "",
-      error: missingBdError,
+    }), () => ({
+      ok: false,
+      detail: "Beads CLI was not found. Install or fix `bd` before starting Aegis.",
     }))).toThrow("Beads CLI was not found");
   });
 
@@ -52,6 +54,9 @@ describe("verifyTrackerRepository", () => {
       status: 1,
       stdout: "",
       stderr: "tracker metadata missing",
+    }), () => ({
+      ok: true,
+      detail: "Beads CLI is available.",
     }))).toThrow("tracker metadata missing");
   });
 });

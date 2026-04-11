@@ -12,6 +12,9 @@ export { formatDuration, formatTokens, formatCost } from "./agent-card";
 export { CommandBar } from "./command-bar";
 export type { CommandBarProps, CommandResult } from "./command-bar";
 
+export { LoopPanel } from "./loop-panel";
+export type { LoopPanelProps, LoopPhaseLogs, LoopState } from "./loop-panel";
+
 export { AgentGrid } from "./agent-grid";
 export type { AgentGridProps } from "./agent-grid";
 

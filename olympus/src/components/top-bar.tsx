@@ -48,9 +48,7 @@ export function useLiveUptime(uptimeSeconds: number, isRunning: boolean): number
 export interface TopBarProps {
   state: DashboardState | null;
   isConnected: boolean;
-  onAutoToggle: (enabled: boolean) => void;
   onSettingsOpen: () => void;
-  onStartRun: () => void;
 }
 
 type SpendVariant = "default" | "success" | "warning" | "danger" | "info";
@@ -108,7 +106,7 @@ function formatSpend(state: DashboardState | null): { value: string; unit?: stri
 }
 
 export function TopBar(props: TopBarProps): JSX.Element {
-  const { state, isConnected, onAutoToggle, onSettingsOpen, onStartRun } = props;
+  const { state, isConnected, onSettingsOpen } = props;
 
   const isRunning = state?.status.isRunning ?? false;
   const mode = state?.status.mode ?? null;
@@ -220,41 +218,6 @@ export function TopBar(props: TopBarProps): JSX.Element {
 
       {/* Right section: controls */}
       <div className="top-bar-section">
-        {/* Start Run button */}
-        <button
-          className="start-run-btn"
-          onClick={onStartRun}
-          aria-label="Start Run"
-          title="Start Run — Scout and implement a Beads issue"
-          style={{
-            padding: "4px 14px",
-            borderRadius: "6px",
-            fontSize: "12px",
-            fontWeight: 700,
-            letterSpacing: "0.5px",
-            textTransform: "uppercase",
-            backgroundColor: colors.primary,
-            color: colors.bgPrimary,
-            border: "none",
-            cursor: "pointer",
-          }}
-        >
-          Start Run
-        </button>
-
-        {/* Auto mode toggle */}
-        <div className="auto-toggle">
-          <span className="auto-toggle-label">Auto</span>
-          <button
-            className={`auto-toggle-btn ${isAutoMode ? "on" : "off"}`}
-            onClick={() => onAutoToggle(!isAutoMode)}
-            aria-pressed={isAutoMode}
-            aria-label={`Auto mode is currently ${isAutoMode ? "on" : "off"}. Click to turn ${isAutoMode ? "off" : "on"}.`}
-          >
-            {isAutoMode ? "ON" : "OFF"}
-          </button>
-        </div>
-
         {/* Settings button */}
         <button
           className="settings-btn"

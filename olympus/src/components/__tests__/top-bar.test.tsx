@@ -16,9 +16,7 @@ describe("TopBar", () => {
   const defaultProps = {
     state: makeState(),
     isConnected: true,
-    onAutoToggle: vi.fn(),
     onSettingsOpen: vi.fn(),
-    onStartRun: vi.fn(),
   };
 
   beforeEach(() => {
@@ -83,34 +81,18 @@ describe("TopBar", () => {
     expect(container.textContent).toContain("N/A");
   });
 
-  it("shows OFF button when not in auto mode", () => {
-    const { container } = render(<TopBar {...defaultProps} />);
-    const btn = container.querySelector(".auto-toggle-btn.off");
-    expect(btn).toBeTruthy();
-    expect(btn?.textContent).toBe("OFF");
-  });
-
-  it("shows ON button when in auto mode", () => {
-    const { container } = render(<TopBar {...defaultProps} state={makeState({ status: { ...makeState().status, mode: "auto" } })} />);
-    const btn = container.querySelector(".auto-toggle-btn.on");
-    expect(btn).toBeTruthy();
-    expect(btn?.textContent).toBe("ON");
-  });
-
-  it("calls onAutoToggle when auto button is clicked", () => {
-    const onAutoToggle = vi.fn();
-    const { container } = render(<TopBar {...defaultProps} onAutoToggle={onAutoToggle} />);
-    const btn = container.querySelector(".auto-toggle-btn");
-    btn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(onAutoToggle).toHaveBeenCalledWith(true);
-  });
-
   it("calls onSettingsOpen when settings button is clicked", () => {
     const onSettingsOpen = vi.fn();
     const { container } = render(<TopBar {...defaultProps} onSettingsOpen={onSettingsOpen} />);
     const btn = container.querySelector(".settings-btn");
     btn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(onSettingsOpen).toHaveBeenCalledOnce();
+  });
+
+  it("does not render legacy Start Run or Auto controls", () => {
+    render(<TopBar {...defaultProps} />);
+    expect(screen.queryByRole("button", { name: "Start Run" })).toBeNull();
+    expect(screen.queryByText("Auto")).toBeNull();
   });
 
   it("shows disconnected status when not connected", () => {
