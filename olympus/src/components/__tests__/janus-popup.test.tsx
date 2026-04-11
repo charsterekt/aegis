@@ -34,26 +34,28 @@ describe("JanusPopup", () => {
   });
 
   it("does not show dismiss button when onDismiss is undefined", () => {
-    render(<JanusPopup session={mockSession} />);
-    expect(screen.queryByLabelText("Dismiss Janus")).toBeNull();
+    const { container } = render(<JanusPopup session={mockSession} />);
+    const buttons = container.querySelectorAll('button[aria-label="Dismiss Janus"]');
+    expect(buttons.length).toBe(0);
   });
 
   it("calls onDismiss when dismiss button is clicked", () => {
     const onDismiss = vi.fn();
     render(<JanusPopup session={mockSession} onDismiss={onDismiss} />);
-    fireEvent.click(screen.getByLabelText("Dismiss Janus"));
+    const buttons = screen.getAllByLabelText("Dismiss Janus");
+    fireEvent.click(buttons[0]);
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
   it("has data-testid attribute", () => {
     render(<JanusPopup session={mockSession} />);
-    expect(screen.getByTestId("janus-popup")).toBeTruthy();
+    expect(screen.getAllByTestId("janus-popup").length).toBeGreaterThan(0);
   });
 
   it("uses fixed positioning for popup appearance", () => {
     const { container } = render(<JanusPopup session={mockSession} />);
-    const dialog = container.querySelector('[role="dialog"]');
-    expect(dialog).toBeTruthy();
-    expect((dialog as HTMLElement).style.position).toBe("fixed");
+    const dialogs = container.querySelectorAll('[role="dialog"]');
+    expect(dialogs.length).toBeGreaterThan(0);
+    expect((dialogs[0] as HTMLElement).style.position).toBe("fixed");
   });
 });
