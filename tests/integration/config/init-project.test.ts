@@ -393,6 +393,26 @@ describe("S01 init project contract seed", () => {
     }
   });
 
+  it("leaves package.json unchanged when a multiline scripts object starts on the opening-brace line", () => {
+    const tempRepo = createTempRepo();
+    const packageJsonPath = path.join(tempRepo, "package.json");
+    const packageJson = `{
+  "scripts": { "start": "vite"
+  }
+}
+`;
+
+    try {
+      writeFileSync(packageJsonPath, packageJson, "utf8");
+
+      initProject(tempRepo);
+
+      expect(readFileSync(packageJsonPath, "utf8")).toBe(packageJson);
+    } finally {
+      rmSync(tempRepo, { recursive: true, force: true });
+    }
+  });
+
   it("leaves package.json unchanged when top-level scripts keys are duplicated", () => {
     const tempRepo = createTempRepo();
     const packageJsonPath = path.join(tempRepo, "package.json");
@@ -424,6 +444,25 @@ describe("S01 init project contract seed", () => {
     const packageJsonPath = path.join(tempRepo, "package.json");
     const packageJson = `{
   "private": true}
+`;
+
+    try {
+      writeFileSync(packageJsonPath, packageJson, "utf8");
+
+      initProject(tempRepo);
+
+      expect(readFileSync(packageJsonPath, "utf8")).toBe(packageJson);
+    } finally {
+      rmSync(tempRepo, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves package.json unchanged when a multiline root object starts on the opening-brace line", () => {
+    const tempRepo = createTempRepo();
+    const packageJsonPath = path.join(tempRepo, "package.json");
+    const packageJson = `{
+  "name": "demo", "private": true
+}
 `;
 
     try {

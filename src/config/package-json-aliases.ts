@@ -295,7 +295,7 @@ function getLineIndentBefore(source: string, index: number): string {
   return /^[\t ]*$/.test(segment) ? segment : "";
 }
 
-function isBraceOnOwnLine(source: string, index: number): boolean {
+function isTokenOnOwnLine(source: string, index: number): boolean {
   return /^[\t ]*$/.test(getLinePrefixBefore(source, index));
 }
 
@@ -345,7 +345,12 @@ function patchExistingScriptsObject(
     || source.slice(objectStart + 1, objectEnd).includes("\r");
 
   if (isMultiline) {
-    if (!isBraceOnOwnLine(source, objectEnd)) {
+    if (!isTokenOnOwnLine(source, objectEnd)) {
+      return null;
+    }
+
+    const objectProperties = scanObjectProperties(source, objectStart);
+    if (objectProperties.some((property) => !isTokenOnOwnLine(source, property.keyStart))) {
       return null;
     }
 
@@ -358,6 +363,10 @@ function patchExistingScriptsObject(
     );
 
     if (firstEntryStart < objectEnd && source[firstEntryStart] === "\"") {
+      if (!isTokenOnOwnLine(source, firstEntryStart)) {
+        return null;
+      }
+
       const entryIndent = getLineIndentBefore(source, firstEntryStart);
       const addition = serializeEntries(entries, entryIndent, lineBreak);
       const closingLineStart = objectEnd - closingIndent.length;
@@ -398,13 +407,19 @@ function patchMissingScriptsProperty(
     || source.slice(rootStart + 1, rootEnd).includes("\r");
 
   if (isMultiline) {
-    if (!isBraceOnOwnLine(source, rootEnd)) {
+    if (!isTokenOnOwnLine(source, rootEnd)) {
+      return null;
+    }
+
+    const rootProperties = scanObjectProperties(source, rootStart);
+    if (rootProperties.some((property) => !isTokenOnOwnLine(source, property.keyStart))) {
       return null;
     }
 
     const propertyIndent = hasExistingProperties
       ? getLineIndentBefore(source, firstPropertyStart)
       : closingIndent + rootIndentUnit;
+
     const childIndent = propertyIndent + rootIndentUnit;
     const scriptsProperty = `${propertyIndent}"scripts": {${lineBreak}${serializeEntries(entries, childIndent, lineBreak)}${lineBreak}${propertyIndent}}`;
 
