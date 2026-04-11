@@ -193,12 +193,21 @@ function detectLineBreak(source: string): string {
   return source.includes("\r\n") ? "\r\n" : "\n";
 }
 
-function getLineIndentBefore(source: string, index: number): string {
+function getLinePrefixBefore(source: string, index: number): string {
   const lineStart = source.lastIndexOf("\n", index - 1);
   const start = lineStart === -1 ? 0 : lineStart + 1;
-  const segment = source.slice(start, index);
+
+  return source.slice(start, index);
+}
+
+function getLineIndentBefore(source: string, index: number): string {
+  const segment = getLinePrefixBefore(source, index);
 
   return /^[\t ]*$/.test(segment) ? segment : "";
+}
+
+function isBraceOnOwnLine(source: string, index: number): boolean {
+  return /^[\t ]*$/.test(getLinePrefixBefore(source, index));
 }
 
 function detectIndentUnit(
@@ -239,7 +248,7 @@ function patchExistingScriptsObject(
   entries: ReadonlyArray<readonly [string, string]>,
   lineBreak: string,
   parentIndentUnit: string,
-): string {
+): string | null {
   const objectStart = scriptsRange.valueStart;
   const objectEnd = scriptsRange.valueEnd - 1;
   const firstEntryStart = skipWhitespace(source, objectStart + 1);
@@ -247,6 +256,10 @@ function patchExistingScriptsObject(
     || source.slice(objectStart + 1, objectEnd).includes("\r");
 
   if (isMultiline) {
+    if (!isBraceOnOwnLine(source, objectEnd)) {
+      return null;
+    }
+
     const closingIndent = getLineIndentBefore(source, objectEnd);
     const indentUnit = detectIndentUnit(
       source,
@@ -287,7 +300,7 @@ function patchMissingScriptsProperty(
   rootEnd: number,
   entries: ReadonlyArray<readonly [string, string]>,
   lineBreak: string,
-): string {
+): string | null {
   const firstPropertyStart = skipWhitespace(source, rootStart + 1);
   const closingIndent = getLineIndentBefore(source, rootEnd);
   const rootIndentUnit = detectIndentUnit(source, rootStart, rootEnd, "  ");
@@ -296,6 +309,10 @@ function patchMissingScriptsProperty(
     || source.slice(rootStart + 1, rootEnd).includes("\r");
 
   if (isMultiline) {
+    if (!isBraceOnOwnLine(source, rootEnd)) {
+      return null;
+    }
+
     const propertyIndent = hasExistingProperties
       ? getLineIndentBefore(source, firstPropertyStart)
       : closingIndent + rootIndentUnit;
@@ -434,26 +451,42 @@ export function ensureAegisPackageJsonAliases(
       scriptKeys.add(property.name);
     }
 
+    const patchedPackageJsonText = patchExistingScriptsObject(
+      packageJsonText,
+      scriptsRange,
+      missingEntries,
+      lineBreak,
+      rootIndentUnit,
+    );
+    if (patchedPackageJsonText === null) {
+      return {
+        changed: false,
+        packageJsonText,
+      };
+    }
+
     return {
       changed: true,
-      packageJsonText: patchExistingScriptsObject(
-        packageJsonText,
-        scriptsRange,
-        missingEntries,
-        lineBreak,
-        rootIndentUnit,
-      ),
+      packageJsonText: patchedPackageJsonText,
+    };
+  }
+
+  const patchedPackageJsonText = patchMissingScriptsProperty(
+    packageJsonText,
+    rootStart,
+    rootEnd,
+    missingEntries,
+    lineBreak,
+  );
+  if (patchedPackageJsonText === null) {
+    return {
+      changed: false,
+      packageJsonText,
     };
   }
 
   return {
     changed: true,
-    packageJsonText: patchMissingScriptsProperty(
-      packageJsonText,
-      rootStart,
-      rootEnd,
-      missingEntries,
-      lineBreak,
-    ),
+    packageJsonText: patchedPackageJsonText,
   };
 }
