@@ -42,4 +42,35 @@ describe("OperatorSidebar", () => {
     );
     expect(hasSelectedIssueSection).toBe(false);
   });
+
+  it("shows empty state text for ready queue and issue graph", () => {
+    render(
+      <OperatorSidebar
+        readyQueue={[]}
+        issueGraph={[]}
+        selectedIssue={null}
+        steerReference={["status"]}
+        onCommand={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+
+    expect(screen.getAllByText("No ready items").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("No graph data").length).toBeGreaterThan(0);
+  });
+
+  it("renders all ready queue items", () => {
+    render(
+      <OperatorSidebar
+        readyQueue={["item-1", "item-2", "item-3"]}
+        issueGraph={[]}
+        selectedIssue={null}
+        steerReference={["status"]}
+        onCommand={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+
+    expect(screen.getAllByText("item-1").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("item-2").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("item-3").length).toBeGreaterThan(0);
+  });
 });
