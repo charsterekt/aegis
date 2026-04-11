@@ -12,12 +12,14 @@ import { OperatorSidebar } from "./components/operator-sidebar";
 import { MergeQueuePanel } from "./components/merge-queue-panel";
 import { ActiveSessionsPanel } from "./components/active-sessions-panel";
 import { RecentSessionsTray } from "./components/recent-sessions-tray";
+import { JanusPopup } from "./components/janus-popup";
 import type { CommandResult } from "./components/command-bar";
 import type { DashboardState } from "./types/dashboard-state";
 import type { LoopPhaseLogs, LoopState } from "./components/loop-panel";
 import type { SelectedIssue } from "./components/operator-sidebar";
 import type { ActiveSession } from "./components/active-sessions-panel";
 import type { RecentSession } from "./components/recent-sessions-tray";
+import type { JanusSession } from "./components/janus-popup";
 
 // Inject global styles on first render
 injectGlobalStyles();
@@ -77,11 +79,13 @@ const STEER_REFERENCE: string[] = [
 
 const EMPTY_ACTIVE_SESSIONS: Record<string, ActiveSession> = {};
 const EMPTY_RECENT_SESSIONS: RecentSession[] = [];
+const PLACEHOLDER_JANUS_SESSION: JanusSession | null = null;
 
 export function App(): JSX.Element {
   const { state, isConnected, error, sendCommand } = useSse();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [commandResults, setCommandResults] = useState<CommandResult[]>([]);
+  const [janusSession, setJanusSession] = useState<JanusSession | null>(PLACEHOLDER_JANUS_SESSION);
 
   /** Auto-dismiss the oldest error card after a timeout. */
   useEffect(() => {
@@ -281,6 +285,13 @@ export function App(): JSX.Element {
         )}
         </main>
       </div>
+
+      {janusSession && (
+        <JanusPopup
+          session={janusSession}
+          onDismiss={() => setJanusSession(null)}
+        />
+      )}
     </div>
   );
 }

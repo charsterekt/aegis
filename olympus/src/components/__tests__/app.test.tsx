@@ -153,26 +153,22 @@ describe("App", () => {
     expect(screen.queryByText("Command sent successfully")).toBeNull();
   });
 
-  it("does not render the legacy Start Run flow", () => {
-    setMockUseSse({ isConnected: true });
-    render(<App />);
-
-    expect(screen.queryByText("Start Run")).toBeNull();
-  });
-
   it("renders the approved section order", () => {
     setMockUseSse({ isConnected: true });
     render(<App />);
 
     const headings = screen.getAllByRole("heading").map((node) => node.textContent);
-    expect(headings).toEqual(
-      expect.arrayContaining([
-        "Aegis Loop",
-        "Merge Queue",
-        "Active Agent Sessions",
-        "Completed Sessions",
-      ]),
+
+    // Extract only the canonical execution headings and verify their relative order
+    const canonical = headings.filter((h) =>
+      ["Aegis Loop", "Merge Queue", "Active Agent Sessions", "Completed Sessions"].includes(h),
     );
+    expect(canonical).toEqual([
+      "Aegis Loop",
+      "Merge Queue",
+      "Active Agent Sessions",
+      "Completed Sessions",
+    ]);
   });
 
   it("does not render the legacy Start Run dialog or conflicting auto toggle flow", () => {
