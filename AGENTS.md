@@ -51,25 +51,24 @@ The `aegis-mock-run/` directory (gitignored) is a disposable workspace for sanit
 ### How to Use
 
 ```bash
-# 1. Seed a fresh mock repo (creates aegis-mock-run/aegis-mock-<timestamp>/)
+# 1. Seed a fresh mock repo (deletes any previous one)
 npm run mock:seed
 
-# 2. Navigate to the seeded mock repo
-cd aegis-mock-run/aegis-mock-<timestamp>/
+# 2. Run aegis commands in the mock repo
+npm run mock:run -- node ../dist/index.js init
+npm run mock:run -- node ../dist/index.js status
+npm run mock:run -- node ../dist/index.js start --port <random-port> --no-browser
 
-# 3. Run sanity commands against the built dist/
-node ../../../dist/index.js init
-node ../../../dist/index.js status
-node ../../../dist/index.js start --port <random-port> --no-browser
+# 3. Probe HTTP endpoints
 curl http://127.0.0.1:<port>/              # Verify Olympus bundle is served
 curl http://127.0.0.1:<port>/api/state     # Verify dashboard state contract
 curl --max-time 2 http://127.0.0.1:<port>/api/events  # Verify SSE stream
-node ../../../dist/index.js stop
 
-# 4. Verify no repo dirtying
-git status -sb   # Should show clean — all .aegis/ generated files are gitignored
+# 4. Stop the server
+npm run mock:run -- node ../dist/index.js stop
 
-# 5. Clean up (the whole aegis-mock-run/ tree is gitignored, safe to delete)
+# 5. Verify no repo dirtying
+cd aegis-mock-run && git status -sb   # Should show clean
 ```
 
 ### Sanity Test Checklist
@@ -77,13 +76,14 @@ git status -sb   # Should show clean — all .aegis/ generated files are gitigno
 A minimal sanity test should verify:
 
 1. `npm run build` passes
-2. `aegis init` succeeds and creates `.aegis/config.json`
-3. `aegis status` works before and after a start/stop cycle
-4. `aegis start` succeeds, `aegis stop` succeeds
-5. `GET /` serves the real Olympus bundle (not the fallback shell)
-6. `GET /api/state` returns the expected dashboard state shape (`{ status, spend, agents }`)
-7. `GET /api/events` returns SSE with the expected event envelope (`{ type, data }`)
-8. `git status -sb` shows no untracked `.aegis/` files after the cycle
+2. `npm run mock:seed` succeeds and creates `aegis-mock-run/`
+3. `npm run mock:run -- node ../dist/index.js init` succeeds
+4. `npm run mock:run -- node ../dist/index.js status` works before and after start/stop
+5. `npm run mock:run -- node ../dist/index.js start` succeeds, then `stop` succeeds
+6. `GET /` serves the real Olympus bundle (not the fallback shell)
+7. `GET /api/state` returns the expected dashboard state shape (`{ status, spend, agents }`)
+8. `GET /api/events` returns SSE with the expected event envelope (`{ type, data }`)
+9. `cd aegis-mock-run && git status -sb` shows no untracked `.aegis/` files after the cycle
 
 ### Important Notes
 
