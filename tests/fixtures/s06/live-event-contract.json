@@ -12,7 +12,11 @@
       "requiredPayloadFields": [
         "status",
         "spend",
-        "agents"
+        "agents",
+        "sessions",
+        "loop",
+        "mergeQueue",
+        "janus"
       ]
     },
     {

@@ -50,6 +50,7 @@ export interface OrchestratorStateEvent extends SseEvent {
       activeAgents: number;
       queueDepth: number;
       paused: boolean;
+      autoLoopEnabled: boolean;
     };
     spend: {
       metering: string;
@@ -71,6 +72,44 @@ export interface OrchestratorStateEvent extends SseEvent {
       elapsedSeconds: number;
       spendUsd?: number;
     }>;
+    sessions: {
+      active: Record<string, {
+        id: string;
+        caste: string;
+        issueId: string;
+        stage: string;
+        model: string;
+        lines: string[];
+      }>;
+      recent: Array<{
+        id: string;
+        caste: string;
+        issueId: string;
+        outcome: string;
+        endedAt: string;
+      }>;
+    };
+    loop: {
+      phaseLogs: {
+        poll: string[];
+        dispatch: string[];
+        monitor: string[];
+        reap: string[];
+      };
+    };
+    mergeQueue: {
+      items: Array<{
+        issueId: string;
+        status: string;
+        attemptCount: number;
+        lastError?: string | null;
+      }>;
+      logs: string[];
+    };
+    janus: {
+      active: Record<string, { id: string; issueId: string; lines: string[]; outcome?: string }>;
+      recent: Array<{ id: string; issueId: string; outcome: string; endedAt: string }>;
+    };
   };
 }
 

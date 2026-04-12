@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { SseEvent, OrchestratorStateEvent, CommandResultEvent, ServerLiveEventEnvelope } from "../types/sse-events";
 import type { DashboardState, SpendObservation, ActiveAgentInfo } from "../types/dashboard-state";
-import { reduceDashboardLiveEvent } from "./dashboard-state-reducer";
+import { reduceDashboardLiveEvent, createEmptyDashboardState } from "./dashboard-state-reducer";
 
 /** Known control actions that map directly to server lifecycle actions. */
 const CONTROL_ACTIONS = new Set(["start", "stop", "status", "auto_on", "auto_off", "pause", "resume"]);
@@ -175,12 +175,19 @@ export function useSse(options: UseSseOptions = {}): UseSseReturn {
             ...(payload.spend ?? {}),
             metering: (payload.spend?.metering ?? "unknown") as SpendObservation["metering"],
           };
-          setState({
+          // Merge the incoming payload with existing state to preserve
+          // session/loop/mergeQueue/janus data that the server now includes
+          setState((prev) => ({
+            ...(prev ?? {}),
             status: payload.status,
             spend,
             agents,
-            config: payload.config ?? null,
-          });
+            config: payload.config ?? prev?.config ?? null,
+            loop: payload.loop ?? prev?.loop ?? createEmptyDashboardState().loop,
+            sessions: payload.sessions ?? prev?.sessions ?? createEmptyDashboardState().sessions,
+            mergeQueue: payload.mergeQueue ?? prev?.mergeQueue ?? createEmptyDashboardState().mergeQueue,
+            janus: payload.janus ?? prev?.janus ?? createEmptyDashboardState().janus,
+          }));
           setError(null);
         } catch {
           // Malformed event — skip silently
