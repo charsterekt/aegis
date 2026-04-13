@@ -1,14 +1,10 @@
-import type {
-  OrchestrationMode,
-  ServerLifecycleState,
-} from "../server/routes.js";
 import { isAegisOwned, isProcessRunning, readRuntimeState } from "./runtime-state.js";
 
 export const STATUS_COMMAND_NAME = "status";
 
 export interface StatusSnapshot {
-  server_state: ServerLifecycleState;
-  mode: OrchestrationMode;
+  server_state: "running" | "stopped";
+  mode: "auto" | "paused" | "conversational";
   active_agents: number;
   queue_depth: number;
   uptime_ms: number;

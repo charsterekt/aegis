@@ -18,7 +18,7 @@ import { emptyDispatchState } from "../core/dispatch-state.js";
 export const REQUIRED_PROJECT_DIRECTORIES = [
   AEGIS_DIRECTORY,
   ".aegis/labors",
-  ".aegis/evals",
+  ".aegis/logs",
 ] as const;
 
 export const REQUIRED_PROJECT_FILES = [
@@ -30,11 +30,10 @@ export const DEFAULT_GITIGNORE_ENTRIES = [
   AEGIS_CONFIG_PATH,
   ".aegis/dispatch-state.json",
   ".aegis/merge-queue.json",
-  ".aegis/mnemosyne.jsonl",
   ".aegis/runtime-state.json",
+  ".aegis/runtime-stop-request.json",
   ".aegis/labors/",
-  ".aegis/evals/",
-  ".aegis/oracle/",
+  ".aegis/logs/",
 ] as const;
 
 export interface InitProjectPlan {
@@ -170,16 +169,6 @@ export function initProject(root = process.cwd()): InitProjectResult {
   ) {
     createdFiles.push(
       resolveProjectRelativePath(plan.repoRoot, ".aegis/merge-queue.json"),
-    );
-  }
-  if (
-    seedFile(
-      resolveProjectRelativePath(plan.repoRoot, ".aegis/mnemosyne.jsonl"),
-      "",
-    )
-  ) {
-    createdFiles.push(
-      resolveProjectRelativePath(plan.repoRoot, ".aegis/mnemosyne.jsonl"),
     );
   }
   updatePackageJsonAliases(plan.repoRoot);

@@ -7,10 +7,8 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import type {
-  OrchestrationMode,
-  ServerLifecycleState,
-} from "../server/routes.js";
+export type ServerLifecycleState = "running" | "stopped";
+export type OrchestrationMode = "auto" | "paused" | "conversational";
 
 export const RUNTIME_STATE_FILE = ".aegis/runtime-state.json";
 export const STOP_REQUEST_FILE = ".aegis/runtime-stop-request.json";
@@ -129,34 +127,8 @@ export function clearStopRequest(root = process.cwd()) {
 
 export async function isAegisOwned(
   record: RuntimeStateRecord,
-  timeoutMs = 2_000,
 ): Promise<boolean> {
-  if (!isProcessRunning(record.pid)) {
-    return false;
-  }
-
-  if (!record.server_token) {
-    return false;
-  }
-
-  try {
-    const response = await fetch(
-      `http://${record.host}:${record.port}/api/state`,
-      { signal: AbortSignal.timeout(timeoutMs) },
-    );
-
-    if (!response.ok) {
-      return false;
-    }
-
-    const body = (await response.json()) as {
-      server_token?: string;
-    };
-
-    return body.server_token === record.server_token;
-  } catch {
-    return false;
-  }
+  return isProcessRunning(record.pid);
 }
 
 export function isProcessRunning(pid: number) {

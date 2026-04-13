@@ -1,8 +1,15 @@
 # Aegis Emergency MVP Triage Design
 
 Date: 2026-04-13
-Status: Proposed
+Status: Active
 Purpose: Define the emergency recovery contract for rewriting Aegis into a working, terminal-first MVP after severe architectural drift.
+
+## Recovery progress
+
+- Phase A complete on 2026-04-13.
+- Phase B complete on 2026-04-13.
+- Phase C complete on 2026-04-13.
+- Phases D through G remain open.
 
 ## Scope and source of truth
 
@@ -452,11 +459,17 @@ Failure-only:
 
 ### Phase A: Source-of-truth reset
 
+Status:
+- complete on 2026-04-13
+
 - write this emergency MVP design/addendum
 - maintain the discovery log as the Q&A appendix for this design
 - maintain one flat deferred-items list
 
 ### Phase B: Hard purge
+
+Status:
+- complete on 2026-04-13
 
 - delete Olympus and UI/SSE/dashboard code
 - delete economics/budgeting
@@ -466,6 +479,9 @@ Failure-only:
 - delete tests/config tied only to removed systems
 
 ### Phase C: Skeleton stabilization
+
+Status:
+- complete on 2026-04-13
 
 - hard-strip config
 - preserve only runtime/tracker abstractions that still matter

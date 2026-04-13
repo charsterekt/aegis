@@ -42,8 +42,7 @@ interface RootPackageJson {
   scripts: Record<string, string>;
   engines?: Record<string, string>;
   files?: string[];
-  dependencies?: Record<string, string>;
-  devDependencies?: Record<string, string>;
+  workspaces?: string[];
 }
 
 interface TsConfigShape {
@@ -51,7 +50,6 @@ interface TsConfigShape {
     rootDir?: string;
     outDir?: string;
     noEmit?: boolean;
-    jsx?: string;
   };
   include?: string[];
 }
@@ -79,35 +77,46 @@ describe("S00 project skeleton contract", () => {
 
     expect(packageJson.main).toBe("dist/index.js");
     expect(packageJson.bin.aegis).toBe("dist/index.js");
-    expect((packageJson.files ?? [])).toEqual(
-      expect.arrayContaining(["dist", "olympus/dist"]),
-    );
-    expect(scripts.build).toContain("build:node");
-    expect(scripts.build).toContain("build:olympus");
+    expect(packageJson.files).toEqual(["dist"]);
+    expect(packageJson.workspaces).toBeUndefined();
+    expect(scripts.build).toBe("npm run build:node");
     expect(scripts["build:node"]).toContain("tsc --project tsconfig.json");
     expect(scripts.dev).toBe("tsx src/index.ts");
     expect(scripts.start).toBe("node dist/index.js");
     expect(scripts.test).toBe("vitest run --config vitest.config.ts");
-    expect(scripts.lint).toContain("tsconfig.tests.json");
-    expect(scripts.lint).toContain("lint --workspace olympus");
-    expect(scripts["build:olympus"]).toBe("npm run build --workspace olympus");
+    expect(scripts.lint).toBe("tsc --project tsconfig.tests.json --noEmit");
+    expect(scripts["build:olympus"]).toBeUndefined();
     expect(scripts["build:all"]).toBeUndefined();
     expect(scripts.prepack).toBe("npm run build");
     expect(packageJson.engines?.node).toBe(">=22.12.0");
 
     expect(tsconfig.compilerOptions.rootDir).toBe("src");
     expect(tsconfig.compilerOptions.outDir).toBe("dist");
-    expect(tsconfig.include).toEqual(["src/**/*.ts"]);
+    expect(tsconfig.include).toEqual([
+      "src/index.ts",
+      "src/shared/**/*.ts",
+      "src/config/**/*.ts",
+      "src/cli/**/*.ts",
+      "src/core/dispatch-state.ts",
+    ]);
     expect(testTsconfig.compilerOptions.noEmit).toBe(true);
     expect((testTsconfig.include as string[])).toEqual(
-      expect.arrayContaining(["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]),
+      expect.arrayContaining([
+        "src/index.ts",
+        "src/shared/**/*.ts",
+        "src/config/**/*.ts",
+        "src/cli/**/*.ts",
+        "src/core/dispatch-state.ts",
+        "tests/**/*.ts",
+        "vitest.config.ts",
+      ]),
     );
   });
 
   it("ignores repo-local runtime artifacts and scratch directories", () => {
     const gitIgnoreContents = readFileSync(path.join(repoRoot, ".gitignore"), "utf8");
 
-    expect(gitIgnoreContents).toContain(".aegis/evals/");
+    expect(gitIgnoreContents).toContain(".aegis/logs/");
     expect(gitIgnoreContents).toContain(".aegis/oracle/");
     expect(gitIgnoreContents).toContain(".aegis-cli-*");
   });
@@ -253,10 +262,7 @@ describe("S00 project skeleton contract", () => {
     expect(resolveProjectPaths).toHaveBeenCalledWith("C:/tmp/repo");
   });
 
-  it("defines a minimal Olympus Vite build shell", async () => {
-    const olympusPackageJson = readJson<RootPackageJson>("olympus/package.json");
-    const scripts = olympusPackageJson.scripts ?? {};
-    const olympusTsconfig = readJson<TsConfigShape>("olympus/tsconfig.json");
+  it("uses a single node Vitest project with no Olympus lane", async () => {
     const vitestConfig = (await import(
       pathToFileURL(path.join(repoRoot, "vitest.config.ts")).href
     )) as {
@@ -274,37 +280,10 @@ describe("S00 project skeleton contract", () => {
       };
     };
 
-    expect(existsSync(path.join(repoRoot, "olympus/tsconfig.json"))).toBe(true);
-    expect((olympusPackageJson.dependencies as Record<string, string>).react).toBeTruthy();
-    expect((olympusPackageJson.dependencies as Record<string, string>)["react-dom"]).toBeTruthy();
-    expect((olympusPackageJson.devDependencies as Record<string, string>).typescript).toBeTruthy();
-    expect((olympusPackageJson.devDependencies as Record<string, string>)["@vitejs/plugin-react"]).toBeTruthy();
-    expect(scripts.lint).toContain("tsc --project tsconfig.json --noEmit");
-    expect(scripts.build).toContain("npm run lint");
-    expect(scripts.build).toContain("vite build");
-    expect(olympusTsconfig.compilerOptions.jsx).toBe("react-jsx");
-    expect((olympusTsconfig.include as string[])).toEqual(
-      expect.arrayContaining(["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]),
-    );
-    expect(vitestConfig.default.test?.include).toEqual(
-      undefined,
-    );
-    expect(vitestConfig.default.test?.projects).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          test: expect.objectContaining({
-            include: ["tests/**/*.{test,spec}.{ts,tsx}"],
-            environment: "node",
-          }),
-        }),
-        expect.objectContaining({
-          test: expect.objectContaining({
-            include: ["olympus/src/**/*.{test,spec}.{ts,tsx}"],
-            environment: "jsdom",
-          }),
-        }),
-      ]),
-    );
+    expect(existsSync(path.join(repoRoot, "olympus/tsconfig.json"))).toBe(false);
+    expect(vitestConfig.default.test?.projects).toBeUndefined();
+    expect(vitestConfig.default.test?.include).toEqual(["tests/**/*.{test,spec}.{ts,tsx}"]);
+    expect(vitestConfig.default.test?.environment).toBe("node");
   });
 
   it("creates the workspace skeleton required by the workspace contract", () => {
@@ -363,7 +342,7 @@ describe("S00 project skeleton contract", () => {
       expect(existsSync(path.join(tempRepo, ".aegis", "config.json"))).toBe(true);
       expect(existsSync(path.join(tempRepo, ".aegis", "dispatch-state.json"))).toBe(true);
       expect(existsSync(path.join(tempRepo, ".aegis", "merge-queue.json"))).toBe(true);
-      expect(existsSync(path.join(tempRepo, ".aegis", "mnemosyne.jsonl"))).toBe(true);
+      expect(existsSync(path.join(tempRepo, ".aegis", "logs"))).toBe(true);
     } finally {
       rmSync(tempRepo, { recursive: true, force: true });
     }

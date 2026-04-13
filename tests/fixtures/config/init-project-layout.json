@@ -2,22 +2,20 @@
   "directories": [
     ".aegis",
     ".aegis/labors",
-    ".aegis/evals"
+    ".aegis/logs"
   ],
   "files": [
     ".aegis/config.json",
     ".aegis/dispatch-state.json",
-    ".aegis/merge-queue.json",
-    ".aegis/mnemosyne.jsonl"
+    ".aegis/merge-queue.json"
   ],
   "gitIgnoreEntries": [
     ".aegis/config.json",
     ".aegis/dispatch-state.json",
     ".aegis/merge-queue.json",
-    ".aegis/mnemosyne.jsonl",
     ".aegis/runtime-state.json",
+    ".aegis/runtime-stop-request.json",
     ".aegis/labors/",
-    ".aegis/evals/",
-    ".aegis/oracle/"
+    ".aegis/logs/"
   ]
 }

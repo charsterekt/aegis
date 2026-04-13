@@ -57,7 +57,7 @@ Typical flow:
 
 ```bash
 npm run mock:seed
-npm run mock:run -- node ../dist/index.js start --no-browser
+npm run mock:run -- node ../dist/index.js start
 npm run mock:run -- node ../dist/index.js status
 npm run mock:run -- node ../dist/index.js stop
 ```

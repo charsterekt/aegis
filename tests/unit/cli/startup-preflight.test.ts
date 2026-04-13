@@ -18,8 +18,6 @@ function makeConfig(): AegisConfig {
       titan: "pi:default",
       sentinel: "pi:default",
       janus: "pi:default",
-      metis: "pi:default",
-      prometheus: "pi:default",
     },
   };
 }

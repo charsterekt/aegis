@@ -4,5 +4,13 @@
     "rootDir": ".",
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+  "include": [
+    "src/index.ts",
+    "src/shared/**/*.ts",
+    "src/config/**/*.ts",
+    "src/cli/**/*.ts",
+    "src/core/dispatch-state.ts",
+    "tests/**/*.ts",
+    "vitest.config.ts"
+  ]
 }
