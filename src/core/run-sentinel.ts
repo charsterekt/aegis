@@ -29,6 +29,7 @@ import type { LiveEventPublisher } from "../events/event-bus.js";
 import {
   createAgentSessionStarted,
   createAgentSessionEnded,
+  createAgentSessionLog,
 } from "../events/dashboard-events.js";
 import { DEFAULT_AEGIS_CONFIG } from "../config/defaults.js";
 import type {
@@ -127,10 +128,12 @@ function findFinalSentinelPayloadMessage(messages: readonly string[]): string {
 async function collectSentinelResponse(
   runtime: AgentRuntime,
   issueId: string,
+  sessionId: string,
   projectRoot: string,
   budget: BudgetLimit,
   model: string,
   prompt: string,
+  eventPublisher: LiveEventPublisher | undefined,
 ): Promise<string> {
   const handle = await runtime.spawn({
     caste: "sentinel",
@@ -147,6 +150,9 @@ async function collectSentinelResponse(
     const unsubscribe = handle.subscribe((event: AgentEvent) => {
       if (event.type === "message") {
         messages.push(event.text);
+        eventPublisher?.publish(createAgentSessionLog(
+          sessionId, "sentinel", issueId, event.text,
+        ));
         return;
       }
       if (event.type === "error" && event.fatal) {
@@ -272,10 +278,12 @@ export async function runSentinel(input: RunSentinelInput): Promise<RunSentinelR
     const raw = await collectSentinelResponse(
       input.runtime,
       input.issue.id,
+      sessionId,
       input.projectRoot,
       input.budget,
       input.model ?? DEFAULT_AEGIS_CONFIG.models.sentinel,
       prompt,
+      ep,
     );
 
     verdict = parseSentinelVerdict(raw);

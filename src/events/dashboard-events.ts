@@ -73,6 +73,25 @@ export function createAgentSessionEnded(
 }
 
 /**
+ * Create an agent session log event for real-time terminal output.
+ */
+export function createAgentSessionLog(
+  sessionId: string,
+  caste: "oracle" | "titan" | "sentinel" | "janus",
+  issueId: string,
+  line: string,
+  level: "info" | "warn" | "error" = "info",
+): AegisLiveEvent {
+  return {
+    id: `evt-${nextSequence()}`,
+    type: "agent.session_log",
+    timestamp: new Date().toISOString(),
+    sequence: nextSequence(),
+    payload: { sessionId, caste, issueId, line, level },
+  };
+}
+
+/**
  * Create a merge queue log event.
  */
 export function createMergeQueueLog(

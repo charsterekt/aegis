@@ -148,6 +148,44 @@ export interface OrchestratorStateEventPayload {
     totalOutputTokens: number;
   };
   agents: Array<Record<string, unknown>>;
+  sessions: {
+    active: Record<string, {
+      id: string;
+      caste: string;
+      issueId: string;
+      stage: string;
+      model: string;
+      lines: string[];
+    }>;
+    recent: Array<{
+      id: string;
+      caste: string;
+      issueId: string;
+      outcome: string;
+      endedAt: string;
+    }>;
+  };
+  loop: {
+    phaseLogs: {
+      poll: string[];
+      dispatch: string[];
+      monitor: string[];
+      reap: string[];
+    };
+  };
+  mergeQueue: {
+    items: Array<{
+      issueId: string;
+      status: string;
+      attemptCount: number;
+      lastError?: string | null;
+    }>;
+    logs: string[];
+  };
+  janus: {
+    active: Record<string, { id: string; issueId: string; lines: string[]; outcome?: string }>;
+    recent: Array<{ id: string; issueId: string; outcome: string; endedAt: string }>;
+  };
 }
 
 export interface LaunchSequenceEventPayload {
@@ -208,7 +246,7 @@ export type AegisLiveEvent = {
 const LIVE_EVENT_PAYLOAD_FIELDS: {
   [K in LiveEventType]: readonly (keyof LiveEventPayloadMap[K])[];
 } = {
-  "orchestrator.state": ["status", "spend", "agents"],
+  "orchestrator.state": ["status", "spend", "agents", "sessions", "loop", "mergeQueue", "janus"],
   "launch.sequence": ["phase", "step", "status", "detail"],
   "control.command": ["action", "request_id", "status", "detail"],
   "scope.suppression": ["dispatchable", "suppressed", "hasOverlap", "evaluatedAt"],

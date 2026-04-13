@@ -17,6 +17,7 @@ import {
   createLoopPhaseLog,
   createAgentSessionStarted,
   createAgentSessionEnded,
+  createAgentSessionLog,
 } from "../events/dashboard-events.js";
 import type { AegisIssue, AegisIssue as CreatedIssue, CreateIssueInput } from "../tracker/issue-model.js";
 import { buildRelevantLearningsPrompt } from "../memory/select-learnings.js";
@@ -295,10 +296,12 @@ function findLastTitanPayloadMessage(messages: readonly string[]): string {
 async function collectTitanResponse(
   runtime: AgentRuntime,
   issueId: string,
+  sessionId: string,
   workingDirectory: string,
   budget: BudgetLimit,
   model: string,
   prompt: string,
+  eventPublisher: LiveEventPublisher | undefined,
 ): Promise<string> {
   const handle = await runtime.spawn({
     caste: "titan",
@@ -315,6 +318,9 @@ async function collectTitanResponse(
     const unsubscribe = handle.subscribe((event: AgentEvent) => {
       if (event.type === "message") {
         messages.push(event.text);
+        eventPublisher?.publish(createAgentSessionLog(
+          sessionId, "titan", issueId, event.text,
+        ));
         return;
       }
       if (event.type === "error" && event.fatal) {
@@ -383,10 +389,12 @@ export async function runTitan(input: RunTitanInput): Promise<RunTitanResult> {
     const raw = await collectTitanResponse(
       input.runtime,
       input.issue.id,
+      sessionId,
       input.labor.laborPath,
       input.budget,
       input.model ?? DEFAULT_AEGIS_CONFIG.models.titan,
       prompt,
+      ep,
     );
     const payload = parseTitanExecutionPayload(raw);
 

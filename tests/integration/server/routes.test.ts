@@ -275,9 +275,13 @@ describe("S06 HTTP and SSE contract seed", () => {
       timestamp: "2026-04-04T00:00:00.000Z",
       sequence: 1,
       payload: {
-        status: { mode: "conversational", isRunning: true, uptimeSeconds: 100, activeAgents: 0, queueDepth: 0 },
+        status: { mode: "conversational", isRunning: true, uptimeSeconds: 100, activeAgents: 0, queueDepth: 0, paused: false, autoLoopEnabled: false },
         spend: { metering: "unknown", totalInputTokens: 0, totalOutputTokens: 0 },
         agents: [],
+        sessions: { active: {}, recent: [] },
+        loop: { phaseLogs: { poll: [], dispatch: [], monitor: [], reap: [] } },
+        mergeQueue: { items: [], logs: [] },
+        janus: { active: {}, recent: [] },
       },
     });
     const eventTwo = eventBusModule.createLiveEvent({

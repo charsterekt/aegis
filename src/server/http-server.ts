@@ -394,6 +394,10 @@ export function createHttpServerController(
           },
           spend: { ...storeSnapshot.spend },
           agents: [...storeSnapshot.agents],
+          sessions: structuredClone(storeSnapshot.sessions),
+          loop: structuredClone(storeSnapshot.loop),
+          mergeQueue: structuredClone(storeSnapshot.mergeQueue),
+          janus: structuredClone(storeSnapshot.janus),
         },
       }),
     );

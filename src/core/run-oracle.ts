@@ -23,6 +23,7 @@ import {
   createLoopPhaseLog,
   createAgentSessionStarted,
   createAgentSessionEnded,
+  createAgentSessionLog,
 } from "../events/dashboard-events.js";
 import type {
   AegisIssue,
@@ -181,10 +182,12 @@ function findFinalOraclePayloadMessage(messages: readonly string[]): string {
 async function collectOracleResponse(
   runtime: AgentRuntime,
   issueId: string,
+  sessionId: string,
   projectRoot: string,
   budget: BudgetLimit,
   model: string,
   prompt: string,
+  eventPublisher: LiveEventPublisher | undefined,
 ): Promise<string> {
   const handle = await runtime.spawn({
     caste: "oracle",
@@ -201,6 +204,9 @@ async function collectOracleResponse(
     const unsubscribe = handle.subscribe((event: AgentEvent) => {
       if (event.type === "message") {
         messages.push(event.text);
+        eventPublisher?.publish(createAgentSessionLog(
+          sessionId, "oracle", issueId, event.text,
+        ));
         return;
       }
       if (event.type === "error" && event.fatal) {
@@ -540,10 +546,12 @@ export async function runOracle(input: RunOracleInput): Promise<RunOracleResult>
     const raw = await collectOracleResponse(
       input.runtime,
       input.issue.id,
+      sessionId,
       input.projectRoot,
       input.budget,
       input.model ?? DEFAULT_AEGIS_CONFIG.models.oracle,
       prompt,
+      ep,
     );
     assessment = parseOracleAssessment(raw);
     oracleAssessmentRef = persistOracleAssessment(
