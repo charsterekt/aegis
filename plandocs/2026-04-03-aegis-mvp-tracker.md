@@ -12,11 +12,11 @@
 
 ## 2026-04-13 Infinite Retry Loop Fix and FATAL Event Emission
 
-- Fixed infinite retry loop: when Oracle produces no output (tool-call failure), the issue is now **closed** instead of left in the ready queue for infinite retries.
-- Added FATAL loop phase log emission so the error is visible in the SSE stream and Olympus UI.
-- The root cause remains the model (`gemma-4-31b-it` in `.pi/settings.json` has known tool-call bugs). With this fix, the issue will be closed with a clear message: "Oracle produced no output — model may not support tool calling".
-- To fix permanently: change the model in `.pi/settings.json` to a reliable one (not gemma-4).
-- Verification: `npm run build` passes.
+- **Stopped auto-loop on fatal tool-call failure** — when Oracle produces no output (model can't invoke custom tool), the auto-loop now **disables itself** instead of infinitely retrying. Issue stays open for user to fix model config.
+- **Removed hardcoded gemma-4** from `.pi/settings.json` in todo-manifest.ts — Pi SDK now uses its own default model.
+- FATAL loop phase log emitted to SSE stream — visible in Olympus Monitor column.
+- The root cause was `gemma-4-31b-it` in `.pi/settings.json` having known tool-call bugs.
+- Verification: `npm run build` passes; `npm run mock:seed` produces `.pi/settings.json` without hardcoded model.
 - Still open: realtime agent session logs not streaming to active sessions, kill command for individual agents.
 
 - Removed hardcoded `gemma-4-31b-it` from mock seed — now flows through `DEFAULT_AEGIS_CONFIG` (`pi:default` lets Pi SDK use `.pi/settings.json` model).
