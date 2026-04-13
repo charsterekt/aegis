@@ -8,6 +8,38 @@ import type {
   EditableOlympusConfigPatch,
 } from "../types/dashboard-state";
 
+interface AvailableModel {
+  provider: string;
+  id: string;
+  name: string;
+}
+
+interface ModelsApiResponse {
+  providers: string[];
+  models: AvailableModel[];
+  currentModel?: string;
+}
+
+async function fetchAvailableModels(): Promise<ModelsApiResponse> {
+  const response = await fetch("/api/models");
+  if (!response.ok) {
+    throw new Error(`Failed to fetch models: ${response.status}`);
+  }
+  return response.json() as Promise<ModelsApiResponse>;
+}
+
+async function updateModel(payload: { provider: string; modelId: string }): Promise<{ ok: boolean; message: string }> {
+  const response = await fetch("/api/models", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to update model: ${response.status}`);
+  }
+  return response.json() as Promise<{ ok: boolean; message: string }>;
+}
+
 export interface SettingsPanelProps {
   isOpen: boolean;
   onClose: () => void;
@@ -139,6 +171,10 @@ export function SettingsPanel(props: SettingsPanelProps): JSX.Element {
   const [isSaving, setIsSaving] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
+  const [currentModel, setCurrentModel] = useState<string>("");
+  const [isModelLoading, setIsModelLoading] = useState(false);
+  const [isModelSaving, setIsModelSaving] = useState(false);
 
   const sourceLabel = useMemo(
     () => (isLoading ? "Loading live config..." : "Live from server"),
@@ -176,6 +212,33 @@ export function SettingsPanel(props: SettingsPanelProps): JSX.Element {
     };
   }, [isOpen, loadConfig]);
 
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    let active = true;
+    setIsModelLoading(true);
+    void fetchAvailableModels()
+      .then((data) => {
+        if (!active) return;
+        setAvailableModels(data.models);
+        setCurrentModel(data.currentModel ?? "");
+      })
+      .catch(() => {
+        // Silently fail — model listing is optional
+      })
+      .finally(() => {
+        if (active) {
+          setIsModelLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [isOpen]);
+
   if (!isOpen) {
     return <div data-testid="settings-panel" />;
   }
@@ -195,6 +258,33 @@ export function SettingsPanel(props: SettingsPanelProps): JSX.Element {
       setError(message);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleModelChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const selectedModel = event.target.value;
+    if (!selectedModel) return;
+
+    // Parse model reference: "pi:model-id" or "provider:model-id"
+    const parts = selectedModel.split(":");
+    const modelId = parts.length > 1 ? parts[1] : parts[0];
+    const provider = parts.length > 1 ? parts[0] : "google";
+
+    setIsModelSaving(true);
+    setError(null);
+    try {
+      const result = await updateModel({ provider, modelId });
+      if (result.ok) {
+        setCurrentModel(selectedModel);
+        setFeedback(result.message);
+      } else {
+        setError(result.message);
+      }
+    } catch (modelError: unknown) {
+      const message = modelError instanceof Error ? modelError.message : "Unable to update model.";
+      setError(message);
+    } finally {
+      setIsModelSaving(false);
     }
   };
 
@@ -239,6 +329,69 @@ export function SettingsPanel(props: SettingsPanelProps): JSX.Element {
         >
           {sourceLabel}
         </div>
+
+        <section style={{ marginBottom: "24px" }}>
+          <h3
+            style={{
+              fontSize: "14px",
+              textTransform: "uppercase",
+              letterSpacing: "0.5px",
+              color: "#7a8a9e",
+              marginBottom: "12px",
+            }}
+          >
+            Model
+          </h3>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "12px",
+            }}
+          >
+            <div style={{ fontSize: "13px", color: "#b0b0b0" }}>
+              {isModelLoading ? "Loading available models..." : `Current: ${currentModel || "(none)"}`}
+            </div>
+            {isModelLoading ? (
+              <div style={{ color: "#7a8a9e", fontStyle: "italic" }}>Loading...</div>
+            ) : (
+              <select
+                className="command-bar-input"
+                value={currentModel}
+                onChange={handleModelChange}
+                disabled={isModelSaving || availableModels.length === 0}
+                aria-label="Select model"
+                style={{
+                  width: "100%",
+                  padding: "8px 12px",
+                  borderRadius: "6px",
+                  border: "1px solid #35506b",
+                  backgroundColor: "#1a2a3a",
+                  color: "#e0e0e0",
+                  fontSize: "14px",
+                  cursor: isModelSaving ? "wait" : "pointer",
+                }}
+              >
+                <option value="" disabled>Select a model...</option>
+                {availableModels.map((model) => (
+                  <option key={`${model.provider}:${model.id}`} value={`${model.provider}:${model.id}`}>
+                    {model.provider}/{model.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            {availableModels.length === 0 && !isModelLoading && (
+              <div style={{ fontSize: "12px", color: "#7a8a9e" }}>
+                No models available. Check Pi SDK configuration.
+              </div>
+            )}
+            {isModelSaving && (
+              <div style={{ fontSize: "12px", color: "#2ec4b6" }}>
+                Updating model...
+              </div>
+            )}
+          </div>
+        </section>
 
         <section style={{ marginBottom: "24px" }}>
           <h3

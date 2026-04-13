@@ -12,6 +12,7 @@ export const HTTP_ROUTE_PATHS = {
   events: "/api/events",
   beadsHook: "/api/hooks/beads",
   scopeStatus: "/api/scope/status",
+  models: "/api/models",
 } as const;
 
 export const CONTROL_API_ACTIONS = [
@@ -174,6 +175,15 @@ export interface RestApiRouterBindings {
   stop?: () => MaybePromise<void>;
   getOperatingMode?: () => OrchestrationMode;
   getScopeStatus?: () => MaybePromise<ScopeStatusResponse>;
+  listAvailableModels?: () => MaybePromise<{
+    providers: string[];
+    models: Array<{ provider: string; id: string; name: string }>;
+    currentModel?: string;
+  }>;
+  updateModel?: (payload: Record<string, unknown>) => MaybePromise<{
+    ok: boolean;
+    message: string;
+  }>;
 }
 
 export interface SseReplayTransport {
@@ -541,6 +551,35 @@ export function createRestApiRouter(bindings: RestApiRouterBindings): RestApiRou
           ok: true,
           accepted_at: now().toISOString(),
         });
+      }
+
+      if (method === "GET" && request.path === HTTP_ROUTE_PATHS.models) {
+        if (!bindings.listAvailableModels) {
+          return toJsonResponse(503, {
+            ok: false,
+            error: "Model listing is not available for this runtime.",
+          });
+        }
+
+        return toJsonResponse(200, await bindings.listAvailableModels());
+      }
+
+      if (method === "POST" && request.path === HTTP_ROUTE_PATHS.models) {
+        if (!isRecord(request.body)) {
+          return toJsonResponse(400, {
+            ok: false,
+            error: "Model update payload must be a JSON object.",
+          });
+        }
+
+        if (!bindings.updateModel) {
+          return toJsonResponse(503, {
+            ok: false,
+            error: "Model update is not available for this runtime.",
+          });
+        }
+
+        return toJsonResponse(200, await bindings.updateModel(request.body));
       }
 
       return null;

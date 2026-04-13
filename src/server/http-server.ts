@@ -54,6 +54,7 @@ import { loadConfig } from "../config/load-config.js";
 import { updateConfig as updateProjectConfig } from "../config/save-config.js";
 import { mapBdIssueToReady } from "../tracker/beads-client.js";
 import { writeStopRequest, type RuntimeStopRequest } from "../cli/runtime-state.js";
+import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
 
 export const HTTP_SERVER_INITIAL_STATE: ServerLifecycleState = "stopped";
 
@@ -548,6 +549,51 @@ export function createHttpServerController(
         suppressed: summary.suppressions.map((s) => ({ ...s })),
         evaluatedAt: new Date().toISOString(),
       } satisfies ScopeStatusResponse;
+    },
+    listAvailableModels: async () => {
+      const config = loadConfig(projectRoot);
+      const providers = getProviders();
+      const models: Array<{ provider: string; id: string; name: string }> = [];
+
+      for (const provider of providers) {
+        try {
+          const providerModels = getModels(provider as KnownProvider);
+          for (const model of providerModels) {
+            models.push({
+              provider,
+              id: model.id,
+              name: model.name ?? model.id,
+            });
+          }
+        } catch {
+          // Skip providers that can't be queried (e.g., missing API keys)
+        }
+      }
+
+      return {
+        providers,
+        models,
+        currentModel: config.models.oracle,
+      };
+    },
+    updateModel: async (payload) => {
+      const { provider, modelId } = payload;
+      if (typeof provider !== "string" || typeof modelId !== "string") {
+        return { ok: false, message: "Missing provider or modelId in payload." };
+      }
+
+      try {
+        const config = loadConfig(projectRoot);
+        const modelRef = `pi:${modelId}`;
+        config.models.oracle = modelRef;
+        config.models.titan = modelRef;
+        config.models.sentinel = modelRef;
+        updateProjectConfig(projectRoot, config);
+        return { ok: true, message: `Model updated to ${modelRef} for oracle, titan, sentinel.` };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { ok: false, message: `Failed to update model: ${message}` };
+      }
     },
   });
 
