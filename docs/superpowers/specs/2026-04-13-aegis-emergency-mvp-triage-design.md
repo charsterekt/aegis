@@ -11,7 +11,8 @@ Purpose: Define the emergency recovery contract for rewriting Aegis into a worki
 - Phase C complete on 2026-04-13.
 - Phase D complete on 2026-04-14.
 - Phase E complete on 2026-04-14.
-- Phases F and G remain open.
+- Phase F complete on 2026-04-14.
+- Phase G remains open.
 
 ## Scope and source of truth
 
@@ -102,9 +103,9 @@ The daemon is the main runtime surface:
 - `aegis stop`
 
 The daemon normally runs in auto-processing posture.
-Manual control and debugging come from explicit phase commands now, with caste and merge commands returning in later phases.
+Manual control and debugging come from explicit phase, caste, and merge commands.
 
-As of completed Phase D work, the live operator commands are:
+As of completed Phase F work on 2026-04-14, the live operator commands are:
 - `aegis init`
 - `aegis start`
 - `aegis status`
@@ -113,6 +114,11 @@ As of completed Phase D work, the live operator commands are:
 - `aegis dispatch`
 - `aegis monitor`
 - `aegis reap`
+- `aegis scout <issue-id>`
+- `aegis implement <issue-id>`
+- `aegis review <issue-id>`
+- `aegis process <issue-id>`
+- `aegis merge next`
 
 ## Truth planes
 
@@ -144,6 +150,10 @@ The rewrite should preserve these top-level module boundaries:
 - `tracker`
 
 Internals may be rewritten aggressively, but the code should still be understandable at a glance and split along clear responsibilities.
+
+Naming rule:
+- shipped code, persisted config, and durable state must use generic product-language names rather than temporary rollout, phase, or branch labels
+- generic names should still be readable and self-documenting; if a name is technically generic but too opaque, future cleanup should favor a clearer generic name instead of preserving accidental shorthand
 
 ## Core operating loop
 
@@ -219,7 +229,7 @@ Emergency MVP rule:
 - do not widen the runtime contract beyond stripped-MVP needs
 
 Phase D note:
-- the rebuilt loop shell may use a tiny deterministic `phase_d_shell` runtime for Phase D proof runs, including freshly initialized repos and mock-run
+- the rebuilt loop shell may use a tiny deterministic `scripted` runtime for proof runs, including freshly initialized repos and mock-run
 - real Pi-backed caste execution still returns in Phase E
 
 ### Tracker
@@ -237,9 +247,9 @@ Phase D note:
 
 ## Command surface
 
-### Current Phase D command surface
+### Current Phase F command surface
 
-Live now:
+Live on 2026-04-14:
 - `aegis init`
 - `aegis start`
 - `aegis status`
@@ -248,18 +258,18 @@ Live now:
 - `aegis dispatch`
 - `aegis monitor`
 - `aegis reap`
+- `aegis scout <issue-id>`
+- `aegis implement <issue-id>`
+- `aegis review <issue-id>`
+- `aegis process <issue-id>`
+- `aegis merge next`
 
-This is the supported operator surface for the rebuilt Phase D loop shell.
+This is the supported operator surface for the rebuilt loop, caste, and merge shell.
 
 ### Future Phase Command Targets
 
 Planned later:
 
-- `aegis merge next`
-- `aegis scout <issue-id>`
-- `aegis implement <issue-id>`
-- `aegis review <issue-id>`
-- `aegis process <issue-id>`
 - `aegis restart <issue-id>`
 - `aegis requeue <issue-id>`
 
@@ -367,7 +377,7 @@ In mock runs they should be treated as ephemeral and cleaned up after successful
 
 The rebuilt loop shell currently guarantees:
 - terminal output for `init`, `start`, `status`, `stop`, `poll`, `dispatch`, `monitor`, and `reap`
-- freshly initialized repos seed `runtime: "phase_d_shell"` so the operator surface stays deterministic during Phase D
+- freshly initialized repos seed `runtime: "scripted"` so the operator surface stays deterministic in proof and mock-run
 - persisted `.aegis/runtime-state.json`
 - persisted `.aegis/dispatch-state.json`
 - persisted structured phase logs under `.aegis/logs/`
@@ -461,7 +471,7 @@ The seeded mock-run flow currently proves the Phase D loop shell:
 - daemon starts and is observable from the terminal
 - direct phase commands reuse the same loop code as the daemon
 - stripped config, runtime-state files, dispatch-state files, and phase logs are written correctly
-- the deterministic `phase_d_shell` runtime can drive ready work to the explicit `phase_d_complete` placeholder stage without requiring browser/UI infrastructure
+- the deterministic `scripted` runtime can drive ready work to the explicit `scouted` stage without requiring browser/UI infrastructure
 
 It does not yet prove real Pi-backed caste execution, artifact enforcement, merge behavior, or Janus behavior.
 
@@ -553,13 +563,27 @@ Current surface on 2026-04-14:
 - `aegis process <issue-id>`
 - strict Oracle/Titan/Sentinel/Janus artifact parsing and atomic persistence under `.aegis/`
 - daemon-routed caste commands serialize through the same runtime-command transport as phase commands
-- `process <issue-id>` stops cleanly at the Phase F merge-queue boundary once an issue reaches `implemented`
+- `process <issue-id>` enqueues an `implemented` issue into `.aegis/merge-queue.json` and advances it to `queued_for_merge`
 
 - rebuild Oracle, Titan, Sentinel, and Janus around strict artifacts
 - implement tool-first with strict JSON fallback
 - make artifacts the phase-completion contract
 
 ### Phase F: Merge queue rebuild
+
+Status:
+- complete on 2026-04-14
+
+Current surface on 2026-04-14:
+- `aegis merge next`
+- schema-backed `.aegis/merge-queue.json` queue truth with atomic persistence
+- daemon-routed merge commands serialize through the same runtime-command transport as phase and caste commands
+- daemon auto mode executes one deterministic merge-queue pass after each core loop cycle
+- `T1` merge results advance automatically
+- `T2` merge results requeue automatically until the Janus threshold is reached
+- `T3` merge results escalate to Janus and either requeue safely or fail closed
+- Sentinel runs strictly after merge success; pre-merge `review` is rejected
+- merge targets resolve from generic repository config via `.aegis/config.json -> git.base_branch`, not temporary emergency branch naming
 
 - keep queue logic deterministic
 - preserve `T1/T2` automatic and `T3 -> Janus`

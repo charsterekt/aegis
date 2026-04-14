@@ -14,6 +14,7 @@ import {
 import { ensureAegisPackageJsonAliases } from "./package-json-aliases.js";
 import { AEGIS_DIRECTORY, RUNTIME_STATE_FILES } from "./schema.js";
 import { emptyDispatchState } from "../core/dispatch-state.js";
+import { emptyMergeQueueState } from "../merge/merge-state.js";
 
 export const REQUIRED_PROJECT_DIRECTORIES = [
   AEGIS_DIRECTORY,
@@ -170,7 +171,7 @@ export function initProject(root = process.cwd()): InitProjectResult {
   if (
     seedFile(
       resolveProjectRelativePath(plan.repoRoot, ".aegis/merge-queue.json"),
-      "{}\n",
+      formatJsonFile(emptyMergeQueueState()),
     )
   ) {
     createdFiles.push(

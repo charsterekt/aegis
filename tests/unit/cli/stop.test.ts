@@ -34,7 +34,7 @@ describe("stopAegis persistent-failure behavior", () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
     const stopModule = await import("../../../src/cli/stop.js");
 
-    const stopPromise = stopModule.stopAegis("C:/fake", "manual", 0);
+    const stopPromise = stopModule.stopAegis("fake", "manual", 0);
     const rejection = expect(stopPromise).rejects.toThrow(/still running|failed to stop/i);
     await vi.runAllTimersAsync();
 

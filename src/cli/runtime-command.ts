@@ -6,6 +6,7 @@ import type { LoopPhase, LoopPhaseResult } from "../core/loop-runner.js";
 
 const COMMAND_DIRECTORY = ".aegis/runtime-commands";
 export type RuntimeCasteAction = "scout" | "implement" | "review" | "process";
+export type RuntimeMergeAction = "next";
 
 export interface PhaseRuntimeCommandRequest {
   request_id: string;
@@ -24,15 +25,24 @@ export interface CasteRuntimeCommandRequest {
   requested_at: string;
 }
 
+export interface MergeRuntimeCommandRequest {
+  request_id: string;
+  command_kind: "merge";
+  action: RuntimeMergeAction;
+  target_pid: number;
+  requested_at: string;
+}
+
 export type RuntimeCommandRequest =
   | PhaseRuntimeCommandRequest
-  | CasteRuntimeCommandRequest;
+  | CasteRuntimeCommandRequest
+  | MergeRuntimeCommandRequest;
 
 export interface RuntimeCommandResponse {
   request_id: string;
-  command_kind: "phase" | "caste";
+  command_kind: "phase" | "caste" | "merge";
   phase?: LoopPhase;
-  action?: RuntimeCasteAction;
+  action?: RuntimeCasteAction | RuntimeMergeAction;
   issue_id?: string;
   completed_at: string;
   result?: unknown;
@@ -195,4 +205,42 @@ export async function requestCasteCommandFromDaemon(
   clearRuntimeCommandResponse(root, request.request_id);
   clearRuntimeCommandRequest(root, request.request_id);
   throw new Error(`Timed out waiting for daemon response to ${action}`);
+}
+
+export async function requestMergeCommandFromDaemon(
+  root: string,
+  action: RuntimeMergeAction,
+  targetPid: number,
+  timeoutMs = 10_000,
+): Promise<unknown> {
+  const request: RuntimeCommandRequest = {
+    request_id: randomUUID(),
+    command_kind: "merge",
+    action,
+    target_pid: targetPid,
+    requested_at: new Date().toISOString(),
+  };
+
+  writeRuntimeCommandRequest(root, request);
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const response = readRuntimeCommandResponse(root, request.request_id);
+    if (response?.request_id === request.request_id) {
+      clearRuntimeCommandResponse(root, request.request_id);
+      clearRuntimeCommandRequest(root, request.request_id);
+      if (response.error) {
+        throw new Error(response.error);
+      }
+      return response.result;
+    }
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 50);
+    });
+  }
+
+  clearRuntimeCommandResponse(root, request.request_id);
+  clearRuntimeCommandRequest(root, request.request_id);
+  throw new Error(`Timed out waiting for daemon response to merge ${action}`);
 }

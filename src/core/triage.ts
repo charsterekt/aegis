@@ -6,7 +6,7 @@ export type TriageSkipReason =
   | "capacity"
   | "cooldown"
   | "in_progress"
-  | "phase_e_required";
+  | "already_progressed";
 
 export interface DispatchDecision {
   issueId: string;
@@ -82,10 +82,10 @@ export function triageReadyWork(input: TriageInput): TriageResult {
     }
 
     if (record && needsFuturePhase(record)) {
-      skipped.push({
-        issueId: issue.id,
-        reason: "phase_e_required",
-      });
+        skipped.push({
+          issueId: issue.id,
+          reason: "already_progressed",
+        });
       continue;
     }
 

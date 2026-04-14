@@ -18,7 +18,7 @@ describe("runDirectPhaseCommand", () => {
     const runLocal = vi.fn(async () => ({ phase: "poll", source: "local" }));
     const routeToDaemon = vi.fn();
 
-    const result = await runDirectPhaseCommand("C:/repo", "poll", {
+    const result = await runDirectPhaseCommand("repo", "poll", {
       readRuntimeState: () => null,
       isProcessRunning: () => false,
       runLocal,
@@ -26,7 +26,7 @@ describe("runDirectPhaseCommand", () => {
     });
 
     expect(result).toEqual({ phase: "poll", source: "local" });
-    expect(runLocal).toHaveBeenCalledWith("C:/repo", "poll");
+    expect(runLocal).toHaveBeenCalledWith("repo", "poll");
     expect(routeToDaemon).not.toHaveBeenCalled();
   });
 
@@ -34,7 +34,7 @@ describe("runDirectPhaseCommand", () => {
     const runLocal = vi.fn();
     const routeToDaemon = vi.fn(async () => ({ phase: "dispatch", source: "daemon" }));
 
-    const result = await runDirectPhaseCommand("C:/repo", "dispatch", {
+    const result = await runDirectPhaseCommand("repo", "dispatch", {
       readRuntimeState: () => createRuntimeState(),
       isProcessRunning: () => true,
       runLocal,
@@ -43,6 +43,6 @@ describe("runDirectPhaseCommand", () => {
 
     expect(result).toEqual({ phase: "dispatch", source: "daemon" });
     expect(runLocal).not.toHaveBeenCalled();
-    expect(routeToDaemon).toHaveBeenCalledWith("C:/repo", "dispatch", 4242);
+    expect(routeToDaemon).toHaveBeenCalledWith("repo", "dispatch", 4242);
   });
 });

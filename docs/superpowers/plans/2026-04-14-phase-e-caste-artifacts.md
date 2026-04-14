@@ -5,7 +5,7 @@ Execution notes: implemented in caveman mode, finished the direct caste command/
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Restore the Phase E caste surface on top of `feat/emergency-mvp-rewrite` by adding strict Oracle/Titan/Sentinel/Janus artifact contracts, direct caste commands, deterministic proof/runtime seams, and artifact-driven completion rules without pulling merge-queue execution forward.
+**Goal:** Restore the Phase E caste surface on top of the emergency MVP recovery branch by adding strict Oracle/Titan/Sentinel/Janus artifact contracts, direct caste commands, deterministic proof/runtime seams, and artifact-driven completion rules without pulling merge-queue execution forward.
 
 **Architecture:** Keep the Phase D loop shell intact for `poll -> triage -> dispatch -> monitor -> reap`, and add a separate Phase E direct-command spine for `scout`, `implement`, `review`, and `process`. Put prompt/parser/artifact logic under `src/castes/*`, orchestration runners under `src/core/run-*.ts`, runtime-specific session execution under `src/runtime/*`, tracker/labor helpers under their own boundaries, and keep Phase F merge mechanics deferred except for the minimal Janus artifact shape and direct-command plumbing needed now.
 
@@ -53,7 +53,7 @@ describe("BeadsTrackerClient", () => {
       }),
     });
 
-    const issue = await tracker.getIssue("aegis-123", "C:/repo");
+    const issue = await tracker.getIssue("aegis-123", "repo");
 
     expect(issue).toMatchObject({
       id: "aegis-123",
@@ -69,8 +69,8 @@ describe("planLaborCreation", () => {
   it("creates a deterministic labor branch and worktree path per issue", () => {
     const plan = planLaborCreation({
       issueId: "aegis-123",
-      projectRoot: "C:/repo",
-      baseBranch: "feat/emergency-mvp-rewrite",
+      projectRoot: "repo",
+      baseBranch: "main",
     });
 
     expect(buildLaborBranchName("aegis-123")).toBe("aegis/aegis-123");
@@ -81,7 +81,7 @@ describe("planLaborCreation", () => {
       "-b",
       "aegis/aegis-123",
       plan.laborPath,
-      "feat/emergency-mvp-rewrite",
+      "main",
     ]);
   });
 });
@@ -164,14 +164,14 @@ it("rejects titan artifacts with unexpected keys", () => {
 });
 
 it("writes artifacts through tmp -> rename", () => {
-  const ref = persistArtifact("C:/repo", {
+  const ref = persistArtifact("repo", {
     family: "oracle",
     issueId: "aegis-123",
     artifact: { ready: true, decompose: false, files_affected: [] },
   });
 
   expect(ref).toBe(".aegis/oracle/aegis-123.json");
-  expect(existsSync("C:/repo/.aegis/oracle/aegis-123.json")).toBe(true);
+  expect(existsSync("repo/.aegis/oracle/aegis-123.json")).toBe(true);
 });
 ```
 
@@ -232,7 +232,7 @@ git commit -m "feat: add phase e caste prompt and parser contracts"
 
 ```ts
 it("routes implement through the daemon when runtime ownership is active", async () => {
-  const result = await runDirectCasteCommand("C:/repo", "implement", "aegis-123", {
+  const result = await runDirectCasteCommand("repo", "implement", "aegis-123", {
     readRuntimeState: () => createRuntimeState(),
     isProcessRunning: () => true,
     runLocal: vi.fn(),

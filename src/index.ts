@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { formatStatusSnapshot, getAegisStatus } from "./cli/status.js";
 import { formatCasteCommandResult, runDirectCasteCommand } from "./cli/caste-command.js";
+import { formatMergeCommandResult, runDirectMergeCommand } from "./cli/merge-command.js";
 import { formatPhaseCommandResult, runDirectPhaseCommand } from "./cli/phase-command.js";
 import { parseStartOverrides, startAegis } from "./cli/start.js";
 import { stopAegis } from "./cli/stop.js";
@@ -99,6 +100,12 @@ export async function runCli(
 
     const result = await runDirectCasteCommand(root, command, issueId);
     console.log(formatCasteCommandResult(result));
+    return manifest;
+  }
+
+  if (command === "merge" && argv[1] === "next") {
+    const result = await runDirectMergeCommand(root, "next");
+    console.log(formatMergeCommandResult(result));
     return manifest;
   }
 

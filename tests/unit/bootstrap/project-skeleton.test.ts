@@ -219,9 +219,9 @@ describe("S00 project skeleton contract", () => {
     vi.resetModules();
 
     const mockedPaths = {
-      repoRoot: "C:/tmp/repo",
-      srcRoot: "C:/tmp/repo/src",
-      distRoot: "C:/tmp/repo/dist",
+      repoRoot: "tmp/repo",
+      srcRoot: "tmp/repo/src",
+      distRoot: "tmp/repo/dist",
     };
     const resolveProjectPaths = vi.fn(() => mockedPaths);
 
@@ -238,11 +238,11 @@ describe("S00 project skeleton contract", () => {
 
     const entrypointModule = await import("../../../src/index.js");
 
-    expect(entrypointModule.buildBootstrapManifest("C:/tmp/repo")).toEqual({
+    expect(entrypointModule.buildBootstrapManifest("tmp/repo")).toEqual({
       appName: "aegis",
       paths: mockedPaths,
     });
-    expect(resolveProjectPaths).toHaveBeenCalledWith("C:/tmp/repo");
+    expect(resolveProjectPaths).toHaveBeenCalledWith("tmp/repo");
   });
 
   it("uses a single node Vitest project with no Olympus lane", async () => {
@@ -282,7 +282,9 @@ describe("S00 project skeleton contract", () => {
     expect(existsSync(path.join(repoRoot, "src", "castes", "sentinel", "sentinel-parser.ts"))).toBe(true);
     expect(existsSync(path.join(repoRoot, "src", "castes", "janus", "janus-parser.ts"))).toBe(true);
     expect(existsSync(path.join(repoRoot, "src", "labor", "create-labor.ts"))).toBe(true);
-    expect(existsSync(path.join(repoRoot, "src", "merge"))).toBe(false);
+    expect(existsSync(path.join(repoRoot, "src", "merge", "merge-state.ts"))).toBe(true);
+    expect(existsSync(path.join(repoRoot, "src", "merge", "tier-policy.ts"))).toBe(true);
+    expect(existsSync(path.join(repoRoot, "src", "merge", "merge-next.ts"))).toBe(true);
     expect(existsSync(path.join(repoRoot, "src", "cli", "parse-command.ts"))).toBe(false);
     expect(existsSync(path.join(repoRoot, "src", "shared", "issue-id.ts"))).toBe(false);
     expect(existsSync(path.join(repoRoot, "src", "shared", "steer-command-reference.ts"))).toBe(false);

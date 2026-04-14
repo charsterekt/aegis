@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Restore the stripped Phase D loop shell on top of `feat/emergency-mvp-rewrite` by adding deterministic `poll -> triage -> dispatch -> monitor -> reap` modules, exposing `aegis poll|dispatch|monitor|reap`, and making `aegis start` reuse the same phase runner without pulling Phase E/F caste, artifact, or merge work forward.
+**Goal:** Restore the stripped Phase D loop shell on top of the emergency MVP recovery branch by adding deterministic `poll -> triage -> dispatch -> monitor -> reap` modules, exposing `aegis poll|dispatch|monitor|reap`, and making `aegis start` reuse the same phase runner without pulling Phase E/F caste, artifact, or merge work forward.
 
-**Architecture:** Add minimal `tracker`, `runtime`, and loop-phase modules under the preserved boundaries. Keep real tracker access on `bd`, seed freshly initialized repos with the deterministic `phase_d_shell` runtime during Phase D, and keep Pi-backed caste execution explicitly deferred to Phase E so the loop shell stays usable without pretending later phases already landed.
+**Architecture:** Add minimal `tracker`, `runtime`, and loop-phase modules under the preserved boundaries. Keep real tracker access on `bd`, seed freshly initialized repos with the deterministic `scripted` runtime during Phase D, and keep Pi-backed caste execution explicitly deferred to Phase E so the loop shell stays usable without pretending later phases already landed.
 
 **Tech Stack:** TypeScript, Node.js, Vitest, `bd`
 
@@ -203,7 +203,7 @@ describe("reapFinishedWork", () => {
       },
     });
 
-    expect(result.state.records["ISSUE-1"]?.stage).toBe("phase_d_complete");
+    expect(result.state.records["ISSUE-1"]?.stage).toBe("scouted");
   });
 });
 ```
@@ -238,7 +238,7 @@ export async function monitorActiveWork(input: MonitorInput): Promise<MonitorRes
 
 export async function reapFinishedWork(input: ReapInput): Promise<ReapResult> {
   // Clear running ownership, increment failures on runtime errors, and map
-  // successful Phase D shell runs to `phase_d_complete`.
+  // successful deterministic scout runs advance to `scouted`.
 }
 ```
 
@@ -276,10 +276,10 @@ import { runCli } from "../../../src/index.js";
 
 describe("runCli phase commands", () => {
   it("supports poll, dispatch, monitor, and reap", async () => {
-    await expect(runCli("C:/repo", ["poll"])).resolves.toBeDefined();
-    await expect(runCli("C:/repo", ["dispatch"])).resolves.toBeDefined();
-    await expect(runCli("C:/repo", ["monitor"])).resolves.toBeDefined();
-    await expect(runCli("C:/repo", ["reap"])).resolves.toBeDefined();
+    await expect(runCli("repo", ["poll"])).resolves.toBeDefined();
+    await expect(runCli("repo", ["dispatch"])).resolves.toBeDefined();
+    await expect(runCli("repo", ["monitor"])).resolves.toBeDefined();
+    await expect(runCli("repo", ["reap"])).resolves.toBeDefined();
   });
 });
 ```
@@ -330,7 +330,7 @@ git commit -m "feat: wire phase d loop commands through the daemon shell"
 expect(agentsGuide).toContain("Current Phase D Available Commands");
 expect(agentsGuide).toContain("aegis poll");
 expect(designDoc).toContain("### Current Phase D command surface");
-expect(buildMockRunConfig().runtime).toBe("phase_d_shell");
+expect(buildMockRunConfig().runtime).toBe("scripted");
 ```
 
 - [ ] **Step 2: Run the targeted tests to verify the docs and proof surface still describe Phase A-C only**
@@ -344,7 +344,7 @@ Expected: FAIL on missing Phase D command-surface assertions.
 export function buildMockRunConfig() {
   return {
     ...DEFAULT_AEGIS_CONFIG,
-    runtime: "phase_d_shell",
+    runtime: "scripted",
   };
 }
 ```

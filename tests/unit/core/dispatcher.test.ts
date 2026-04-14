@@ -58,7 +58,7 @@ describe("dispatchReadyWork", () => {
       ],
       runtime: createRuntime(),
       sessionProvenanceId: "daemon-1",
-      root: "C:/repo",
+      root: "repo",
       now: "2026-04-14T12:00:00.000Z",
     });
 
@@ -98,7 +98,7 @@ describe("dispatchReadyWork", () => {
         },
       },
       sessionProvenanceId: "daemon-1",
-      root: "C:/repo",
+      root: "repo",
       now: "2026-04-14T12:00:00.000Z",
     });
 
@@ -138,7 +138,7 @@ describe("dispatchReadyWork", () => {
         },
       },
       sessionProvenanceId: "daemon-1",
-      root: "C:/repo",
+      root: "repo",
       now: "2026-04-14T12:00:00.000Z",
     });
 

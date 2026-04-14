@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -187,7 +187,7 @@ describe("runCasteCommand", () => {
           toolsUsed: ["write_file"],
         }),
       }),
-      resolveBaseBranch: () => "feat/emergency-mvp-rewrite",
+      resolveBaseBranch: () => "main",
       ensureLabor: vi.fn(),
     });
 
@@ -270,6 +270,23 @@ describe("runCasteCommand", () => {
 
   it("stops process at the Phase F queue boundary after implementation", async () => {
     const root = createTempRoot();
+    mkdirSync(path.join(root, ".aegis", "titan"), { recursive: true });
+    writeFileSync(
+      path.join(root, ".aegis", "titan", "aegis-123.json"),
+      `${JSON.stringify({
+        outcome: "success",
+        summary: "done",
+        files_changed: ["src/index.ts"],
+        tests_and_checks_run: ["npm test"],
+        known_risks: [],
+        follow_up_work: [],
+        learnings_written_to_mnemosyne: [],
+        labor_path: ".aegis/labors/labor-aegis-123",
+        candidate_branch: "aegis/aegis-123",
+        base_branch: "main",
+      }, null, 2)}\n`,
+      "utf8",
+    );
     saveDispatchState(root, {
       schemaVersion: 1,
       records: {
@@ -278,6 +295,7 @@ describe("runCasteCommand", () => {
           stage: "implemented",
           runningAgent: null,
           oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-123.json"),
+          titanHandoffRef: path.join(".aegis", "titan", "aegis-123.json"),
           sentinelVerdictRef: null,
           fileScope: null,
           failureCount: 0,
@@ -303,8 +321,53 @@ describe("runCasteCommand", () => {
     expect(result).toEqual({
       action: "process",
       issueId: "aegis-123",
-      stage: "implemented",
-      deferredPhase: "phase_f_merge_queue",
+      stage: "queued_for_merge",
+      queueItemId: "queue-aegis-123",
+      nextAction: "merge_next",
     });
+  });
+
+  it("rejects review before merge so Sentinel stays strictly post-merge", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-999": {
+          issueId: "aegis-999",
+          stage: "implemented",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-999.json"),
+          titanHandoffRef: path.join(".aegis", "titan", "aegis-999.json"),
+          sentinelVerdictRef: null,
+          fileScope: null,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    await expect(runCasteCommand({
+      root,
+      action: "review",
+      issueId: "aegis-999",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-999")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        sentinel: () => ({
+          output: JSON.stringify({
+            verdict: "pass",
+            reviewSummary: "should not run yet",
+            issuesFound: [],
+            followUpIssueIds: [],
+            riskAreas: [],
+          }),
+        }),
+      }),
+    })).rejects.toThrow("Review requires a merged issue.");
   });
 });

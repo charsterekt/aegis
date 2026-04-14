@@ -54,7 +54,7 @@ afterEach(() => {
 });
 
 describe("reapFinishedWork", () => {
-  it("moves successful phase-d oracle runs to the explicit phase_d_complete stage", async () => {
+  it("moves successful oracle runs to the generic scouted stage", async () => {
     const runtime: AgentRuntime = {
       async launch() {
         throw new Error("unused");
@@ -75,7 +75,7 @@ describe("reapFinishedWork", () => {
       dispatchState: createRunningState(),
       runtime,
       issueIds: ["ISSUE-1"],
-      root: "C:/repo",
+      root: "repo",
       now: "2026-04-14T12:00:00.000Z",
     });
 
@@ -83,7 +83,7 @@ describe("reapFinishedWork", () => {
     expect(result.failed).toEqual([]);
     expect(result.state.records["ISSUE-1"]).toMatchObject({
       issueId: "ISSUE-1",
-      stage: "phase_d_complete",
+      stage: "scouted",
       runningAgent: null,
     });
   });
@@ -110,7 +110,7 @@ describe("reapFinishedWork", () => {
       dispatchState: createRunningState(),
       runtime,
       issueIds: ["ISSUE-1"],
-      root: "C:/repo",
+      root: "repo",
       now: "2026-04-14T12:00:00.000Z",
     });
 

@@ -10,6 +10,7 @@ import {
   LABOR_KEYS,
   MODEL_KEYS,
   THRESHOLD_KEYS,
+  GIT_KEYS,
 } from "./schema.js";
 import type { AegisConfig } from "./schema.js";
 
@@ -157,6 +158,14 @@ export function validatePartialConfig(config: unknown): asserts config is Partia
       assertString(config.labor.base_path, "labor.base_path");
     }
   }
+
+  if ("git" in config) {
+    assertRecord(config.git, "git");
+    validateKnownKeys(config.git, "git", GIT_KEYS);
+    if ("base_branch" in config.git) {
+      assertString(config.git.base_branch, "git.base_branch");
+    }
+  }
 }
 
 export function mergeConfig(config: PartialConfig): AegisConfig {
@@ -182,6 +191,10 @@ export function mergeConfig(config: PartialConfig): AegisConfig {
     labor: {
       ...DEFAULT_AEGIS_CONFIG.labor,
       ...config.labor,
+    },
+    git: {
+      ...DEFAULT_AEGIS_CONFIG.git,
+      ...config.git,
     },
   };
 }
@@ -215,6 +228,10 @@ export function applyConfigPatch(
     labor: {
       ...current.labor,
       ...partial.labor,
+    },
+    git: {
+      ...current.git,
+      ...partial.git,
     },
   };
 }

@@ -8,7 +8,7 @@ describe("parseJanusResolutionArtifact", () => {
       parseJanusResolutionArtifact(JSON.stringify({
         originatingIssueId: "aegis-123",
         queueItemId: "queue-1",
-        preservedLaborPath: "C:/repo/.aegis/labors/labor-aegis-123",
+        preservedLaborPath: ".aegis/labors/labor-aegis-123",
         conflictSummary: "resolved",
         resolutionStrategy: "rebase then keep target changes",
         filesTouched: ["src/index.ts"],

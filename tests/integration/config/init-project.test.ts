@@ -93,8 +93,13 @@ describe("S01 init project contract seed", () => {
         loadDispatchState(tempRepo),
       ).toEqual(emptyDispatchState());
       expect(
-        readFileSync(path.join(tempRepo, ".aegis", "merge-queue.json"), "utf8"),
-      ).toBe("{}\n");
+        JSON.parse(
+          readFileSync(path.join(tempRepo, ".aegis", "merge-queue.json"), "utf8"),
+        ),
+      ).toEqual({
+        schemaVersion: 1,
+        items: [],
+      });
       expect(existsSync(path.join(tempRepo, ".gitignore"))).toBe(true);
     } finally {
       rmSync(tempRepo, { recursive: true, force: true });

@@ -19,8 +19,8 @@ describe("ScriptedCasteRuntime", () => {
     const result = await runtime.run({
       caste: "oracle",
       issueId: "aegis-123",
-      root: "C:/repo",
-      workingDirectory: "C:/repo",
+      root: "repo",
+      workingDirectory: "repo",
       prompt: "prompt",
     });
 
