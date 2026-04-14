@@ -1,7 +1,7 @@
 import type { AegisConfig } from "./schema.js";
 
 export const DEFAULT_AEGIS_CONFIG: AegisConfig = {
-  runtime: "pi",
+  runtime: "phase_d_shell",
   models: {
     oracle: "pi:default",
     titan: "pi:default",
