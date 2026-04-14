@@ -37,6 +37,9 @@ Current Phase D surface:
 - `.aegis/dispatch-state.json`
 - structured phase logs under `.aegis/logs/`
 
+Current Phase D runtime default:
+- freshly initialized repos seed `runtime: "phase_d_shell"` so the stripped loop stays deterministic until real Pi-backed execution returns in Phase E
+
 Out of scope unless explicitly reopened:
 - Olympus UI
 - SSE/dashboard transport

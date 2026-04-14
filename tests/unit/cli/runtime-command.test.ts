@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  requestPhaseCommandFromDaemon,
   readRuntimeCommandRequests,
   writeRuntimeCommandRequest,
 } from "../../../src/cli/runtime-command.js";
@@ -51,5 +52,15 @@ describe("runtime command files", () => {
       "request-1",
       "request-2",
     ]);
+  });
+
+  it("cleans up a timed-out request artifact instead of leaving it live on disk", async () => {
+    const root = createTempRoot();
+
+    await expect(
+      requestPhaseCommandFromDaemon(root, "dispatch", 1, 10),
+    ).rejects.toThrow("Timed out waiting for daemon response to dispatch");
+
+    expect(readRuntimeCommandRequests(root)).toEqual([]);
   });
 });

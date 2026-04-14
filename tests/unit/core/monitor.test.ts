@@ -1,4 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import path from "node:path";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { monitorActiveWork } from "../../../src/core/monitor.js";
 import type { DispatchState } from "../../../src/core/dispatch-state.js";
@@ -27,6 +36,20 @@ const runningState: DispatchState = {
     },
   },
 };
+
+const tempRoots: string[] = [];
+
+function createTempRoot() {
+  const root = mkdtempSync(path.join(tmpdir(), "aegis-monitor-"));
+  tempRoots.push(root);
+  return root;
+}
+
+afterEach(() => {
+  for (const root of tempRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 describe("monitorActiveWork", () => {
   it("flags long-running work for kill once the kill threshold expires", async () => {
@@ -99,5 +122,53 @@ describe("monitorActiveWork", () => {
 
     expect(result.killList).toEqual([]);
     expect(result.readyToReap).toEqual(["ISSUE-1"]);
+  });
+
+  it("writes a monitor phase log even when there are no active sessions", async () => {
+    const root = createTempRoot();
+    const runtime: AgentRuntime = {
+      async launch() {
+        throw new Error("unused");
+      },
+      async readSession() {
+        return null;
+      },
+      async terminate() {
+        return null;
+      },
+    };
+
+    const result = await monitorActiveWork({
+      dispatchState: {
+        schemaVersion: 1,
+        records: {},
+      },
+      runtime,
+      thresholds: {
+        stuck_warning_seconds: 90,
+        stuck_kill_seconds: 150,
+      },
+      root,
+      now: "2026-04-14T12:00:00.000Z",
+    });
+
+    expect(result).toEqual({
+      readyToReap: [],
+      killList: [],
+      warnings: [],
+    });
+
+    const logPath = path.join(
+      root,
+      ".aegis",
+      "logs",
+      "phases",
+      "2026-04-14T12-00-00.000Z-monitor-_all.json",
+    );
+    expect(existsSync(logPath)).toBe(true);
+    expect(JSON.parse(readFileSync(logPath, "utf8"))).toMatchObject({
+      phase: "monitor",
+      issueId: "_all",
+    });
   });
 });

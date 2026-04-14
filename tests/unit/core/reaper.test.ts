@@ -1,4 +1,13 @@
-import { describe, expect, it } from "vitest";
+import path from "node:path";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import { reapFinishedWork } from "../../../src/core/reaper.js";
 import type { DispatchState } from "../../../src/core/dispatch-state.js";
@@ -29,6 +38,20 @@ function createRunningState(): DispatchState {
     },
   };
 }
+
+const tempRoots: string[] = [];
+
+function createTempRoot() {
+  const root = mkdtempSync(path.join(tmpdir(), "aegis-reaper-"));
+  tempRoots.push(root);
+  return root;
+}
+
+afterEach(() => {
+  for (const root of tempRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 describe("reapFinishedWork", () => {
   it("moves successful phase-d oracle runs to the explicit phase_d_complete stage", async () => {
@@ -99,6 +122,56 @@ describe("reapFinishedWork", () => {
       runningAgent: null,
       failureCount: 1,
       consecutiveFailures: 1,
+    });
+    expect(result.state.records["ISSUE-1"]?.cooldownUntil).toBeTruthy();
+  });
+
+  it("writes a reap phase log even when nothing is ready to reap", async () => {
+    const root = createTempRoot();
+
+    const runtime: AgentRuntime = {
+      async launch() {
+        throw new Error("unused");
+      },
+      async readSession() {
+        return null;
+      },
+      async terminate() {
+        return null;
+      },
+    };
+
+    const result = await reapFinishedWork({
+      dispatchState: {
+        schemaVersion: 1,
+        records: {},
+      },
+      runtime,
+      issueIds: [],
+      root,
+      now: "2026-04-14T12:00:00.000Z",
+    });
+
+    expect(result).toEqual({
+      state: {
+        schemaVersion: 1,
+        records: {},
+      },
+      completed: [],
+      failed: [],
+    });
+
+    const logPath = path.join(
+      root,
+      ".aegis",
+      "logs",
+      "phases",
+      "2026-04-14T12-00-00.000Z-reap-_all.json",
+    );
+    expect(existsSync(logPath)).toBe(true);
+    expect(JSON.parse(readFileSync(logPath, "utf8"))).toMatchObject({
+      phase: "reap",
+      issueId: "_all",
     });
   });
 });

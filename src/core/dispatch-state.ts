@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { resolveFailureWindowStartMs } from "./failure-policy.js";
 
 export type AgentCaste = "oracle" | "titan" | "sentinel" | "janus";
 
@@ -110,6 +111,7 @@ export function reconcileDispatchState(
   liveSessionId: string,
 ): DispatchState {
   const reconciledRecords: Record<string, DispatchRecord> = {};
+  const timestamp = new Date().toISOString();
 
   for (const [issueId, record] of Object.entries(state.records)) {
     if (
@@ -118,10 +120,16 @@ export function reconcileDispatchState(
     ) {
       reconciledRecords[issueId] = {
         ...record,
+        stage: "failed",
         runningAgent: null,
         fileScope: null,
+        failureCount: record.failureCount + 1,
+        consecutiveFailures: record.consecutiveFailures + 1,
+        failureWindowStartMs: record.failureWindowStartMs
+          ?? resolveFailureWindowStartMs(timestamp),
+        cooldownUntil: null,
         sessionProvenanceId: liveSessionId,
-        updatedAt: new Date().toISOString(),
+        updatedAt: timestamp,
       };
     } else {
       reconciledRecords[issueId] = { ...record };

@@ -1,5 +1,5 @@
 {
-  "runtime": "pi",
+  "runtime": "phase_d_shell",
   "models": {
     "oracle": "pi:default",
     "titan": "pi:default",

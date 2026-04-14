@@ -133,5 +133,7 @@ export async function requestPhaseCommandFromDaemon(
     });
   }
 
+  clearRuntimeCommandResponse(root, request.request_id);
+  clearRuntimeCommandRequest(root, request.request_id);
   throw new Error(`Timed out waiting for daemon response to ${phase}`);
 }

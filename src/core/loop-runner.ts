@@ -232,10 +232,6 @@ export async function runDaemonCycle(
     dispatchResult.dispatchState,
   );
 
-  if (monitorResult.readyToReap.length === 0) {
-    return;
-  }
-
   await runReapPipeline(
     root,
     runtime,

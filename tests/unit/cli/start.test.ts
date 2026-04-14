@@ -1,5 +1,12 @@
 import path from "node:path";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -173,11 +180,98 @@ describe("startAegis daemon loop", () => {
     const recovered = JSON.parse(
       readFileSync(path.join(root, ".aegis", "dispatch-state.json"), "utf8"),
     ) as {
-      records: Record<string, { runningAgent: unknown; sessionProvenanceId: string }>;
+      records: Record<string, {
+        stage: string;
+        runningAgent: unknown;
+        sessionProvenanceId: string;
+      }>;
     };
 
+    expect(recovered.records["ISSUE-1"]?.stage).toBe("failed");
     expect(recovered.records["ISSUE-1"]?.runningAgent).toBeNull();
     expect(recovered.records["ISSUE-1"]?.sessionProvenanceId).toBe(String(process.pid));
+
+    await result.runtime.stop();
+  });
+
+  it("serializes daemon-routed phase commands with an in-flight daemon cycle", async () => {
+    vi.useFakeTimers();
+    const root = createTempRoot();
+    initProject(root);
+
+    const configPath = path.join(root, ".aegis", "config.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8")) as {
+      runtime: string;
+      thresholds: { poll_interval_seconds: number };
+    };
+
+    writeFileSync(
+      configPath,
+      `${JSON.stringify({
+        ...config,
+        runtime: "phase_d_shell",
+        thresholds: {
+          ...config.thresholds,
+          poll_interval_seconds: 1,
+        },
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    let releaseCycle: (() => void) | undefined;
+    let cycleCount = 0;
+    const runDaemonCycle = vi.fn(() => {
+      cycleCount += 1;
+      if (cycleCount === 1) {
+        return Promise.resolve();
+      }
+
+      return new Promise<void>((resolve) => {
+        releaseCycle = () => {
+          resolve();
+        };
+      });
+    });
+
+    const startModule = await import("../../../src/cli/start.js");
+    const result = await startModule.startAegis(root, {}, {
+      verifyTracker: () => undefined,
+      verifyGitRepo: () => undefined,
+      probeBeadsCli: () => ({
+        ok: true,
+        detail: "Beads CLI is available.",
+      }),
+      registerSignalHandlers: false,
+      runDaemonCycle,
+    });
+
+    await vi.advanceTimersByTimeAsync(1_100);
+    expect(runDaemonCycle).toHaveBeenCalledTimes(2);
+
+    const commandDirectory = path.join(root, ".aegis", "runtime-commands");
+    mkdirSync(commandDirectory, { recursive: true });
+    writeFileSync(
+      path.join(commandDirectory, "request-1.request.json"),
+      `${JSON.stringify({
+        request_id: "request-1",
+        phase: "monitor",
+        target_pid: process.pid,
+        requested_at: "2026-04-14T12:00:00.000Z",
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(
+      existsSync(path.join(commandDirectory, "request-1.response.json")),
+    ).toBe(false);
+
+    releaseCycle?.();
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(
+      existsSync(path.join(commandDirectory, "request-1.response.json")),
+    ).toBe(true);
 
     await result.runtime.stop();
   });

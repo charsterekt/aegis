@@ -2,8 +2,10 @@ import type { DispatchState } from "./dispatch-state.js";
 import type { DispatchDecision } from "./triage.js";
 import type { AgentRuntime } from "../runtime/agent-runtime.js";
 import { writePhaseLog } from "./phase-log.js";
-
-const PHASE_D_FAILURE_COOLDOWN_MS = 30_000;
+import {
+  calculateFailureCooldown,
+  resolveFailureWindowStartMs,
+} from "./failure-policy.js";
 
 export interface DispatchInput {
   dispatchState: DispatchState;
@@ -22,9 +24,7 @@ export interface DispatchResult {
 
 export async function dispatchReadyWork(input: DispatchInput): Promise<DispatchResult> {
   const timestamp = input.now ?? new Date().toISOString();
-  const cooldownUntil = new Date(
-    Date.parse(timestamp) + PHASE_D_FAILURE_COOLDOWN_MS,
-  ).toISOString();
+  const cooldownUntil = calculateFailureCooldown(timestamp);
   const records = { ...input.dispatchState.records };
   const dispatched: string[] = [];
   const failed: string[] = [];
@@ -78,7 +78,8 @@ export async function dispatchReadyWork(input: DispatchInput): Promise<DispatchR
         fileScope: previous?.fileScope ?? null,
         failureCount: (previous?.failureCount ?? 0) + 1,
         consecutiveFailures: (previous?.consecutiveFailures ?? 0) + 1,
-        failureWindowStartMs: previous?.failureWindowStartMs ?? Date.now(),
+        failureWindowStartMs: previous?.failureWindowStartMs
+          ?? resolveFailureWindowStartMs(timestamp),
         cooldownUntil,
         sessionProvenanceId: input.sessionProvenanceId,
         updatedAt: timestamp,
@@ -92,8 +93,25 @@ export async function dispatchReadyWork(input: DispatchInput): Promise<DispatchR
         outcome: "failed",
         detail,
       });
+
+      // Phase D has no durable failure classifier yet, so a launch error
+      // fails closed for the remainder of the current dispatch pass.
+      break;
     }
   }
+
+  writePhaseLog(input.root, {
+    timestamp,
+    phase: "dispatch",
+    issueId: "_all",
+    action: "dispatch_ready_work",
+    outcome: failed.length > 0 ? "partial" : "ok",
+    detail: JSON.stringify({
+      dispatched,
+      failed,
+      attempted: input.decisions.map((decision) => decision.issueId),
+    }),
+  });
 
   return {
     state: {

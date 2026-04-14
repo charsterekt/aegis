@@ -1,6 +1,10 @@
 import type { DispatchRecord, DispatchState } from "./dispatch-state.js";
 import type { AgentRuntime } from "../runtime/agent-runtime.js";
 import { writePhaseLog } from "./phase-log.js";
+import {
+  calculateFailureCooldown,
+  resolveFailureWindowStartMs,
+} from "./failure-policy.js";
 
 export interface ReapInput {
   dispatchState: DispatchState;
@@ -34,8 +38,9 @@ function toFailedRecord(record: DispatchRecord, timestamp: string): DispatchReco
     runningAgent: null,
     failureCount: record.failureCount + 1,
     consecutiveFailures: record.consecutiveFailures + 1,
-    failureWindowStartMs: record.failureWindowStartMs ?? Date.now(),
-    cooldownUntil: null,
+    failureWindowStartMs: record.failureWindowStartMs
+      ?? resolveFailureWindowStartMs(timestamp),
+    cooldownUntil: calculateFailureCooldown(timestamp),
     updatedAt: timestamp,
   };
 }
@@ -86,6 +91,19 @@ export async function reapFinishedWork(input: ReapInput): Promise<ReapResult> {
       detail: snapshot.error,
     });
   }
+
+  writePhaseLog(input.root, {
+    timestamp,
+    phase: "reap",
+    issueId: "_all",
+    action: "reap_finished_work",
+    outcome: "ok",
+    detail: JSON.stringify({
+      issueIds: input.issueIds,
+      completed,
+      failed,
+    }),
+  });
 
   return {
     state: {

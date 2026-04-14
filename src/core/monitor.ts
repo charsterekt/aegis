@@ -87,6 +87,19 @@ export async function monitorActiveWork(input: MonitorInput): Promise<MonitorRes
     }
   }
 
+  writePhaseLog(input.root, {
+    timestamp,
+    phase: "monitor",
+    issueId: "_all",
+    action: "monitor_active_work",
+    outcome: "ok",
+    detail: JSON.stringify({
+      warnings,
+      killList,
+      readyToReap,
+    }),
+  });
+
   return {
     readyToReap,
     killList,

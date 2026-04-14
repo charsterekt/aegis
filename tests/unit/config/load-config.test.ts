@@ -90,6 +90,7 @@ describe("S01 config contract seed", () => {
 
     expect(loadConfig(projectRoot)).toEqual({
       ...DEFAULT_AEGIS_CONFIG,
+      runtime: "pi",
       models: {
         ...DEFAULT_AEGIS_CONFIG.models,
         oracle: "pi:oracle-fast",

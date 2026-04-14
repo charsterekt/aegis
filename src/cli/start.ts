@@ -619,10 +619,11 @@ export async function startAegis(
 
   const handlePhaseCommandRequest = async () => {
     const request = readRuntimeCommandRequests(repoRoot)[0];
-    if (!request || request.target_pid !== process.pid || cycleInFlight) {
+    if (!request || request.target_pid !== process.pid || cycleInFlight || hasStopped) {
       return;
     }
 
+    cycleInFlight = true;
     try {
       const result = await runLoopPhase(repoRoot, request.phase, {
         sessionProvenanceId: String(process.pid),
@@ -645,6 +646,8 @@ export async function startAegis(
       };
       writeRuntimeCommandResponse(repoRoot, response);
       clearRuntimeCommandRequest(repoRoot, request.request_id);
+    } finally {
+      cycleInFlight = false;
     }
   };
 

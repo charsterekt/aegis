@@ -217,7 +217,7 @@ Emergency MVP rule:
 - do not widen the runtime contract beyond stripped-MVP needs
 
 Phase D note:
-- the rebuilt loop shell may still use a tiny deterministic `phase_d_shell` runtime for seam tests and mock-run proof
+- the rebuilt loop shell may use a tiny deterministic `phase_d_shell` runtime for Phase D proof runs, including freshly initialized repos and mock-run
 - real Pi-backed caste execution still returns in Phase E
 
 ### Tracker
@@ -365,6 +365,7 @@ In mock runs they should be treated as ephemeral and cleaned up after successful
 
 The rebuilt loop shell currently guarantees:
 - terminal output for `init`, `start`, `status`, `stop`, `poll`, `dispatch`, `monitor`, and `reap`
+- freshly initialized repos seed `runtime: "phase_d_shell"` so the operator surface stays deterministic during Phase D
 - persisted `.aegis/runtime-state.json`
 - persisted `.aegis/dispatch-state.json`
 - persisted structured phase logs under `.aegis/logs/`

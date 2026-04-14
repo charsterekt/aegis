@@ -4,7 +4,7 @@
 
 **Goal:** Restore the stripped Phase D loop shell on top of `feat/emergency-mvp-rewrite` by adding deterministic `poll -> triage -> dispatch -> monitor -> reap` modules, exposing `aegis poll|dispatch|monitor|reap`, and making `aegis start` reuse the same phase runner without pulling Phase E/F caste, artifact, or merge work forward.
 
-**Architecture:** Add minimal `tracker`, `runtime`, and loop-phase modules under the preserved boundaries. Keep real tracker access on `bd`, keep the default `pi` runtime config intact, and use a tiny explicit `phase_d_shell` runtime only for deterministic seam tests and mock-run proof so Phase D can exercise the loop mechanics without pretending Phase E caste execution already exists.
+**Architecture:** Add minimal `tracker`, `runtime`, and loop-phase modules under the preserved boundaries. Keep real tracker access on `bd`, seed freshly initialized repos with the deterministic `phase_d_shell` runtime during Phase D, and keep Pi-backed caste execution explicitly deferred to Phase E so the loop shell stays usable without pretending later phases already landed.
 
 **Tech Stack:** TypeScript, Node.js, Vitest, `bd`
 
