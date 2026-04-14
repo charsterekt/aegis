@@ -13,16 +13,12 @@ describe("stopAegis persistent-failure behavior", () => {
     const runtimeState = {
       schema_version: 1 as const,
       pid: 4242,
-      host: "127.0.0.1",
-      port: 3847,
       server_state: "running" as const,
-      mode: "conversational" as const,
+      mode: "auto" as const,
       started_at: "2026-04-05T00:00:00.000Z",
-      browser_opened: false,
     };
     const readRuntimeState = vi.fn(() => runtimeState);
     const isProcessRunning = vi.fn(() => true);
-    const isAegisOwned = vi.fn(async () => false);
     const writeStopRequest = vi.fn();
     const clearStopRequest = vi.fn();
     const writeRuntimeState = vi.fn();
@@ -30,7 +26,6 @@ describe("stopAegis persistent-failure behavior", () => {
     vi.doMock("../../../src/cli/runtime-state.js", () => ({
       readRuntimeState,
       isProcessRunning,
-      isAegisOwned,
       writeStopRequest,
       clearStopRequest,
       writeRuntimeState,

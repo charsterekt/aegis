@@ -1,10 +1,18 @@
-import { execFile, spawn, spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { accessSync, constants, existsSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { execFile, spawnSync } from "node:child_process";
+import { accessSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
+
 import { loadConfig } from "../config/load-config.js";
+import { runDaemonCycle as defaultRunDaemonCycle, runLoopPhase } from "../core/loop-runner.js";
+import {
+  loadDispatchState,
+  reconcileDispatchState,
+  saveDispatchState,
+} from "../core/dispatch-state.js";
 import {
   AEGIS_DIRECTORY,
   MODEL_KEYS,
@@ -12,27 +20,12 @@ import {
   type AegisConfig,
 } from "../config/schema.js";
 import {
-  executeProjectDirectCommand,
-} from "../core/direct-command-runner.js";
-import { runAutoLoopTick } from "../core/auto-loop-runner.js";
-import {
-  loadDispatchState,
-  reconcileDispatchState,
-  saveDispatchState,
-} from "../core/dispatch-state.js";
-import { createLoopPhaseLog } from "../events/dashboard-events.js";
-import { createInMemoryLiveEventBus } from "../events/event-bus.js";
-import {
-  createHttpServerController,
-  type HttpServerBindings,
-} from "../server/http-server.js";
-import type { OrchestrationMode } from "../server/routes.js";
-import {
-  PiRuntime,
-  validatePiModelReference,
-} from "../runtime/pi-runtime.js";
-import { BeadsCliClient } from "../tracker/beads-client.js";
-import { parseCommand } from "./parse-command.js";
+  clearRuntimeCommandArtifacts,
+  clearRuntimeCommandRequest,
+  readRuntimeCommandRequests,
+  writeRuntimeCommandResponse,
+  type RuntimeCommandResponse,
+} from "./runtime-command.js";
 import {
   formatStartupPreflight,
   runStartupPreflight,
@@ -42,7 +35,6 @@ import {
 import { STOP_COMMAND_REASONS } from "./stop.js";
 import {
   clearStopRequest,
-  isAegisOwned,
   isProcessRunning,
   readStopRequest,
   readRuntimeState,
@@ -52,35 +44,27 @@ import {
 
 export const START_COMMAND_NAME = "start";
 
-export const START_OVERRIDE_FLAGS = [
-  "--port",
-  "--no-browser",
-] as const;
+export const START_OVERRIDE_FLAGS = [] as const;
 
 export const CANONICAL_LAUNCH_SEQUENCE = [
   "load_config",
   "verify_tracker",
   "verify_git_repo",
   "recover_dispatch_state",
-  "start_http_server",
-  "open_browser",
-  "enter_conversational_idle",
+  "start_terminal_daemon",
+  "enter_auto_mode",
   "print_runtime_summary",
 ] as const;
 
 export const CANONICAL_SHUTDOWN_SEQUENCE = [
-  "stop_polling",
+  "stop_dispatch_loop",
   "stop_active_agents",
-  "wait_for_graceful_completion",
-  "abort_stragglers",
-  "reconcile_tracker_work",
-  "cleanup_labors",
   "persist_runtime_state",
-  "print_budget_summary",
+  "print_shutdown_summary",
 ] as const;
 
-const DEFAULT_HOST = "127.0.0.1";
-const DEFAULT_MODE: OrchestrationMode = "conversational";
+const STOP_REQUEST_POLL_MS = 150;
+const HEARTBEAT_LOG_INTERVAL_MS = 5_000;
 
 let registeredSignalHandlers:
   | {
@@ -93,10 +77,7 @@ export type StartOverrideFlag = (typeof START_OVERRIDE_FLAGS)[number];
 export type LaunchSequenceStep = (typeof CANONICAL_LAUNCH_SEQUENCE)[number];
 export type ShutdownSequenceStep = (typeof CANONICAL_SHUTDOWN_SEQUENCE)[number];
 
-export interface StartCommandOverrides {
-  port?: number;
-  noBrowser?: boolean;
-}
+export interface StartCommandOverrides {}
 
 export interface StartCommandContract {
   command: typeof START_COMMAND_NAME;
@@ -111,10 +92,7 @@ export interface StartRuntimeController {
 
 export interface StartResult {
   root: string;
-  host: string;
-  port: number;
-  url: string;
-  openedBrowser: boolean;
+  mode: "auto";
   runtime: StartRuntimeController;
 }
 
@@ -122,9 +100,8 @@ export interface StartCommandOptions {
   verifyTracker?: (root: string) => void;
   verifyGitRepo?: () => void;
   probeBeadsCli?: () => StartupPreflightProbeResult;
-  openBrowser?: (url: string) => boolean;
   registerSignalHandlers?: boolean;
-  httpServerBindings?: HttpServerBindings;
+  runDaemonCycle?: (root: string) => Promise<void>;
 }
 
 export interface TrackerProbeResult {
@@ -136,55 +113,15 @@ export interface TrackerProbeResult {
 
 export type TrackerProbe = (root: string) => TrackerProbeResult;
 
-function spawnDetachedBrowser(command: string, args: string[], options: {
-  windowsHide?: boolean;
-}) {
-  const browser = spawn(command, args, {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: options.windowsHide,
-  });
-
-  browser.once("error", () => {});
-  browser.unref();
-
-  return typeof browser.pid === "number";
-}
-
-function parseNumberFlag(flagName: string, value: string | undefined) {
-  if (!value) {
-    throw new Error(`Missing value for ${flagName}`);
+function parseStartOverrides(argv: readonly string[]): StartCommandOverrides {
+  if (argv.length > 0) {
+    throw new Error(`Unknown start override flag: ${argv[0]}`);
   }
 
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65_535) {
-    throw new Error(`Expected ${flagName} to be an integer between 1 and 65535`);
-  }
-
-  return parsed;
+  return {};
 }
 
-export function parseStartOverrides(argv: readonly string[]): StartCommandOverrides {
-  const overrides: StartCommandOverrides = {};
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const token = argv[index];
-
-    switch (token) {
-      case "--port":
-        overrides.port = parseNumberFlag("--port", argv[index + 1]);
-        index += 1;
-        break;
-      case "--no-browser":
-        overrides.noBrowser = true;
-        break;
-      default:
-        throw new Error(`Unknown start override flag: ${token}`);
-    }
-  }
-
-  return overrides;
-}
+export { parseStartOverrides };
 
 function runTrackerProbe(root: string): TrackerProbeResult {
   const trackerProbe = spawnSync("bd", ["ready", "--json"], {
@@ -309,51 +246,19 @@ function verifyGitRepository(root: string) {
   }
 }
 
-function execBdInRepository(root: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      "bd",
-      args,
-      {
-        cwd: root,
-        encoding: "utf8",
-        maxBuffer: 10 * 1024 * 1024,
-        windowsHide: true,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          const detail = stderr?.trim() ? ` — ${stderr.trim()}` : "";
-          reject(new Error(`bd ${args[0]} failed: ${error.message}${detail}`));
-          return;
-        }
-        resolve(stdout);
-      },
-    );
-  });
-}
-
-function createRuntimeForConfig(runtime: string) {
-  if (runtime === "pi") {
-    return new PiRuntime();
-  }
-
-  throw new Error(`Unsupported runtime adapter: ${runtime}`);
-}
-
 function verifyRuntimeAdapter(config: AegisConfig): StartupPreflightProbeResult {
-  try {
-    createRuntimeForConfig(config.runtime);
-    return {
-      ok: true,
-      detail: `Runtime adapter "${config.runtime}" is supported.`,
-    };
-  } catch (error) {
+  if (config.runtime !== "pi" && config.runtime !== "phase_d_shell") {
     return {
       ok: false,
-      detail: toErrorMessage(error),
+      detail: `Unsupported runtime adapter: ${config.runtime}`,
       fix: "set `.aegis/config.json` `runtime` to a supported adapter before starting Aegis",
     };
   }
+
+  return {
+    ok: true,
+    detail: `Runtime adapter "${config.runtime}" is supported.`,
+  };
 }
 
 function resolvePiSettingsPaths(repoRoot: string) {
@@ -414,10 +319,33 @@ function verifyConfiguredModels(config: AegisConfig): StartupPreflightProbeResul
 
   try {
     for (const modelKey of MODEL_KEYS) {
-      try {
-        validatePiModelReference(config.models[modelKey]);
-      } catch (error) {
-        throw new Error(`Invalid configured model for "${modelKey}": ${toErrorMessage(error)}`);
+      const reference = config.models[modelKey];
+      const separatorIndex = reference.indexOf(":");
+
+      if (separatorIndex === -1) {
+        throw new Error(
+          `Invalid configured model for "${modelKey}": expected "<provider>:<model-id>"`,
+        );
+      }
+
+      const provider = reference.slice(0, separatorIndex);
+      const modelId = reference.slice(separatorIndex + 1);
+      const resolvedProvider = provider === "pi" ? "google" : provider;
+
+      if (!getProviders().includes(resolvedProvider as KnownProvider)) {
+        throw new Error(`Invalid configured model for "${modelKey}": unknown provider "${provider}"`);
+      }
+
+      if (modelId === "default") {
+        continue;
+      }
+
+      const model = getModels(resolvedProvider as KnownProvider).find(
+        (candidate) => candidate.id === modelId,
+      );
+
+      if (!model) {
+        throw new Error(`Invalid configured model for "${modelKey}": unknown model "${reference}"`);
       }
     }
 
@@ -475,21 +403,13 @@ function verifyRuntimeStatePaths(repoRoot: string): StartupPreflightProbeResult 
 
 function toRunningRuntimeState(
   pid: number,
-  host: string,
-  port: number,
-  browserOpened: boolean,
-  token: string,
 ): RuntimeStateRecord {
   return {
     schema_version: 1,
     pid,
-    server_token: token,
-    host,
-    port,
     server_state: "running",
-    mode: DEFAULT_MODE,
+    mode: "auto",
     started_at: new Date().toISOString(),
-    browser_opened: browserOpened,
   };
 }
 
@@ -535,22 +455,16 @@ function registerLifecycleSignalHandlers(stop: () => Promise<void>) {
   registeredSignalHandlers = { sigint, sigterm };
 }
 
-export function openBrowserUrl(url: string) {
-  try {
-    if (process.platform === "win32") {
-      return spawnDetachedBrowser("cmd", ["/c", "start", "", url], {
-        windowsHide: true,
-      });
-    }
+function ensureLogsDirectory(repoRoot: string) {
+  const logsDirectory = path.join(repoRoot, ".aegis", "logs");
+  mkdirSync(logsDirectory, { recursive: true });
+  return logsDirectory;
+}
 
-    if (process.platform === "darwin") {
-      return spawnDetachedBrowser("open", [url], {});
-    }
-
-    return spawnDetachedBrowser("xdg-open", [url], {});
-  } catch {
-    return false;
-  }
+function appendDaemonLog(repoRoot: string, message: string) {
+  const logsDirectory = ensureLogsDirectory(repoRoot);
+  const logPath = path.join(logsDirectory, "daemon.log");
+  appendFileSync(logPath, `${new Date().toISOString()} ${message}\n`, "utf8");
 }
 
 export function createStartCommandContract(): StartCommandContract {
@@ -579,7 +493,8 @@ export async function startAegis(
     verifyGitRepository(repoRoot);
   });
   const beadsCliProbe = options.probeBeadsCli ?? probeBeadsCli;
-  const openBrowser = options.openBrowser ?? openBrowserUrl;
+
+  void overrides;
   let config: AegisConfig | undefined;
 
   const preflight = runStartupPreflight(repoRoot, {
@@ -615,145 +530,41 @@ export async function startAegis(
     throw new StartupPreflightBlockedError(preflight);
   }
 
-  const resolvedConfig = config ?? loadConfig(repoRoot);
-
-  const recoveredState = readRuntimeState(repoRoot);
-  const isAlreadyRunning = recoveredState
-    && recoveredState.server_state !== "stopped"
-    && (recoveredState.server_token
-      ? await isAegisOwned(recoveredState)
-      : isProcessRunning(recoveredState.pid));
+  const recoveredRuntime = readRuntimeState(repoRoot);
+  const isAlreadyRunning = recoveredRuntime
+    && recoveredRuntime.server_state !== "stopped"
+    && isProcessRunning(recoveredRuntime.pid);
 
   if (isAlreadyRunning) {
     throw new Error(
-      `Aegis is already running on pid ${recoveredState.pid} (port ${recoveredState.port}).`,
+      `Aegis is already running on pid ${recoveredRuntime.pid}.`,
     );
   }
 
-  const dispatchSessionId = randomUUID();
-  const recoveredDispatchState = reconcileDispatchState(
-    loadDispatchState(repoRoot),
-    dispatchSessionId,
-  );
-  saveDispatchState(repoRoot, recoveredDispatchState);
-
-  const token = randomUUID();
-  const runtimeAdapter = createRuntimeForConfig(resolvedConfig.runtime);
-  const tracker = new BeadsCliClient((args) => execBdInRepository(repoRoot, args));
-  const liveEventBus = options.httpServerBindings?.eventIngress ?? createInMemoryLiveEventBus();
-  let runningState: RuntimeStateRecord | null = null;
-  let autoLoopTimer: NodeJS.Timeout | null = null;
-  let autoLoopTickInFlight = false;
-  let autoLoopTickPromise: Promise<void> | null = null;
-
-  const stopAutoLoop = () => {
-    if (!autoLoopTimer) {
-      return;
-    }
-
-    clearInterval(autoLoopTimer);
-    autoLoopTimer = null;
-  };
-
-  const runScheduledAutoLoopTick = () => {
-    if (autoLoopTickInFlight) {
-      return autoLoopTickPromise ?? Promise.resolve();
-    }
-
-    autoLoopTickInFlight = true;
-    autoLoopTickPromise = (async () => {
-      try {
-        await runAutoLoopTick({
-          enabledAt: new Date().toISOString(),
-          projectRoot: repoRoot,
-          config: resolvedConfig,
-          tracker,
-          runtime: runtimeAdapter,
-          eventPublisher: liveEventBus,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        liveEventBus.publish(
-          createLoopPhaseLog("reap", `auto loop tick failed: ${message}`),
-        );
-      } finally {
-        autoLoopTickInFlight = false;
-        autoLoopTickPromise = null;
-      }
-    })();
-
-    return autoLoopTickPromise;
-  };
-
-  const startAutoLoop = () => {
-    if (autoLoopTimer) {
-      return;
-    }
-
-    const intervalMs = Math.max(1, resolvedConfig.thresholds.poll_interval_seconds) * 1000;
-    autoLoopTimer = setInterval(() => {
-      void runScheduledAutoLoopTick();
-    }, intervalMs);
-    autoLoopTimer.unref();
-    void runScheduledAutoLoopTick();
-  };
-
-  const syncAutoLoopToMode = (state: { mode: OrchestrationMode; paused: boolean }) => {
-    if (state.mode === "auto" && !state.paused) {
-      startAutoLoop();
-      return;
-    }
-
-    stopAutoLoop();
-  };
-
-  const httpServerBindings: HttpServerBindings = {
-    ...options.httpServerBindings,
-    eventIngress: liveEventBus,
-    executeCommand: options.httpServerBindings?.executeCommand ?? (async (commandText) => (
-      executeProjectDirectCommand(parseCommand(commandText), {
-        projectRoot: repoRoot,
-        config: resolvedConfig,
-        tracker,
-        runtime: runtimeAdapter,
-        eventPublisher: liveEventBus,
-      })
-    )),
-    onOperatingModeStateChange: (state) => {
-      if (runningState) {
-        runningState = {
-          ...runningState,
-          mode: state.mode,
-        };
-        writeRuntimeState(runningState, repoRoot);
-      }
-
-      syncAutoLoopToMode(state);
-      options.httpServerBindings?.onOperatingModeStateChange?.(state);
-    },
-  };
-  const controller = createHttpServerController(httpServerBindings);
-  const requestedPort = overrides.port ?? resolvedConfig.olympus.port;
-  const server = await controller.start({
-    root: repoRoot,
-    host: DEFAULT_HOST,
-    port: requestedPort,
-    serverToken: token,
-  });
-  const shouldOpenBrowser = !overrides.noBrowser && resolvedConfig.olympus.open_browser;
-  const openedBrowser = shouldOpenBrowser ? openBrowser(server.url) : false;
-  runningState = toRunningRuntimeState(
-    process.pid,
-    server.host,
-    server.port,
-    openedBrowser,
-    token,
-  );
+  const resolvedConfig = config ?? loadConfig(repoRoot);
+  let runningState = toRunningRuntimeState(process.pid);
   let hasStopped = false;
   let stopRequestPoller: NodeJS.Timeout | null = null;
+  let heartbeatTimer: NodeJS.Timeout | null = null;
+  let daemonLoopTimer: NodeJS.Timeout | null = null;
+  let cycleInFlight = false;
+  const runDaemonCycle = options.runDaemonCycle ?? ((candidateRoot: string) =>
+    defaultRunDaemonCycle(candidateRoot, {
+      sessionProvenanceId: String(process.pid),
+    }));
 
   clearStopRequest(repoRoot);
+  clearRuntimeCommandArtifacts(repoRoot);
+  const reconciledDispatchState = reconcileDispatchState(
+    loadDispatchState(repoRoot),
+    String(process.pid),
+  );
+  saveDispatchState(repoRoot, reconciledDispatchState);
   writeRuntimeState(runningState, repoRoot);
+  appendDaemonLog(
+    repoRoot,
+    `[daemon][start] runtime=${resolvedConfig.runtime} poll_interval_seconds=${resolvedConfig.thresholds.poll_interval_seconds}`,
+  );
 
   const runtime: StartRuntimeController = {
     async stop(reason = "shutdown") {
@@ -766,11 +577,19 @@ export async function startAegis(
         clearInterval(stopRequestPoller);
         stopRequestPoller = null;
       }
-      stopAutoLoop();
-      await autoLoopTickPromise;
-      await controller.stop();
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+      if (daemonLoopTimer) {
+        clearInterval(daemonLoopTimer);
+        daemonLoopTimer = null;
+      }
       clearStopRequest(repoRoot);
-      writeRuntimeState(toStoppedRuntimeState(runningState!, reason), repoRoot);
+      clearRuntimeCommandArtifacts(repoRoot);
+      runningState = toStoppedRuntimeState(runningState, reason);
+      writeRuntimeState(runningState, repoRoot);
+      appendDaemonLog(repoRoot, `[daemon][stop] reason=${reason}`);
     },
   };
 
@@ -795,11 +614,70 @@ export async function startAegis(
         console.error(`Failed to stop Aegis gracefully: ${details}`);
         process.exit(1);
       },
-    );
+      );
   };
 
-  stopRequestPoller = setInterval(handleExternalStopRequest, 150);
-  stopRequestPoller.unref();
+  const handlePhaseCommandRequest = async () => {
+    const request = readRuntimeCommandRequests(repoRoot)[0];
+    if (!request || request.target_pid !== process.pid || cycleInFlight || hasStopped) {
+      return;
+    }
+
+    cycleInFlight = true;
+    try {
+      const result = await runLoopPhase(repoRoot, request.phase, {
+        sessionProvenanceId: String(process.pid),
+      });
+      const response: RuntimeCommandResponse = {
+        request_id: request.request_id,
+        phase: request.phase,
+        completed_at: new Date().toISOString(),
+        result,
+      };
+      writeRuntimeCommandResponse(repoRoot, response);
+      clearRuntimeCommandRequest(repoRoot, request.request_id);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      const response: RuntimeCommandResponse = {
+        request_id: request.request_id,
+        phase: request.phase,
+        completed_at: new Date().toISOString(),
+        error: detail,
+      };
+      writeRuntimeCommandResponse(repoRoot, response);
+      clearRuntimeCommandRequest(repoRoot, request.request_id);
+    } finally {
+      cycleInFlight = false;
+    }
+  };
+
+  stopRequestPoller = setInterval(() => {
+    handleExternalStopRequest();
+    void handlePhaseCommandRequest();
+  }, STOP_REQUEST_POLL_MS);
+  heartbeatTimer = setInterval(() => {
+    appendDaemonLog(repoRoot, "[daemon][heartbeat] mode=auto");
+  }, HEARTBEAT_LOG_INTERVAL_MS);
+  const runCycleSafely = async () => {
+    if (cycleInFlight || hasStopped) {
+      return;
+    }
+
+    cycleInFlight = true;
+    try {
+      await runDaemonCycle(repoRoot);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      appendDaemonLog(repoRoot, `[daemon][cycle_error] ${detail}`);
+    } finally {
+      cycleInFlight = false;
+    }
+  };
+
+  await runCycleSafely();
+  daemonLoopTimer = setInterval(() => {
+    void runCycleSafely();
+  }, resolvedConfig.thresholds.poll_interval_seconds * 1_000);
 
   if (options.registerSignalHandlers !== false) {
     registerLifecycleSignalHandlers(() => runtime.stop("signal"));
@@ -807,10 +685,30 @@ export async function startAegis(
 
   return {
     root: repoRoot,
-    host: server.host,
-    port: server.port,
-    url: server.url,
-    openedBrowser,
+    mode: "auto",
     runtime,
   };
+}
+
+export function execBdInRepository(root: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "bd",
+      args,
+      {
+        cwd: root,
+        encoding: "utf8",
+        maxBuffer: 10 * 1024 * 1024,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          const detail = stderr?.trim() ? ` - ${stderr.trim()}` : "";
+          reject(new Error(`bd ${args[0]} failed: ${error.message}${detail}`));
+          return;
+        }
+        resolve(stdout);
+      },
+    );
+  });
 }

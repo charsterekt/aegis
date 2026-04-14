@@ -1,165 +1,116 @@
-/**
- * S10 — Reaper module.
- *
- * The Reaper finalizes the outcome of a finished session.
- * SPECv2 §9.7.
- *
- * This module defines the interface, result types, and outcome verification
- * contracts.  Implementation (actual stage transitions, labors cleanup,
- * merge-queue writes) belongs in the lanes.
- */
+import type { DispatchRecord, DispatchState } from "./dispatch-state.js";
+import type { AgentRuntime } from "../runtime/agent-runtime.js";
+import { writePhaseLog } from "./phase-log.js";
+import {
+  calculateFailureCooldown,
+  resolveFailureWindowStartMs,
+} from "./failure-policy.js";
 
-import type { DispatchRecord } from "./dispatch-state.js";
-import { DispatchStage } from "./stage-transition.js";
-import type { AgentEvent } from "../runtime/agent-events.js";
-import type { MonitorEvent } from "./monitor.js";
-
-export type SessionEndReason =
-  | "completed"
-  | "aborted"
-  | "error"
-  | "budget_exceeded"
-  | "stuck_killed"
-  | "monitor_aborted";
-
-export type ReaperOutcome =
-  | "success"
-  | "artifact_failure"
-  | "monitor_termination"
-  | "crash";
-
-export interface ArtifactVerification {
-  issueId: string;
-  caste: string;
-  passed: boolean;
-  checks: ArtifactCheck[];
+export interface ReapInput {
+  dispatchState: DispatchState;
+  runtime: AgentRuntime;
+  issueIds: string[];
+  root: string;
+  now?: string;
 }
 
-export interface ArtifactCheck {
-  name: string;
-  passed: boolean;
-  detail: string;
+export interface ReapResult {
+  state: DispatchState;
+  completed: string[];
+  failed: string[];
 }
 
-export interface LaborCleanupInstruction {
-  issueId: string;
-  removeWorktree: boolean;
-  deleteBranch: boolean;
-  reason: string;
+function toCompletedRecord(record: DispatchRecord, timestamp: string): DispatchRecord {
+  return {
+    ...record,
+    stage: "phase_d_complete",
+    runningAgent: null,
+    consecutiveFailures: 0,
+    cooldownUntil: null,
+    updatedAt: timestamp,
+  };
 }
 
-export interface MergeCandidateInstruction {
-  issueId: string;
-  candidateBranch: string;
-  targetBranch: string;
-  handoffArtifactPath: string;
+function toFailedRecord(record: DispatchRecord, timestamp: string): DispatchRecord {
+  return {
+    ...record,
+    stage: "failed",
+    runningAgent: null,
+    failureCount: record.failureCount + 1,
+    consecutiveFailures: record.consecutiveFailures + 1,
+    failureWindowStartMs: record.failureWindowStartMs
+      ?? resolveFailureWindowStartMs(timestamp),
+    cooldownUntil: calculateFailureCooldown(timestamp),
+    updatedAt: timestamp,
+  };
 }
 
-export interface ReaperResult {
-  issueId: string;
-  outcome: ReaperOutcome;
-  endReason: SessionEndReason;
-  nextStage: DispatchStage;
-  artifacts: ArtifactVerification;
-  incrementFailure: boolean;
-  resetFailures: boolean;
-  laborCleanup: LaborCleanupInstruction | null;
-  mergeCandidate: MergeCandidateInstruction | null;
-  monitorEvents: MonitorEvent[];
-  /**
-   * SPECv2 §9.7: "reclaim concurrency capacity".
-   * True when the Reaper has freed a concurrency slot by finishing a session
-   * (the runningAgent is cleared via updateRecordFromReaper).  The caller
-   * should use this signal to update its own concurrency tracking.
-   */
-  reclaimConcurrency: boolean;
-}
+export async function reapFinishedWork(input: ReapInput): Promise<ReapResult> {
+  const timestamp = input.now ?? new Date().toISOString();
+  const records = { ...input.dispatchState.records };
+  const completed: string[] = [];
+  const failed: string[] = [];
 
-export interface Reaper {
-  reap(
-    issueId: string,
-    caste: string,
-    endReason: SessionEndReason,
-    events: AgentEvent[],
-    currentRecord: DispatchRecord,
-  ): ReaperResult;
-  verifyOracleArtifacts(issueId: string, events: AgentEvent[]): ArtifactVerification;
-  verifyTitanArtifacts(issueId: string, events: AgentEvent[]): ArtifactVerification;
-  verifySentinelArtifacts(issueId: string, events: AgentEvent[]): ArtifactVerification;
-  verifyJanusArtifacts(issueId: string, events: AgentEvent[]): ArtifactVerification;
-}
+  for (const issueId of input.issueIds) {
+    const record = records[issueId];
+    if (!record?.runningAgent) {
+      continue;
+    }
 
-// ---------------------------------------------------------------------------
-// Pure helper functions
-// ---------------------------------------------------------------------------
+    const snapshot = await input.runtime.readSession(
+      input.root,
+      record.runningAgent.sessionId,
+    );
+    if (!snapshot || snapshot.status === "running") {
+      continue;
+    }
 
-export function computeNextStage(
-  caste: string,
-  outcome: ReaperOutcome,
-  currentStage: DispatchStage,
-  sentinelVerdict?: "pass" | "fail",
-): DispatchStage {
-  if (outcome !== "success") {
-    return DispatchStage.Failed;
-  }
+    if (snapshot.status === "succeeded") {
+      records[issueId] = toCompletedRecord(record, timestamp);
+      completed.push(issueId);
+      writePhaseLog(input.root, {
+        timestamp,
+        phase: "reap",
+        issueId,
+        action: "finalize_session",
+        outcome: "phase_d_complete",
+        sessionId: snapshot.sessionId,
+      });
+      continue;
+    }
 
-  switch (caste) {
-    case "oracle":
-      return DispatchStage.Scouted;
-    case "titan":
-      return DispatchStage.Implemented;
-    case "sentinel":
-      return sentinelVerdict === "pass"
-        ? DispatchStage.Complete
-        : DispatchStage.Failed;
-    case "janus":
-      // Janus success means the integration conflict was resolved;
-      // return to queued_for_merge for a fresh mechanical pass (SPECv2 §12.6 step 8)
-      return DispatchStage.QueuedForMerge;
-    default:
-      return DispatchStage.Failed;
-  }
-}
-
-export function determineLaborCleanup(
-  caste: string,
-  outcome: ReaperOutcome,
-  issueId: string,
-): LaborCleanupInstruction | null {
-  if (caste === "oracle" || caste === "sentinel") {
-    return null;
-  }
-
-  if (caste === "janus") {
-    // Janus works inside the preserved conflict labor or dedicated integration labor.
-    // Always preserve for diagnostics regardless of outcome (SPECv2 §10.4).
-    return {
+    records[issueId] = toFailedRecord(record, timestamp);
+    failed.push(issueId);
+    writePhaseLog(input.root, {
+      timestamp,
+      phase: "reap",
       issueId,
-      removeWorktree: false,
-      deleteBranch: false,
-      reason: outcome === "success"
-        ? "janus_success_preserve_for_requeue"
-        : "janus_failure_preserve_for_diagnostics",
-    };
+      action: "finalize_session",
+      outcome: "failed",
+      sessionId: snapshot.sessionId,
+      detail: snapshot.error,
+    });
   }
 
-  if (caste === "titan" && outcome === "success") {
-    return {
-      issueId,
-      removeWorktree: false,
-      deleteBranch: false,
-      reason: "titan_success_preserve_for_merge_queue",
-    };
-  }
+  writePhaseLog(input.root, {
+    timestamp,
+    phase: "reap",
+    issueId: "_all",
+    action: "reap_finished_work",
+    outcome: "ok",
+    detail: JSON.stringify({
+      issueIds: input.issueIds,
+      completed,
+      failed,
+    }),
+  });
 
-  if (caste === "titan") {
-    return {
-      issueId,
-      removeWorktree: false,
-      deleteBranch: false,
-      reason: "titan_failure_preserve_for_diagnostics",
-    };
-  }
-
-  return null;
+  return {
+    state: {
+      schemaVersion: input.dispatchState.schemaVersion,
+      records,
+    },
+    completed,
+    failed,
+  };
 }

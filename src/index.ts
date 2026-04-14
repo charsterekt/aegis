@@ -4,11 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { formatStatusSnapshot, getAegisStatus } from "./cli/status.js";
+import { formatPhaseCommandResult, runDirectPhaseCommand } from "./cli/phase-command.js";
 import { parseStartOverrides, startAegis } from "./cli/start.js";
 import { stopAegis } from "./cli/stop.js";
-import { executeLiveDirectCommand } from "./cli/live-command-client.js";
-import { parseCommand } from "./cli/parse-command.js";
-import { createCommandExecutor, type CommandExecutionContext } from "./core/command-executor.js";
 import { initProject } from "./config/init-project.js";
 import { resolveProjectPaths, type ProjectPaths } from "./shared/paths.js";
 
@@ -63,7 +61,7 @@ export async function runCli(
   if (command === "start") {
     const overrides = parseStartOverrides(argv.slice(1));
     const result = await startAegis(root, overrides);
-    console.log(`Aegis started at ${result.url} (pid ${process.pid})`);
+    console.log(`Aegis started in ${result.mode} mode (pid ${process.pid})`);
     return manifest;
   }
 
@@ -73,35 +71,25 @@ export async function runCli(
     return manifest;
   }
 
+  if (
+    command === "poll"
+    || command === "dispatch"
+    || command === "monitor"
+    || command === "reap"
+  ) {
+    const result = await runDirectPhaseCommand(root, command);
+    console.log(formatPhaseCommandResult(result));
+    return manifest;
+  }
+
   if (command === "stop") {
     const result = await stopAegis(root, "manual");
     const forcedSuffix = result.forced ? " (forced)" : "";
     console.log(`Aegis stopped${forcedSuffix}.`);
     return manifest;
   }
-
-  // Try parsing as a direct command
-  const commandText = argv.join(" ");
-  const parsed = parseCommand(commandText);
-  const liveResult = await executeLiveDirectCommand(root, commandText, parsed);
-  const context: CommandExecutionContext = {
-    operatingMode: { mode: "conversational", paused: false },
-    autoLoop: { enabledAt: null },
-    issueId: parsed.kind !== "unsupported" && "issueId" in parsed
-      ? parsed.issueId
-      : null,
-  };
-  const executor = createCommandExecutor(context);
-  const result = liveResult ?? await executor(parsed, context);
-
-  if (result.status === "handled") {
-    console.log(result.message);
-  } else if (result.status === "declined") {
-    console.log(`Command "${parsed.kind}" declined: ${result.message}`);
-  } else {
-    console.error(result.message);
-    process.exitCode = 1;
-  }
+  console.error(`Unsupported command: ${command}`);
+  process.exitCode = 1;
 
   return manifest;
 }

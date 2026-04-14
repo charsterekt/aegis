@@ -2,31 +2,28 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
 
-import type {
-  OrchestrationMode,
-  ServerLifecycleState,
-} from "../server/routes.js";
+export type ServerLifecycleState = "running" | "stopped";
+export type OrchestrationMode = "auto" | "paused";
 
 export const RUNTIME_STATE_FILE = ".aegis/runtime-state.json";
 export const STOP_REQUEST_FILE = ".aegis/runtime-stop-request.json";
+const SERVER_LIFECYCLE_STATES = new Set<ServerLifecycleState>(["running", "stopped"]);
+const ORCHESTRATION_MODES = new Set<OrchestrationMode>(["auto", "paused"]);
 
 export interface RuntimeStateRecord {
   schema_version: 1;
   pid: number;
-  server_token?: string;
-  host: string;
-  port: number;
   server_state: ServerLifecycleState;
   mode: OrchestrationMode;
   started_at: string;
   stopped_at?: string;
   last_stop_reason?: string;
-  browser_opened: boolean;
 }
 
 export interface RuntimeStopRequest {
@@ -45,12 +42,11 @@ function isRuntimeStateRecord(value: unknown): value is RuntimeStateRecord {
   return (
     record.schema_version === 1
     && typeof record.pid === "number"
-    && typeof record.host === "string"
-    && typeof record.port === "number"
-    && typeof record.server_state === "string"
-    && typeof record.mode === "string"
+    && SERVER_LIFECYCLE_STATES.has(record.server_state as ServerLifecycleState)
+    && ORCHESTRATION_MODES.has(record.mode as OrchestrationMode)
     && typeof record.started_at === "string"
-    && typeof record.browser_opened === "boolean"
+    && (record.stopped_at === undefined || typeof record.stopped_at === "string")
+    && (record.last_stop_reason === undefined || typeof record.last_stop_reason === "string")
   );
 }
 
@@ -84,8 +80,10 @@ export function writeRuntimeState(
   root = process.cwd(),
 ) {
   const runtimeStatePath = resolveRuntimeStatePath(root);
+  const temporaryPath = `${runtimeStatePath}.tmp`;
   mkdirSync(path.dirname(runtimeStatePath), { recursive: true });
-  writeFileSync(runtimeStatePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  writeFileSync(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  renameSync(temporaryPath, runtimeStatePath);
 }
 
 export function readStopRequest(root = process.cwd()): RuntimeStopRequest | null {
@@ -115,8 +113,10 @@ export function writeStopRequest(
   request: RuntimeStopRequest,
 ) {
   const stopRequestPath = resolveStopRequestPath(root);
+  const temporaryPath = `${stopRequestPath}.tmp`;
   mkdirSync(path.dirname(stopRequestPath), { recursive: true });
-  writeFileSync(stopRequestPath, `${JSON.stringify(request, null, 2)}\n`, "utf8");
+  writeFileSync(temporaryPath, `${JSON.stringify(request, null, 2)}\n`, "utf8");
+  renameSync(temporaryPath, stopRequestPath);
 }
 
 export function clearStopRequest(root = process.cwd()) {
@@ -124,38 +124,6 @@ export function clearStopRequest(root = process.cwd()) {
 
   if (existsSync(stopRequestPath)) {
     unlinkSync(stopRequestPath);
-  }
-}
-
-export async function isAegisOwned(
-  record: RuntimeStateRecord,
-  timeoutMs = 2_000,
-): Promise<boolean> {
-  if (!isProcessRunning(record.pid)) {
-    return false;
-  }
-
-  if (!record.server_token) {
-    return false;
-  }
-
-  try {
-    const response = await fetch(
-      `http://${record.host}:${record.port}/api/state`,
-      { signal: AbortSignal.timeout(timeoutMs) },
-    );
-
-    if (!response.ok) {
-      return false;
-    }
-
-    const body = (await response.json()) as {
-      server_token?: string;
-    };
-
-    return body.server_token === record.server_token;
-  } catch {
-    return false;
   }
 }
 

@@ -1,186 +1,119 @@
-/**
- * S15A — Deterministic triage with scope-aware dispatch gating.
- *
- * SPECv2 §9.3 (triage): decides the next stage for each issue by inspecting
- * dispatch state, Oracle readiness, queue capacity, and scope-overlap constraints.
- *
- * This module is pure — no I/O.  It receives the current dispatch state,
- * Oracle assessments, and ready issues, then returns deterministic dispatch
- * decisions that the orchestrator can act on.
- *
- * Scope allocation gate (SPECv2 §9.3.1):
- *   - When Oracle returns files_affected, triage checks overlap with active Titans
- *   - If overlap exceeds the configured threshold, the candidate is suppressed
- *   - Suppressed candidates remain scouted (not dispatched to Titan)
- *   - The suppression is surfaced to the operator via the overlap-visibility layer
- */
+import type { AegisConfig } from "../config/schema.js";
+import type { DispatchRecord, DispatchState } from "./dispatch-state.js";
+import type { TrackerReadyIssue } from "../tracker/tracker.js";
 
-import type { DispatchState, DispatchRecord } from "./dispatch-state.js";
-import { activeTitanScopes } from "./dispatch-state.js";
-import { DispatchStage } from "./stage-transition.js";
-import type { OracleAssessment } from "../castes/oracle/oracle-parser.js";
-import type { ReadyIssue } from "../tracker/issue-model.js";
-import {
-  allocateScope,
-  checkCandidateConflict,
-  type ScopeCandidate,
-  type ActiveTitanScope,
-  type FileScope,
-  type ScopeAllocation,
-} from "./scope-allocator.js";
+export type TriageSkipReason =
+  | "capacity"
+  | "cooldown"
+  | "in_progress"
+  | "phase_e_required";
 
-// ---------------------------------------------------------------------------
-// Triage inputs and outputs
-// ---------------------------------------------------------------------------
-
-/**
- * An issue that has completed scouting and is ready for Titan dispatch.
- */
-export interface ScoutedIssue {
+export interface DispatchDecision {
   issueId: string;
-  /** The Oracle assessment for this issue. */
-  assessment: OracleAssessment;
-  /** The dispatch record (must be in `scouted` stage). */
-  record: DispatchRecord;
+  title: string;
+  caste: "oracle";
+  stage: "scouting";
 }
 
-/**
- * Result of a single-issue triage decision.
- */
-export interface TriageDecision {
+export interface SkipDecision {
   issueId: string;
-  /** Whether this issue is safe to dispatch to Titan. */
-  canDispatch: boolean;
-  /** If suppressed, why. */
-  suppressionReason?: string;
-  /** The file scope that was evaluated. */
-  fileScope: FileScope;
+  reason: TriageSkipReason;
 }
 
-/**
- * The full triage result for a batch of ready scouted issues.
- */
-export interface BatchTriageResult {
-  /** Issues safe to dispatch to Titan. */
-  dispatchable: ScoutedIssue[];
-  /** Issues suppressed due to scope overlap. */
-  suppressed: TriageDecision[];
-  /** The underlying scope allocation result. */
-  scopeAllocation: ScopeAllocation;
+export interface TriageInput {
+  readyIssues: TrackerReadyIssue[];
+  dispatchState: DispatchState;
+  config: Pick<AegisConfig, "concurrency">;
+  now?: string;
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
+export interface TriageResult {
+  dispatchable: DispatchDecision[];
+  skipped: SkipDecision[];
+}
 
-/**
- * Triage a batch of scouted issues against the current dispatch state.
- *
- * Uses scope allocation to determine which issues can be dispatched to Titan
- * without overlapping with in-flight Titan work.
- *
- * @param scoutedIssues - Issues in `scouted` stage, ready for Titan.
- * @param state - Current dispatch state (source of active Titan scopes).
- * @param threshold - Maximum allowed file overlap (0 = any overlap blocks).
- * @param forceDispatch - Issue IDs a human has explicitly forced through.
- * @returns BatchTriageResult with dispatchable and suppressed lists.
- */
-export function triageScouted(
-  scoutedIssues: ScoutedIssue[],
-  state: DispatchState,
-  threshold: number = 0,
-  forceDispatch: Set<string> = new Set(),
-): BatchTriageResult {
-  const activeTitans = activeTitanScopes(state);
-
-  // Build scope candidates from scouted issues, using Oracle files_affected.
-  const candidates: ScopeCandidate[] = scoutedIssues.map((s) => ({
-    issueId: s.issueId,
-    fileScope: {
-      issueId: s.issueId,
-      files: [...s.assessment.files_affected],
-    },
-  }));
-
-  const allocation = allocateScope(candidates, activeTitans, threshold, forceDispatch);
-
-  // Map back to scouted issues.
-  const dispatchableMap = new Set(allocation.dispatchable);
-  const suppressedMap = new Map<string, TriageDecision["suppressionReason"]>();
-  for (const entry of allocation.suppressed) {
-    suppressedMap.set(entry.issueId, entry.reason);
+function isCoolingDown(record: DispatchRecord, nowMs: number) {
+  if (!record.cooldownUntil) {
+    return false;
   }
 
-  const dispatchable: ScoutedIssue[] = [];
-  const suppressed: TriageDecision[] = [];
+  const cooldownMs = Date.parse(record.cooldownUntil);
+  return Number.isFinite(cooldownMs) && cooldownMs > nowMs;
+}
 
-  for (const scouted of scoutedIssues) {
-    const fileScope: FileScope = {
-      issueId: scouted.issueId,
-      files: [...scouted.assessment.files_affected],
-    };
+function needsFuturePhase(record: DispatchRecord) {
+  return record.stage !== "failed" && record.stage !== "pending";
+}
 
-    if (dispatchableMap.has(scouted.issueId)) {
-      dispatchable.push(scouted);
-    } else {
-      suppressed.push({
-        issueId: scouted.issueId,
-        canDispatch: false,
-        suppressionReason: suppressedMap.get(scouted.issueId),
-        fileScope,
+function countActiveOracles(state: DispatchState) {
+  return Object.values(state.records).filter(
+    (record) => record.runningAgent?.caste === "oracle",
+  ).length;
+}
+
+export function triageReadyWork(input: TriageInput): TriageResult {
+  const nowMs = Date.parse(input.now ?? new Date().toISOString());
+  const dispatchable: DispatchDecision[] = [];
+  const skipped: SkipDecision[] = [];
+  const activeAgentCount = Object.values(input.dispatchState.records).filter(
+    (record) => record.runningAgent !== null,
+  ).length;
+  const activeOracleCount = countActiveOracles(input.dispatchState);
+  let reservedAgents = 0;
+  let reservedOracles = 0;
+
+  for (const issue of input.readyIssues) {
+    const record = input.dispatchState.records[issue.id];
+
+    if (record?.runningAgent) {
+      skipped.push({
+        issueId: issue.id,
+        reason: "in_progress",
       });
+      continue;
     }
+
+    if (record && isCoolingDown(record, nowMs)) {
+      skipped.push({
+        issueId: issue.id,
+        reason: "cooldown",
+      });
+      continue;
+    }
+
+    if (record && needsFuturePhase(record)) {
+      skipped.push({
+        issueId: issue.id,
+        reason: "phase_e_required",
+      });
+      continue;
+    }
+
+    const reachedAgentCapacity =
+      activeAgentCount + reservedAgents >= input.config.concurrency.max_agents;
+    const reachedOracleCapacity =
+      activeOracleCount + reservedOracles >= input.config.concurrency.max_oracles;
+
+    if (reachedAgentCapacity || reachedOracleCapacity) {
+      skipped.push({
+        issueId: issue.id,
+        reason: "capacity",
+      });
+      continue;
+    }
+
+    dispatchable.push({
+      issueId: issue.id,
+      title: issue.title,
+      caste: "oracle",
+      stage: "scouting",
+    });
+    reservedAgents += 1;
+    reservedOracles += 1;
   }
 
-  return { dispatchable, suppressed, scopeAllocation: allocation };
-}
-
-/**
- * Convenience: check a single issue for scope conflict with active Titans.
- *
- * Use this at the point of Titan dispatch to double-check that no other
- * Titan has claimed overlapping files since triage ran.
- *
- * @param fileScope - The candidate's file scope (from Oracle files_affected).
- * @param state - Current dispatch state.
- * @param threshold - Maximum allowed overlap.
- * @returns Object with hasConflict flag and details.
- */
-export function checkDispatchConflict(
-  fileScope: FileScope,
-  state: DispatchState,
-  threshold: number = 0,
-): { hasConflict: boolean; conflictsWith: string[]; overlappingFiles: string[] } {
-  const activeTitans = activeTitanScopes(state);
-  return checkCandidateConflict(fileScope, activeTitans, threshold);
-}
-
-/**
- * Attach file scope to a dispatch record when dispatching Titan.
- *
- * Returns a new record with the fileScope populated.
- */
-export function attachFileScope(
-  record: DispatchRecord,
-  fileScope: FileScope,
-): DispatchRecord {
   return {
-    ...record,
-    fileScope: {
-      issueId: fileScope.issueId,
-      files: [...fileScope.files],
-    },
-  };
-}
-
-/**
- * Clear file scope from a dispatch record when Titan completes or fails.
- *
- * Returns a new record with fileScope set to null.
- */
-export function clearFileScope(record: DispatchRecord): DispatchRecord {
-  return {
-    ...record,
-    fileScope: null,
+    dispatchable,
+    skipped,
   };
 }

@@ -1,121 +1,124 @@
-/**
- * S9.4 — Work dispatcher.
- *
- * SPECv2 §9.4: takes triage decisions from the poller and dispatches them
- * to Titans via the spawner/runtime boundary.
- *
- * This module owns the dispatch decision flow only — it does not replace
- * the spawner (§9.5), the runtime (§8.2), or triage (§9.3). It wires them
- * together.
- *
- * Five-planes discipline (SPECv2 §2):
- *   - Dispatch state is read, updated via immutable transitions
- *   - Dispatch state is persisted atomically (tmp → rename)
- *   - No mutations of ScoutedIssue inputs or dispatch state records
- */
+import type { DispatchState } from "./dispatch-state.js";
+import type { DispatchDecision } from "./triage.js";
+import type { AgentRuntime } from "../runtime/agent-runtime.js";
+import { writePhaseLog } from "./phase-log.js";
+import {
+  calculateFailureCooldown,
+  resolveFailureWindowStartMs,
+} from "./failure-policy.js";
 
-import type { ScoutedIssue } from "./triage.js";
-import type { DispatchState, DispatchRecord } from "./dispatch-state.js";
-import { attachFileScope, clearFileScope } from "./triage.js";
-import type { SpawnResult } from "./spawner.js";
-
-// ---------------------------------------------------------------------------
-// Dispatch result
-// ---------------------------------------------------------------------------
+export interface DispatchInput {
+  dispatchState: DispatchState;
+  decisions: DispatchDecision[];
+  runtime: AgentRuntime;
+  root: string;
+  sessionProvenanceId: string;
+  now?: string;
+}
 
 export interface DispatchResult {
-  /** Issue IDs successfully dispatched. */
+  state: DispatchState;
   dispatched: string[];
-  /** Issues that failed to dispatch, with error details. */
-  errors: { issueId: string; error: string }[];
-  /** Updated dispatch state (all records, including successful dispatches). */
-  updatedState: DispatchState;
-  /** Spawn results for successful dispatches, keyed by issueId. */
-  spawnResults: Record<string, SpawnResult>;
+  failed: string[];
 }
 
-/**
- * Abstract spawner interface for the dispatcher.
- *
- * The dispatcher is decoupled from the concrete spawner implementation
- * so it can be tested with mocks.
- */
-export interface TitanSpawner {
-  spawnForTitan(issueId: string, record: DispatchRecord): Promise<SpawnResult>;
-}
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/**
- * Dispatch scouted issues to Titans via the spawner.
- *
- * For each dispatchable ScoutedIssue:
- *   1. Attach file scope to the dispatch record
- *   2. Call spawner.spawnForTitan() to create worktree and spawn
- *   3. Update the dispatch state with the new record
- *
- * Failures are collected but do not abort the entire dispatch batch —
- * remaining issues continue to be dispatched.
- *
- * @param dispatchable - Scouted issues cleared by triage for Titan dispatch.
- * @param state - Current dispatch state (not mutated).
- * @param spawner - Abstract spawner that handles worktree creation and runtime spawning.
- * @returns DispatchResult with dispatched IDs, errors, and updated state.
- */
-export async function dispatchScoutedIssues(
-  dispatchable: ScoutedIssue[],
-  state: DispatchState,
-  spawner: TitanSpawner,
-): Promise<DispatchResult> {
+export async function dispatchReadyWork(input: DispatchInput): Promise<DispatchResult> {
+  const timestamp = input.now ?? new Date().toISOString();
+  const cooldownUntil = calculateFailureCooldown(timestamp);
+  const records = { ...input.dispatchState.records };
   const dispatched: string[] = [];
-  const errors: { issueId: string; error: string }[] = [];
-  const spawnResults: Record<string, SpawnResult> = {};
+  const failed: string[] = [];
 
-  // Build a mutable working copy of dispatch state records.
-  const records: Record<string, DispatchRecord> = {
-    ...state.records,
-  };
-
-  for (const scouted of dispatchable) {
-    const { issueId, record, assessment } = scouted;
-    const existingRecord = records[issueId];
-
-    if (!existingRecord) {
-      errors.push({ issueId, error: "No dispatch record found for issue" });
-      continue;
-    }
-
+  for (const decision of input.decisions) {
     try {
-      // Step 1: Attach file scope from Oracle assessment.
-      const fileScope = { issueId, files: [...assessment.files_affected] };
-      const scopedRecord = attachFileScope(existingRecord, fileScope);
-      records[issueId] = scopedRecord;
+      const launched = await input.runtime.launch({
+        root: input.root,
+        issueId: decision.issueId,
+        title: decision.title,
+        caste: decision.caste,
+        stage: decision.stage,
+      });
 
-      // Step 2: Spawn Titan via the spawner.
-      const spawnResult = await spawner.spawnForTitan(issueId, scopedRecord);
-
-      // Step 3: Update the record with the spawn result.
-      records[issueId] = spawnResult.updatedRecord;
-
-      dispatched.push(issueId);
-      spawnResults[issueId] = spawnResult;
+      records[decision.issueId] = {
+        issueId: decision.issueId,
+        stage: decision.stage,
+        runningAgent: {
+          caste: decision.caste,
+          sessionId: launched.sessionId,
+          startedAt: launched.startedAt,
+        },
+        oracleAssessmentRef: null,
+        sentinelVerdictRef: null,
+        fileScope: null,
+        failureCount: records[decision.issueId]?.failureCount ?? 0,
+        consecutiveFailures: records[decision.issueId]?.consecutiveFailures ?? 0,
+        failureWindowStartMs: records[decision.issueId]?.failureWindowStartMs ?? null,
+        cooldownUntil: null,
+        sessionProvenanceId: input.sessionProvenanceId,
+        updatedAt: timestamp,
+      };
+      dispatched.push(decision.issueId);
+      writePhaseLog(input.root, {
+        timestamp,
+        phase: "dispatch",
+        issueId: decision.issueId,
+        action: `launch_${decision.caste}`,
+        outcome: "running",
+        sessionId: launched.sessionId,
+      });
     } catch (error) {
-      const message = (error as Error).message;
-      errors.push({ issueId, error: message });
+      const detail = error instanceof Error ? error.message : String(error);
+      const previous = records[decision.issueId];
+      records[decision.issueId] = {
+        issueId: decision.issueId,
+        stage: "failed",
+        runningAgent: null,
+        oracleAssessmentRef: previous?.oracleAssessmentRef ?? null,
+        sentinelVerdictRef: previous?.sentinelVerdictRef ?? null,
+        fileScope: previous?.fileScope ?? null,
+        failureCount: (previous?.failureCount ?? 0) + 1,
+        consecutiveFailures: (previous?.consecutiveFailures ?? 0) + 1,
+        failureWindowStartMs: previous?.failureWindowStartMs
+          ?? resolveFailureWindowStartMs(timestamp),
+        cooldownUntil,
+        sessionProvenanceId: input.sessionProvenanceId,
+        updatedAt: timestamp,
+      };
+      failed.push(decision.issueId);
+      writePhaseLog(input.root, {
+        timestamp,
+        phase: "dispatch",
+        issueId: decision.issueId,
+        action: `launch_${decision.caste}`,
+        outcome: "failed",
+        detail,
+      });
 
-      // Clear file scope on failure to release the scope.
-      if (records[issueId]) {
-        records[issueId] = clearFileScope(records[issueId]);
-      }
+      // Phase D has no durable failure classifier yet, so a launch error
+      // fails closed for the remainder of the current dispatch pass.
+      break;
     }
   }
 
-  const updatedState: DispatchState = {
-    schemaVersion: state.schemaVersion,
-    records,
-  };
+  writePhaseLog(input.root, {
+    timestamp,
+    phase: "dispatch",
+    issueId: "_all",
+    action: "dispatch_ready_work",
+    outcome: failed.length > 0 ? "partial" : "ok",
+    detail: JSON.stringify({
+      dispatched,
+      failed,
+      attempted: input.decisions.map((decision) => decision.issueId),
+    }),
+  });
 
-  return { dispatched, errors, updatedState, spawnResults };
+  return {
+    state: {
+      schemaVersion: input.dispatchState.schemaVersion,
+      records,
+    },
+    dispatched,
+    failed,
+  };
 }

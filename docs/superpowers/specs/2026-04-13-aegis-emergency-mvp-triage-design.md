@@ -1,8 +1,15 @@
 # Aegis Emergency MVP Triage Design
 
 Date: 2026-04-13
-Status: Proposed
+Status: Active
 Purpose: Define the emergency recovery contract for rewriting Aegis into a working, terminal-first MVP after severe architectural drift.
+
+## Recovery progress
+
+- Phase A complete on 2026-04-13.
+- Phase B complete on 2026-04-13.
+- Phase C complete on 2026-04-13.
+- Phases D through G remain open.
 
 ## Scope and source of truth
 
@@ -79,7 +86,7 @@ Deletion rule:
 
 ## Emergency MVP product shape
 
-The stripped MVP is a terminal-only orchestrator that a human or QA agent can inspect fully through:
+The stripped MVP target is a terminal-only orchestrator that a human or QA agent can inspect fully through:
 - live terminal output
 - `.aegis/logs/`
 - `.aegis/dispatch-state.json`
@@ -93,7 +100,17 @@ The daemon is the main runtime surface:
 - `aegis stop`
 
 The daemon normally runs in auto-processing posture.
-Manual control and debugging come from explicit phase and caste commands, not from a separate conversational mode.
+Manual control and debugging come from explicit phase commands now, with caste and merge commands returning in later phases.
+
+As of completed Phase D work, the live operator commands are:
+- `aegis init`
+- `aegis start`
+- `aegis status`
+- `aegis stop`
+- `aegis poll`
+- `aegis dispatch`
+- `aegis monitor`
+- `aegis reap`
 
 ## Truth planes
 
@@ -199,6 +216,10 @@ Emergency MVP rule:
 - a tiny deterministic fake runtime is allowed only if it materially improves CI seam testing
 - do not widen the runtime contract beyond stripped-MVP needs
 
+Phase D note:
+- the rebuilt loop shell may use a tiny deterministic `phase_d_shell` runtime for Phase D proof runs, including freshly initialized repos and mock-run
+- real Pi-backed caste execution still returns in Phase E
+
 ### Tracker
 
 Preserve the minimal tracker abstraction.
@@ -208,31 +229,35 @@ Emergency MVP rule:
 - a tiny deterministic fake tracker is allowed only if it materially improves CI seam testing
 - do not hardcode orchestration semantics to Beads naming patterns
 
+Phase D note:
+- the rebuilt loop shell keeps Beads bootstrap probes and tracker access close to the daemon entrypoints
+- richer tracker-shell separation can continue to tighten in later phases without reintroducing naming heuristics
+
 ## Command surface
 
-### Primary daemon commands
+### Current Phase D command surface
 
+Live now:
+- `aegis init`
 - `aegis start`
 - `aegis status`
 - `aegis stop`
-
-### Phase/debug commands
-
 - `aegis poll`
 - `aegis dispatch`
 - `aegis monitor`
 - `aegis reap`
+
+This is the supported operator surface for the rebuilt Phase D loop shell.
+
+### Future Phase Command Targets
+
+Planned later:
+
 - `aegis merge next`
-
-### Caste/workflow commands
-
 - `aegis scout <issue-id>`
 - `aegis implement <issue-id>`
 - `aegis review <issue-id>`
 - `aegis process <issue-id>`
-
-### Minimal recovery commands
-
 - `aegis restart <issue-id>`
 - `aegis requeue <issue-id>`
 
@@ -336,7 +361,20 @@ In mock runs they should be treated as ephemeral and cleaned up after successful
 
 - structured logs under `.aegis/logs/`
 
-### Required log content
+### Current Phase D observability
+
+The rebuilt loop shell currently guarantees:
+- terminal output for `init`, `start`, `status`, `stop`, `poll`, `dispatch`, `monitor`, and `reap`
+- freshly initialized repos seed `runtime: "phase_d_shell"` so the operator surface stays deterministic during Phase D
+- persisted `.aegis/runtime-state.json`
+- persisted `.aegis/dispatch-state.json`
+- persisted structured phase logs under `.aegis/logs/`
+
+Real caste artifacts and provider-backed session telemetry are still deferred to later phases.
+
+### Future Observability Target
+
+When Phase E/F capability returns, durable logs must include:
 
 Minimum:
 - timestamp
@@ -415,7 +453,19 @@ Real conflict behavior belongs in mock-run acceptance instead.
 
 ### User and QA proof
 
-The seeded mock-run flow becomes the main end-to-end proving ground.
+### Current Phase D proof scope
+
+The seeded mock-run flow currently proves the Phase D loop shell:
+- daemon starts and is observable from the terminal
+- direct phase commands reuse the same loop code as the daemon
+- stripped config, runtime-state files, dispatch-state files, and phase logs are written correctly
+- the deterministic `phase_d_shell` runtime can drive ready work to the explicit `phase_d_complete` placeholder stage without requiring browser/UI infrastructure
+
+It does not yet prove real Pi-backed caste execution, artifact enforcement, merge behavior, or Janus behavior.
+
+### Full MVP proof target
+
+Once later phases are complete, the seeded mock-run flow becomes the main end-to-end proving ground.
 
 A passing emergency MVP should demonstrate:
 - daemon starts and is observable entirely from the terminal
@@ -452,11 +502,17 @@ Failure-only:
 
 ### Phase A: Source-of-truth reset
 
+Status:
+- complete on 2026-04-13
+
 - write this emergency MVP design/addendum
 - maintain the discovery log as the Q&A appendix for this design
 - maintain one flat deferred-items list
 
 ### Phase B: Hard purge
+
+Status:
+- complete on 2026-04-13
 
 - delete Olympus and UI/SSE/dashboard code
 - delete economics/budgeting
@@ -466,6 +522,9 @@ Failure-only:
 - delete tests/config tied only to removed systems
 
 ### Phase C: Skeleton stabilization
+
+Status:
+- complete on 2026-04-13
 
 - hard-strip config
 - preserve only runtime/tracker abstractions that still matter

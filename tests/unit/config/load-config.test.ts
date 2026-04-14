@@ -72,7 +72,6 @@ describe("S01 config contract seed", () => {
     expect(RUNTIME_STATE_FILES).toEqual([
       ".aegis/dispatch-state.json",
       ".aegis/merge-queue.json",
-      ".aegis/mnemosyne.jsonl",
     ]);
   });
 
@@ -81,8 +80,8 @@ describe("S01 config contract seed", () => {
 
     writeConfigFixture(projectRoot, {
       runtime: "pi",
-      olympus: {
-        port: 4100,
+      models: {
+        oracle: "pi:oracle-fast",
       },
       labor: {
         base_path: ".aegis/custom-labors",
@@ -91,9 +90,10 @@ describe("S01 config contract seed", () => {
 
     expect(loadConfig(projectRoot)).toEqual({
       ...DEFAULT_AEGIS_CONFIG,
-      olympus: {
-        ...DEFAULT_AEGIS_CONFIG.olympus,
-        port: 4100,
+      runtime: "pi",
+      models: {
+        ...DEFAULT_AEGIS_CONFIG.models,
+        oracle: "pi:oracle-fast",
       },
       labor: {
         base_path: ".aegis/custom-labors",
@@ -101,20 +101,18 @@ describe("S01 config contract seed", () => {
     });
   });
 
-  it("fills missing nested budget fields from defaults", () => {
+  it("fills missing nested config fields from defaults", () => {
     const projectRoot = createTempProjectRoot();
 
     writeConfigFixture(projectRoot, {
-      budgets: {
-        titan: {
-          turns: 5,
-        },
+      thresholds: {
+        stuck_warning_seconds: 30,
       },
     });
 
-    expect(loadConfig(projectRoot).budgets.titan).toEqual({
-      turns: 5,
-      tokens: DEFAULT_AEGIS_CONFIG.budgets.titan.tokens,
+    expect(loadConfig(projectRoot).thresholds).toEqual({
+      ...DEFAULT_AEGIS_CONFIG.thresholds,
+      stuck_warning_seconds: 30,
     });
   });
 
@@ -144,13 +142,13 @@ describe("S01 config contract seed", () => {
 
     writeConfigFixture(projectRoot, {
       runtime: "pi",
-      olympus: {
-        port: "3847",
+      models: {
+        oracle: 3847,
       },
     });
 
     expect(() => loadConfig(projectRoot)).toThrow(
-      'Expected "olympus.port" to be a number',
+      'Expected "models.oracle" to be a string',
     );
   });
 
@@ -168,23 +166,23 @@ describe("S01 config contract seed", () => {
     );
 
     writeConfigFixture(projectRoot, {
-      olympus: {
-        port: 0,
+      thresholds: {
+        poll_interval_seconds: 0,
       },
     });
 
     expect(() => loadConfig(projectRoot)).toThrow(
-      'Expected "olympus.port" to be between 1 and 65535',
+      'Expected "thresholds.poll_interval_seconds" to be at least 1',
     );
 
     writeConfigFixture(projectRoot, {
-      economics: {
-        quota_warning_floor_pct: 150,
+      janus: {
+        max_invocations_per_issue: 0,
       },
     });
 
     expect(() => loadConfig(projectRoot)).toThrow(
-      'Expected "economics.quota_warning_floor_pct" to be between 0 and 100',
+      'Expected "janus.max_invocations_per_issue" to be at least 1',
     );
   });
 

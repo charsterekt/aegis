@@ -1,224 +1,177 @@
-/**
- * S9.4 — Dispatcher unit tests.
- *
- * Validates dispatch decision flow:
- *   a) All dispatchable ScoutedIssues are dispatched successfully
- *   b) State is updated with new records for dispatched issues
- *   c) Spawn failures are collected but do not abort remaining dispatches
- *   d) File scope is cleared on error
- *   e) Empty dispatchable list returns empty result
- *   f) No mutation of input state or ScoutedIssue arrays
- */
+import path from "node:path";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { dispatchScoutedIssues, type TitanSpawner } from "../../../src/core/dispatcher.js";
-import type { ScoutedIssue } from "../../../src/core/triage.js";
-import type { DispatchState, DispatchRecord } from "../../../src/core/dispatch-state.js";
-import { DispatchStage } from "../../../src/core/stage-transition.js";
-import type { OracleAssessment } from "../../../src/castes/oracle/oracle-parser.js";
-import type { SpawnResult } from "../../../src/core/spawner.js";
+import { emptyDispatchState } from "../../../src/core/dispatch-state.js";
+import { dispatchReadyWork } from "../../../src/core/dispatcher.js";
+import type { AgentRuntime } from "../../../src/runtime/agent-runtime.js";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function makeAssessment(files: string[]): OracleAssessment {
+function createRuntime(): AgentRuntime {
   return {
-    files_affected: files,
-    estimated_complexity: "moderate",
-    decompose: false,
-    ready: true,
+    async launch() {
+      return {
+        sessionId: "session-1",
+        startedAt: "2026-04-14T12:00:00.000Z",
+      };
+    },
+    async readSession() {
+      return null;
+    },
+    async terminate() {
+      return null;
+    },
   };
 }
 
-function makeRecord(issueId: string, stage: DispatchStage): DispatchRecord {
-  return {
-    issueId,
-    stage,
-    runningAgent: null,
-    oracleAssessmentRef: `.aegis/oracle/${issueId}.json`,
-    sentinelVerdictRef: null,
-    fileScope: null,
-    failureCount: 0,
-    consecutiveFailures: 0,
-    failureWindowStartMs: null,
-    cooldownUntil: null,
-    cumulativeSpendUsd: null,
-    sessionProvenanceId: "test-session",
-    updatedAt: new Date().toISOString(),
-  };
+const tempRoots: string[] = [];
+
+function createTempRoot() {
+  const root = mkdtempSync(path.join(tmpdir(), "aegis-dispatcher-"));
+  tempRoots.push(root);
+  return root;
 }
 
-function makeScoutedIssue(issueId: string, files: string[]): ScoutedIssue {
-  return {
-    issueId,
-    assessment: makeAssessment(files),
-    record: makeRecord(issueId, DispatchStage.Scouted),
-  };
-}
-
-function makeDispatchState(records: DispatchRecord[]): DispatchState {
-  const state: DispatchState = { schemaVersion: 1, records: {} };
-  for (const r of records) {
-    state.records[r.issueId] = r;
+afterEach(() => {
+  for (const root of tempRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
   }
-  return state;
-}
+});
 
-function makeSpawnResult(issueId: string): SpawnResult {
-  const record = makeRecord(issueId, DispatchStage.Implementing);
-  return {
-    laborPath: `.aegis/labors/labor-${issueId}`,
-    branchName: `aegis/${issueId}`,
-    handle: {} as import("../../../src/runtime/agent-runtime.js").AgentHandle,
-    updatedRecord: record,
-  };
-}
+describe("dispatchReadyWork", () => {
+  it("marks oracle dispatch as running and records the returned session id", async () => {
+    const result = await dispatchReadyWork({
+      dispatchState: emptyDispatchState(),
+      decisions: [
+        {
+          issueId: "ISSUE-1",
+          title: "First",
+          caste: "oracle",
+          stage: "scouting",
+        },
+      ],
+      runtime: createRuntime(),
+      sessionProvenanceId: "daemon-1",
+      root: "C:/repo",
+      now: "2026-04-14T12:00:00.000Z",
+    });
 
-function mockSpawner(
-  successIds: Set<string>,
-): TitanSpawner {
-  return {
-    spawnForTitan: vi.fn().mockImplementation(async (issueId: string, _record: DispatchRecord) => {
-      if (successIds.has(issueId)) {
-        return makeSpawnResult(issueId);
-      }
-      throw new Error(`spawn failed for ${issueId}`);
-    }),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-describe("S9.4 — dispatchScoutedIssues", () => {
-  it("dispatches all scouted issues successfully", async () => {
-    const state = makeDispatchState([
-      makeRecord("issue-1", DispatchStage.Scouted),
-      makeRecord("issue-2", DispatchStage.Scouted),
-    ]);
-    const dispatchable: ScoutedIssue[] = [
-      makeScoutedIssue("issue-1", ["a.ts"]),
-      makeScoutedIssue("issue-2", ["b.ts"]),
-    ];
-
-    const result = await dispatchScoutedIssues(
-      dispatchable,
-      state,
-      mockSpawner(new Set(["issue-1", "issue-2"])),
-    );
-
-    expect(result.dispatched).toEqual(["issue-1", "issue-2"]);
-    expect(result.errors).toEqual([]);
-    expect(Object.keys(result.spawnResults)).toHaveLength(2);
+    expect(result.dispatched).toEqual(["ISSUE-1"]);
+    expect(result.state.records["ISSUE-1"]).toMatchObject({
+      issueId: "ISSUE-1",
+      stage: "scouting",
+      runningAgent: {
+        caste: "oracle",
+        sessionId: "session-1",
+        startedAt: "2026-04-14T12:00:00.000Z",
+      },
+      sessionProvenanceId: "daemon-1",
+    });
   });
 
-  it("collects errors but continues dispatching remaining issues", async () => {
-    const state = makeDispatchState([
-      makeRecord("issue-1", DispatchStage.Scouted),
-      makeRecord("issue-2", DispatchStage.Scouted),
-    ]);
-    const dispatchable: ScoutedIssue[] = [
-      makeScoutedIssue("issue-1", ["a.ts"]),
-      makeScoutedIssue("issue-2", ["b.ts"]),
-    ];
+  it("puts failed launches on cooldown so the same issue is not redispatched immediately", async () => {
+    const result = await dispatchReadyWork({
+      dispatchState: emptyDispatchState(),
+      decisions: [
+        {
+          issueId: "ISSUE-1",
+          title: "First",
+          caste: "oracle",
+          stage: "scouting",
+        },
+      ],
+      runtime: {
+        async launch() {
+          throw new Error("phase e runtime missing");
+        },
+        async readSession() {
+          return null;
+        },
+        async terminate() {
+          return null;
+        },
+      },
+      sessionProvenanceId: "daemon-1",
+      root: "C:/repo",
+      now: "2026-04-14T12:00:00.000Z",
+    });
 
-    const result = await dispatchScoutedIssues(
-      dispatchable,
-      state,
-      mockSpawner(new Set(["issue-2"])),
-    );
-
-    expect(result.dispatched).toEqual(["issue-2"]);
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].issueId).toBe("issue-1");
-    expect(result.errors[0].error).toContain("spawn failed");
+    expect(result.failed).toEqual(["ISSUE-1"]);
+    expect(result.state.records["ISSUE-1"]?.stage).toBe("failed");
+    expect(result.state.records["ISSUE-1"]?.cooldownUntil).toBeTruthy();
   });
 
-  it("clears file scope on dispatch failure", async () => {
-    const state = makeDispatchState([
-      makeRecord("issue-1", DispatchStage.Scouted),
-    ]);
-    const dispatchable: ScoutedIssue[] = [
-      makeScoutedIssue("issue-1", ["shared.ts"]),
-    ];
+  it("stops dispatching the rest of the current pass after a launch failure", async () => {
+    let calls = 0;
+    const result = await dispatchReadyWork({
+      dispatchState: emptyDispatchState(),
+      decisions: [
+        {
+          issueId: "ISSUE-1",
+          title: "First",
+          caste: "oracle",
+          stage: "scouting",
+        },
+        {
+          issueId: "ISSUE-2",
+          title: "Second",
+          caste: "oracle",
+          stage: "scouting",
+        },
+      ],
+      runtime: {
+        async launch() {
+          calls += 1;
+          throw new Error("runtime unavailable");
+        },
+        async readSession() {
+          return null;
+        },
+        async terminate() {
+          return null;
+        },
+      },
+      sessionProvenanceId: "daemon-1",
+      root: "C:/repo",
+      now: "2026-04-14T12:00:00.000Z",
+    });
 
-    const result = await dispatchScoutedIssues(
-      dispatchable,
-      state,
-      mockSpawner(new Set()),
-    );
-
-    expect(result.errors).toHaveLength(1);
-    const updatedRecord = result.updatedState.records["issue-1"];
-    expect(updatedRecord.fileScope).toBeNull();
+    expect(calls).toBe(1);
+    expect(result.failed).toEqual(["ISSUE-1"]);
+    expect(result.state.records["ISSUE-2"]).toBeUndefined();
   });
 
-  it("returns empty result for empty dispatchable list", async () => {
-    const state = makeDispatchState([]);
-    const result = await dispatchScoutedIssues(
-      [],
-      state,
-      mockSpawner(new Set()),
+  it("writes a dispatch phase log even when no work is dispatchable", async () => {
+    const root = createTempRoot();
+    const timestamp = "2026-04-14T12:00:00.000Z";
+
+    await dispatchReadyWork({
+      dispatchState: emptyDispatchState(),
+      decisions: [],
+      runtime: createRuntime(),
+      sessionProvenanceId: "daemon-1",
+      root,
+      now: timestamp,
+    });
+
+    const logPath = path.join(
+      root,
+      ".aegis",
+      "logs",
+      "phases",
+      "2026-04-14T12-00-00.000Z-dispatch-_all.json",
     );
 
-    expect(result.dispatched).toEqual([]);
-    expect(result.errors).toEqual([]);
-    expect(result.spawnResults).toEqual({});
-  });
-
-  it("returns error when dispatch record is missing", async () => {
-    const state = makeDispatchState([]);
-    const dispatchable: ScoutedIssue[] = [
-      makeScoutedIssue("issue-1", ["a.ts"]),
-    ];
-
-    const result = await dispatchScoutedIssues(
-      dispatchable,
-      state,
-      mockSpawner(new Set(["issue-1"])),
-    );
-
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].issueId).toBe("issue-1");
-  });
-
-  it("does not mutate input dispatch state", async () => {
-    const state = makeDispatchState([
-      makeRecord("issue-1", DispatchStage.Scouted),
-    ]);
-    const dispatchable: ScoutedIssue[] = [
-      makeScoutedIssue("issue-1", ["a.ts"]),
-    ];
-    const stateBefore = JSON.parse(JSON.stringify(state));
-
-    await dispatchScoutedIssues(
-      dispatchable,
-      state,
-      mockSpawner(new Set(["issue-1"])),
-    );
-
-    expect(state).toEqual(stateBefore);
-  });
-
-  it("does not mutate input ScoutedIssue array or contents", async () => {
-    const state = makeDispatchState([
-      makeRecord("issue-1", DispatchStage.Scouted),
-    ]);
-    const dispatchable: ScoutedIssue[] = [
-      makeScoutedIssue("issue-1", ["a.ts"]),
-    ];
-    const filesBefore = [...dispatchable[0].assessment.files_affected];
-
-    await dispatchScoutedIssues(
-      dispatchable,
-      state,
-      mockSpawner(new Set(["issue-1"])),
-    );
-
-    expect(dispatchable).toHaveLength(1);
-    expect(dispatchable[0].assessment.files_affected).toEqual(filesBefore);
+    expect(existsSync(logPath)).toBe(true);
+    expect(JSON.parse(readFileSync(logPath, "utf8"))).toMatchObject({
+      phase: "dispatch",
+      issueId: "_all",
+    });
   });
 });

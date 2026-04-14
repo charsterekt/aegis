@@ -168,26 +168,23 @@ function createDatabaseName(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}`;
 }
 
-function buildMockRunConfig(options?: { uncapped?: boolean }) {
+export function buildMockRunConfig(options?: { uncapped?: boolean }) {
   const uncapped = options?.uncapped ?? true;
 
   const baseConfig = {
     ...DEFAULT_AEGIS_CONFIG,
+    runtime: "phase_d_shell",
     models: {
       ...DEFAULT_AEGIS_CONFIG.models,
       oracle: "pi:gemma-4-31b-it",
       titan: "pi:gemma-4-31b-it",
       sentinel: "pi:gemma-4-31b-it",
     },
-    olympus: {
-      ...DEFAULT_AEGIS_CONFIG.olympus,
-      open_browser: false,
-    },
   };
 
   if (!uncapped) return baseConfig;
 
-  // Uncapped profile for stress testing observation
+  // Uncapped profile for stress testing observation.
   return {
     ...baseConfig,
     concurrency: {
@@ -196,17 +193,6 @@ function buildMockRunConfig(options?: { uncapped?: boolean }) {
       max_titans: 10,
       max_sentinels: 3,
       max_janus: 2,
-    },
-    budgets: {
-      oracle: { turns: 50, tokens: 500_000 },
-      titan: { turns: 100, tokens: 2_000_000 },
-      sentinel: { turns: 30, tokens: 500_000 },
-      janus: { turns: 50, tokens: 1_000_000 },
-    },
-    economics: {
-      ...baseConfig.economics,
-      daily_cost_warning_usd: 100,
-      daily_hard_stop_usd: 200,
     },
   };
 }

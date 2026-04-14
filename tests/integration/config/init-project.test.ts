@@ -98,9 +98,6 @@ describe("S01 init project contract seed", () => {
       expect(
         readFileSync(path.join(tempRepo, ".aegis", "merge-queue.json"), "utf8"),
       ).toBe("{}\n");
-      expect(
-        readFileSync(path.join(tempRepo, ".aegis", "mnemosyne.jsonl"), "utf8"),
-      ).toBe("");
 
       const gitIgnoreContents = readFileSync(
         path.join(tempRepo, ".gitignore"),

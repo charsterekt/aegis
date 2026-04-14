@@ -9,12 +9,16 @@ export const TODO_BASELINE_FILES: Record<string, string> = {
     ".aegis/config.json",
     ".aegis/dispatch-state.json",
     ".aegis/merge-queue.json",
-    ".aegis/mnemosyne.jsonl",
     ".aegis/runtime-state.json",
+    ".aegis/runtime-stop-request.json",
     ".aegis/labors/",
-    ".aegis/evals/",
+    ".aegis/logs/",
     ".aegis/mock-run-manifest.json",
     ".aegis/oracle/",
+    ".aegis/sentinel/",
+    ".aegis/janus/",
+    ".aegis/merge-artifacts/",
+    ".aegis/transcripts/",
   ].join("\n"),
   ".pi/settings.json": JSON.stringify(
     {

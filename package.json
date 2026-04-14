@@ -8,14 +8,10 @@
     "aegis": "dist/index.js"
   },
   "files": [
-    "dist",
-    "olympus/dist"
-  ],
-  "workspaces": [
-    "olympus"
+    "dist"
   ],
   "scripts": {
-    "build": "npm run build:node && npm run build:olympus",
+    "build": "npm run build:node",
     "build:node": "node --eval \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc --project tsconfig.json",
     "dev": "tsx src/index.ts",
     "mock:seed": "tsx src/mock-run/seed-mock-run.ts",
@@ -23,8 +19,7 @@
     "start": "node dist/index.js",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
-    "lint": "tsc --project tsconfig.tests.json --noEmit && npm run lint --workspace olympus",
-    "build:olympus": "npm run build --workspace olympus",
+    "lint": "tsc --project tsconfig.tests.json --noEmit",
     "prepack": "npm run build"
   },
   "engines": {
@@ -46,7 +41,6 @@
   },
   "devDependencies": {
     "@types/node": "^25.4.0",
-    "jsdom": "^29.0.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
