@@ -6,8 +6,8 @@ describe("planLaborCreation", () => {
   it("creates a deterministic labor branch and worktree path per issue", () => {
     const plan = planLaborCreation({
       issueId: "aegis-123",
-      projectRoot: "C:/repo",
-      baseBranch: "feat/emergency-mvp-rewrite",
+      projectRoot: "repo",
+      baseBranch: "main",
     });
 
     expect(buildLaborBranchName("aegis-123")).toBe("aegis/aegis-123");
@@ -18,7 +18,7 @@ describe("planLaborCreation", () => {
       "-b",
       "aegis/aegis-123",
       plan.laborPath,
-      "feat/emergency-mvp-rewrite",
+      "main",
     ]);
   });
 });

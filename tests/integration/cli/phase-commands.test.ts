@@ -20,15 +20,15 @@ describe("runCli phase commands", () => {
 
     const { runCli } = await import("../../../src/index.js");
 
-    await runCli("C:/repo", ["poll"]);
-    await runCli("C:/repo", ["dispatch"]);
-    await runCli("C:/repo", ["monitor"]);
-    await runCli("C:/repo", ["reap"]);
+    await runCli("repo", ["poll"]);
+    await runCli("repo", ["dispatch"]);
+    await runCli("repo", ["monitor"]);
+    await runCli("repo", ["reap"]);
 
-    expect(runDirectPhaseCommand).toHaveBeenNthCalledWith(1, "C:/repo", "poll");
-    expect(runDirectPhaseCommand).toHaveBeenNthCalledWith(2, "C:/repo", "dispatch");
-    expect(runDirectPhaseCommand).toHaveBeenNthCalledWith(3, "C:/repo", "monitor");
-    expect(runDirectPhaseCommand).toHaveBeenNthCalledWith(4, "C:/repo", "reap");
+    expect(runDirectPhaseCommand).toHaveBeenNthCalledWith(1, "repo", "poll");
+    expect(runDirectPhaseCommand).toHaveBeenNthCalledWith(2, "repo", "dispatch");
+    expect(runDirectPhaseCommand).toHaveBeenNthCalledWith(3, "repo", "monitor");
+    expect(runDirectPhaseCommand).toHaveBeenNthCalledWith(4, "repo", "reap");
     expect(consoleLog).toHaveBeenCalledTimes(4);
 
     consoleLog.mockRestore();

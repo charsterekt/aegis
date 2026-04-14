@@ -1,5 +1,5 @@
 {
-  "runtime": "phase_d_shell",
+  "runtime": "scripted",
   "models": {
     "oracle": "pi:default",
     "titan": "pi:default",
@@ -27,5 +27,8 @@
   },
   "labor": {
     "base_path": ".aegis/labors"
+  },
+  "git": {
+    "base_branch": "main"
   }
 }

@@ -90,7 +90,7 @@ describe("startAegis daemon loop", () => {
       configPath,
       `${JSON.stringify({
         ...config,
-        runtime: "phase_d_shell",
+        runtime: "scripted",
         thresholds: {
           ...config.thresholds,
           poll_interval_seconds: 1,
@@ -132,7 +132,7 @@ describe("startAegis daemon loop", () => {
       configPath,
       `${JSON.stringify({
         ...config,
-        runtime: "phase_d_shell",
+        runtime: "scripted",
       }, null, 2)}\n`,
       "utf8",
     );
@@ -209,7 +209,7 @@ describe("startAegis daemon loop", () => {
       configPath,
       `${JSON.stringify({
         ...config,
-        runtime: "phase_d_shell",
+        runtime: "scripted",
         thresholds: {
           ...config.thresholds,
           poll_interval_seconds: 1,
@@ -291,7 +291,7 @@ describe("startAegis daemon loop", () => {
       configPath,
       `${JSON.stringify({
         ...config,
-        runtime: "phase_d_shell",
+        runtime: "scripted",
         thresholds: {
           ...config.thresholds,
           poll_interval_seconds: 1,

@@ -39,7 +39,7 @@ describe("triageReadyWork", () => {
     ]);
   });
 
-  it("skips running work and phase-e-only placeholder stages", () => {
+  it("skips running work and already-progressed stages", () => {
     const result = triageReadyWork({
       readyIssues: [
         { id: "ISSUE-1", title: "Running" },
@@ -66,7 +66,7 @@ describe("triageReadyWork", () => {
         },
         "ISSUE-2": {
           issueId: "ISSUE-2",
-          stage: "phase_d_complete",
+          stage: "scouted",
           runningAgent: null,
           oracleAssessmentRef: null,
           sentinelVerdictRef: null,
@@ -91,7 +91,7 @@ describe("triageReadyWork", () => {
       },
       {
         issueId: "ISSUE-2",
-        reason: "phase_e_required",
+        reason: "already_progressed",
       },
     ]);
   });

@@ -40,11 +40,11 @@ function makeDeps(
 
 describe("runStartupPreflight", () => {
   it("returns ready when every startup preflight check passes", () => {
-    const report = runStartupPreflight("C:/repo", makeDeps());
+    const report = runStartupPreflight("repo", makeDeps());
 
     expect(report).toEqual({
       overall: "ready",
-      repoRoot: "C:/repo",
+      repoRoot: "repo",
       checks: [
         { id: "git_repo", label: "git repo", status: "pass", detail: "Inside a git worktree." },
         { id: "beads_cli", label: "beads cli", status: "pass", detail: "Beads CLI is available." },
@@ -59,7 +59,7 @@ describe("runStartupPreflight", () => {
   });
 
   it("returns blocked when the Beads repository is missing", () => {
-    const report = runStartupPreflight("C:/repo", makeDeps({
+    const report = runStartupPreflight("repo", makeDeps({
       probeBeadsRepo: () => ({
         ok: false,
         detail: "Beads tracker is not initialized.",
@@ -84,7 +84,7 @@ describe("runStartupPreflight", () => {
   });
 
   it("converts thrown probe errors into a failed check and skips downstream work", () => {
-    const report = runStartupPreflight("C:/repo", makeDeps({
+    const report = runStartupPreflight("repo", makeDeps({
       probeBeadsCli: () => {
         throw new Error("bd executable missing");
       },
@@ -104,7 +104,7 @@ describe("runStartupPreflight", () => {
   });
 
   it("uses a failure fallback detail when a failing probe does not provide one", () => {
-    const report = runStartupPreflight("C:/repo", makeDeps({
+    const report = runStartupPreflight("repo", makeDeps({
       probeBeadsCli: () => ({ ok: false }),
     }));
 
@@ -118,7 +118,7 @@ describe("runStartupPreflight", () => {
   });
 
   it("fails the aegis_config check when loading config throws", () => {
-    const report = runStartupPreflight("C:/repo", makeDeps({
+    const report = runStartupPreflight("repo", makeDeps({
       loadConfig: () => {
         throw new Error("Config file is missing.");
       },
@@ -138,7 +138,7 @@ describe("runStartupPreflight", () => {
   });
 
   it("stops at a runtime_state_paths failure without appending skipped checks", () => {
-    const report = runStartupPreflight("C:/repo", makeDeps({
+    const report = runStartupPreflight("repo", makeDeps({
       verifyRuntimeStatePaths: () => ({
         ok: false,
         detail: "Runtime state path is not writable.",

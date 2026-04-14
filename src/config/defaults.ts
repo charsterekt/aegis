@@ -1,7 +1,7 @@
 import type { AegisConfig } from "./schema.js";
 
 export const DEFAULT_AEGIS_CONFIG: AegisConfig = {
-  runtime: "phase_d_shell",
+  runtime: "scripted",
   models: {
     oracle: "pi:default",
     titan: "pi:default",
@@ -29,5 +29,8 @@ export const DEFAULT_AEGIS_CONFIG: AegisConfig = {
   },
   labor: {
     base_path: ".aegis/labors",
+  },
+  git: {
+    base_branch: "main",
   },
 };

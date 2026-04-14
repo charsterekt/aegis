@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  requestMergeCommandFromDaemon,
   requestCasteCommandFromDaemon,
   requestPhaseCommandFromDaemon,
   readRuntimeCommandRequests,
@@ -83,6 +84,16 @@ describe("runtime command files", () => {
     await expect(
       requestPhaseCommandFromDaemon(root, "dispatch", 1, 10),
     ).rejects.toThrow("Timed out waiting for daemon response to dispatch");
+
+    expect(readRuntimeCommandRequests(root)).toEqual([]);
+  });
+
+  it("cleans up a timed-out merge request artifact instead of leaving it live on disk", async () => {
+    const root = createTempRoot();
+
+    await expect(
+      requestMergeCommandFromDaemon(root, "next", 1, 10),
+    ).rejects.toThrow("Timed out waiting for daemon response to merge next");
 
     expect(readRuntimeCommandRequests(root)).toEqual([]);
   });

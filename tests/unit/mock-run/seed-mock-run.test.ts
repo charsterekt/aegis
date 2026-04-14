@@ -9,7 +9,7 @@ describe("buildMockRunConfig", () => {
     const config = buildMockRunConfig();
 
     expect(Object.keys(config)).toEqual(CONFIG_TOP_LEVEL_KEYS);
-    expect(config.runtime).toBe("phase_d_shell");
+    expect(config.runtime).toBe("scripted");
     expect(config.models).toEqual({
       ...DEFAULT_AEGIS_CONFIG.models,
       oracle: "pi:gemma-4-31b-it",
@@ -32,7 +32,7 @@ describe("buildMockRunConfig", () => {
     const config = buildMockRunConfig({ uncapped: false });
 
     expect(Object.keys(config)).toEqual(CONFIG_TOP_LEVEL_KEYS);
-    expect(config.runtime).toBe("phase_d_shell");
+    expect(config.runtime).toBe("scripted");
     expect(config.concurrency).toEqual(DEFAULT_AEGIS_CONFIG.concurrency);
   });
 });

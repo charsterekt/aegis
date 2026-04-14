@@ -7,7 +7,7 @@ import { reapFinishedWork } from "./reaper.js";
 import { triageReadyWork } from "./triage.js";
 import { BeadsTrackerClient } from "../tracker/beads-tracker.js";
 import type { AgentRuntime } from "../runtime/agent-runtime.js";
-import { createAgentRuntime } from "../runtime/phase-d-shell-runtime.js";
+import { createAgentRuntime } from "../runtime/scripted-agent-runtime.js";
 import { writePhaseLog } from "./phase-log.js";
 
 export type LoopPhase = "poll" | "dispatch" | "monitor" | "reap";

@@ -7,7 +7,7 @@ import type {
 } from "./agent-runtime.js";
 import { readSessionReport, writeSessionReport } from "./session-report.js";
 
-export class PhaseDShellRuntime implements AgentRuntime {
+export class ScriptedAgentRuntime implements AgentRuntime {
   async launch(input: RuntimeLaunchInput): Promise<RuntimeLaunchResult> {
     const sessionId = randomUUID();
     const startedAt = new Date().toISOString();
@@ -43,9 +43,11 @@ export class PhaseDShellRuntime implements AgentRuntime {
   }
 }
 
-class UnsupportedPiRuntime implements AgentRuntime {
+class UnsupportedPiDispatchRuntime implements AgentRuntime {
   async launch(_input: RuntimeLaunchInput): Promise<RuntimeLaunchResult> {
-    throw new Error("The pi runtime dispatch path returns in Phase E. Use phase_d_shell for deterministic Phase D proof runs.");
+    throw new Error(
+      "Provider-backed dispatch runtime is not implemented. Use `scripted` for deterministic loop tests.",
+    );
   }
 
   async readSession() {
@@ -63,12 +65,12 @@ class UnsupportedPiRuntime implements AgentRuntime {
 }
 
 export function createAgentRuntime(runtime: string): AgentRuntime {
-  if (runtime === "phase_d_shell") {
-    return new PhaseDShellRuntime();
+  if (runtime === "scripted") {
+    return new ScriptedAgentRuntime();
   }
 
   if (runtime === "pi") {
-    return new UnsupportedPiRuntime();
+    return new UnsupportedPiDispatchRuntime();
   }
 
   throw new Error(`Unsupported runtime adapter: ${runtime}`);

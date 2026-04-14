@@ -30,7 +30,7 @@ describe("BeadsTrackerClient", () => {
     );
     const tracker = new BeadsTrackerClient({ execFile });
 
-    const issue = await tracker.getIssue("aegis-123", "C:/repo");
+    const issue = await tracker.getIssue("aegis-123", "repo");
 
     expect(execFile).toHaveBeenCalled();
     expect(issue).toMatchObject({

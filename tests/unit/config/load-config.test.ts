@@ -86,6 +86,9 @@ describe("S01 config contract seed", () => {
       labor: {
         base_path: ".aegis/custom-labors",
       },
+      git: {
+        base_branch: "develop",
+      },
     });
 
     expect(loadConfig(projectRoot)).toEqual({
@@ -97,6 +100,9 @@ describe("S01 config contract seed", () => {
       },
       labor: {
         base_path: ".aegis/custom-labors",
+      },
+      git: {
+        base_branch: "develop",
       },
     });
   });

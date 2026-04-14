@@ -153,6 +153,20 @@ export function emptyDispatchState(): DispatchState {
   };
 }
 
+export function replaceDispatchRecord(
+  state: DispatchState,
+  issueId: string,
+  record: DispatchRecord,
+): DispatchState {
+  return {
+    schemaVersion: state.schemaVersion,
+    records: {
+      ...state.records,
+      [issueId]: record,
+    },
+  };
+}
+
 export function activeTitanScopes(state: DispatchState): Array<{ issueId: string; files: string[] }> {
   const result: Array<{ issueId: string; files: string[] }> = [];
   for (const record of Object.values(state.records)) {

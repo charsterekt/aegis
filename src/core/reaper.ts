@@ -23,7 +23,7 @@ export interface ReapResult {
 function toCompletedRecord(record: DispatchRecord, timestamp: string): DispatchRecord {
   return {
     ...record,
-    stage: "phase_d_complete",
+    stage: "scouted",
     runningAgent: null,
     consecutiveFailures: 0,
     cooldownUntil: null,
@@ -73,7 +73,7 @@ export async function reapFinishedWork(input: ReapInput): Promise<ReapResult> {
         phase: "reap",
         issueId,
         action: "finalize_session",
-        outcome: "phase_d_complete",
+        outcome: "scouted",
         sessionId: snapshot.sessionId,
       });
       continue;

@@ -27,10 +27,12 @@ import {
   readRuntimeCommandRequests,
   writeRuntimeCommandResponse,
   type RuntimeCasteAction,
+  type RuntimeMergeAction,
   type RuntimeCommandRequest,
   type RuntimeCommandResponse,
 } from "./runtime-command.js";
 import { createCasteRuntime } from "../runtime/create-caste-runtime.js";
+import { runMergeNext as defaultRunMergeNext } from "../merge/merge-next.js";
 import {
   formatStartupPreflight,
   runStartupPreflight,
@@ -108,6 +110,7 @@ export interface StartCommandOptions {
   registerSignalHandlers?: boolean;
   runDaemonCycle?: (root: string) => Promise<void>;
   runCasteCommand?: (root: string, action: RuntimeCasteAction, issueId: string) => Promise<unknown>;
+  runMergeCommand?: (root: string, action: RuntimeMergeAction) => Promise<unknown>;
 }
 
 export interface TrackerProbeResult {
@@ -253,7 +256,7 @@ function verifyGitRepository(root: string) {
 }
 
 function verifyRuntimeAdapter(config: AegisConfig): StartupPreflightProbeResult {
-  if (config.runtime !== "pi" && config.runtime !== "phase_d_shell") {
+  if (config.runtime !== "pi" && config.runtime !== "scripted") {
     return {
       ok: false,
       detail: `Unsupported runtime adapter: ${config.runtime}`,
@@ -569,6 +572,8 @@ export async function startAegis(
         issueId,
       }),
     }));
+  const runMergeCommand = options.runMergeCommand ?? ((candidateRoot: string, action: RuntimeMergeAction) =>
+    action === "next" ? defaultRunMergeNext(candidateRoot) : Promise.resolve(null));
 
   clearStopRequest(repoRoot);
   clearRuntimeCommandArtifacts(repoRoot);
@@ -644,14 +649,18 @@ export async function startAegis(
     try {
       const result = request.command_kind === "caste"
         ? await runCasteCommand(repoRoot, request.action, request.issue_id)
-        : await runLoopPhase(repoRoot, request.phase, {
-          sessionProvenanceId: String(process.pid),
-        });
+        : request.command_kind === "merge"
+          ? await runMergeCommand(repoRoot, request.action)
+          : await runLoopPhase(repoRoot, request.phase, {
+            sessionProvenanceId: String(process.pid),
+          });
       const response: RuntimeCommandResponse = {
         request_id: request.request_id,
         command_kind: request.command_kind,
         ...(request.command_kind === "caste"
           ? { action: request.action, issue_id: request.issue_id }
+          : request.command_kind === "merge"
+            ? { action: request.action }
           : { phase: request.phase }),
         completed_at: new Date().toISOString(),
         result,
@@ -665,6 +674,8 @@ export async function startAegis(
         command_kind: request.command_kind,
         ...(request.command_kind === "caste"
           ? { action: request.action, issue_id: request.issue_id }
+          : request.command_kind === "merge"
+            ? { action: request.action }
           : { phase: request.phase }),
         completed_at: new Date().toISOString(),
         error: detail,
@@ -691,6 +702,7 @@ export async function startAegis(
     cycleInFlight = true;
     try {
       await runDaemonCycle(repoRoot);
+      await runMergeCommand(repoRoot, "next");
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       appendDaemonLog(repoRoot, `[daemon][cycle_error] ${detail}`);

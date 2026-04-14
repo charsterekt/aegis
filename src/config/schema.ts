@@ -7,6 +7,7 @@ export const CONFIG_TOP_LEVEL_KEYS = [
   "thresholds",
   "janus",
   "labor",
+  "git",
 ] as const;
 
 export const MODEL_KEYS = [
@@ -35,6 +36,7 @@ export const THRESHOLD_KEYS = [
 
 export const JANUS_KEYS = ["enabled", "max_invocations_per_issue"] as const;
 export const LABOR_KEYS = ["base_path"] as const;
+export const GIT_KEYS = ["base_branch"] as const;
 
 export const RUNTIME_STATE_FILES = [
   ".aegis/dispatch-state.json",
@@ -70,5 +72,8 @@ export interface AegisConfig {
   };
   labor: {
     base_path: string;
+  };
+  git: {
+    base_branch: string;
   };
 }

@@ -7,7 +7,7 @@ describe("runMockCommand", () => {
     const execFileSync = vi.fn();
 
     await runMockCommand(["node", "../dist/index.js", "status"], {
-      mockDir: "C:/repo/aegis-mock-run",
+      mockDir: "repo/aegis-mock-run",
       execFileSync,
     });
 
@@ -15,7 +15,7 @@ describe("runMockCommand", () => {
       process.execPath,
       ["../dist/index.js", "status"],
       expect.objectContaining({
-        cwd: "C:/repo/aegis-mock-run",
+        cwd: "repo/aegis-mock-run",
         stdio: "inherit",
       }),
     );
@@ -38,7 +38,7 @@ describe("runMockCommand", () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await runMockCommand(["node", "../dist/index.js", "start"], {
-      mockDir: "C:/repo/aegis-mock-run",
+      mockDir: "repo/aegis-mock-run",
       execFileSync,
       spawn: spawn as never,
       waitForDaemonStart,
@@ -50,14 +50,14 @@ describe("runMockCommand", () => {
       process.execPath,
       ["../dist/index.js", "start"],
       expect.objectContaining({
-        cwd: "C:/repo/aegis-mock-run",
+        cwd: "repo/aegis-mock-run",
         detached: true,
         stdio: "ignore",
         windowsHide: true,
       }),
     );
     expect(unref).toHaveBeenCalledTimes(1);
-    expect(waitForDaemonStart).toHaveBeenCalledWith("C:/repo/aegis-mock-run", 4242, 5_000);
+    expect(waitForDaemonStart).toHaveBeenCalledWith("repo/aegis-mock-run", 4242, 5_000);
     expect(consoleLog).toHaveBeenCalledWith("Aegis started in auto mode (pid 4242)");
 
     consoleLog.mockRestore();

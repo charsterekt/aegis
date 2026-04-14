@@ -8,7 +8,7 @@ describe("createCasteRuntime", () => {
     const scriptedRuntime = { kind: "scripted", run: vi.fn() };
     const createScriptedRuntime = vi.fn(() => scriptedRuntime);
 
-    const runtime = createCasteRuntime("phase_d_shell", {
+    const runtime = createCasteRuntime("scripted", {
       createPiRuntime,
       createScriptedRuntime,
     });

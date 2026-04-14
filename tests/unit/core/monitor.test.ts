@@ -79,14 +79,14 @@ describe("monitorActiveWork", () => {
         stuck_warning_seconds: 90,
         stuck_kill_seconds: 150,
       },
-      root: "C:/repo",
+      root: "repo",
       now: "2026-04-14T12:00:00.000Z",
     });
 
     expect(result.killList).toEqual(["ISSUE-1"]);
     expect(result.readyToReap).toEqual(["ISSUE-1"]);
     expect(terminate).toHaveBeenCalledWith(
-      "C:/repo",
+      "repo",
       "session-1",
       "Exceeded stuck kill threshold.",
     );
@@ -116,7 +116,7 @@ describe("monitorActiveWork", () => {
         stuck_warning_seconds: 90,
         stuck_kill_seconds: 150,
       },
-      root: "C:/repo",
+      root: "repo",
       now: "2026-04-14T12:00:00.000Z",
     });
 

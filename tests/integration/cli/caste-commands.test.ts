@@ -23,15 +23,15 @@ describe("runCli caste commands", () => {
 
     const { runCli } = await import("../../../src/index.js");
 
-    await runCli("C:/repo", ["scout", "aegis-1"]);
-    await runCli("C:/repo", ["implement", "aegis-2"]);
-    await runCli("C:/repo", ["review", "aegis-3"]);
-    await runCli("C:/repo", ["process", "aegis-4"]);
+    await runCli("repo", ["scout", "aegis-1"]);
+    await runCli("repo", ["implement", "aegis-2"]);
+    await runCli("repo", ["review", "aegis-3"]);
+    await runCli("repo", ["process", "aegis-4"]);
 
-    expect(runDirectCasteCommand).toHaveBeenNthCalledWith(1, "C:/repo", "scout", "aegis-1");
-    expect(runDirectCasteCommand).toHaveBeenNthCalledWith(2, "C:/repo", "implement", "aegis-2");
-    expect(runDirectCasteCommand).toHaveBeenNthCalledWith(3, "C:/repo", "review", "aegis-3");
-    expect(runDirectCasteCommand).toHaveBeenNthCalledWith(4, "C:/repo", "process", "aegis-4");
+    expect(runDirectCasteCommand).toHaveBeenNthCalledWith(1, "repo", "scout", "aegis-1");
+    expect(runDirectCasteCommand).toHaveBeenNthCalledWith(2, "repo", "implement", "aegis-2");
+    expect(runDirectCasteCommand).toHaveBeenNthCalledWith(3, "repo", "review", "aegis-3");
+    expect(runDirectCasteCommand).toHaveBeenNthCalledWith(4, "repo", "process", "aegis-4");
     expect(consoleLog).toHaveBeenCalledTimes(4);
 
     consoleLog.mockRestore();

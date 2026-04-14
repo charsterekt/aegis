@@ -18,7 +18,7 @@ describe("runDirectCasteCommand", () => {
     const runLocal = vi.fn(async () => ({ action: "scout", issueId: "aegis-123", source: "local" }));
     const routeToDaemon = vi.fn();
 
-    const result = await runDirectCasteCommand("C:/repo", "scout", "aegis-123", {
+    const result = await runDirectCasteCommand("repo", "scout", "aegis-123", {
       readRuntimeState: () => null,
       isProcessRunning: () => false,
       runLocal,
@@ -26,7 +26,7 @@ describe("runDirectCasteCommand", () => {
     });
 
     expect(result).toEqual({ action: "scout", issueId: "aegis-123", source: "local" });
-    expect(runLocal).toHaveBeenCalledWith("C:/repo", "scout", "aegis-123");
+    expect(runLocal).toHaveBeenCalledWith("repo", "scout", "aegis-123");
     expect(routeToDaemon).not.toHaveBeenCalled();
   });
 
@@ -38,7 +38,7 @@ describe("runDirectCasteCommand", () => {
       source: "daemon",
     }));
 
-    const result = await runDirectCasteCommand("C:/repo", "implement", "aegis-123", {
+    const result = await runDirectCasteCommand("repo", "implement", "aegis-123", {
       readRuntimeState: () => createRuntimeState(),
       isProcessRunning: () => true,
       runLocal,
@@ -51,6 +51,6 @@ describe("runDirectCasteCommand", () => {
       source: "daemon",
     });
     expect(runLocal).not.toHaveBeenCalled();
-    expect(routeToDaemon).toHaveBeenCalledWith("C:/repo", "implement", "aegis-123", 4242);
+    expect(routeToDaemon).toHaveBeenCalledWith("repo", "implement", "aegis-123", 4242);
   });
 });
