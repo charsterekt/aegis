@@ -1,6 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { execFile, spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { accessSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -23,7 +22,6 @@ import {
 import { STOP_COMMAND_REASONS } from "./stop.js";
 import {
   clearStopRequest,
-  isAegisOwned,
   isProcessRunning,
   readStopRequest,
   readRuntimeState,
@@ -52,8 +50,6 @@ export const CANONICAL_SHUTDOWN_SEQUENCE = [
   "print_shutdown_summary",
 ] as const;
 
-const DEFAULT_HOST = "terminal";
-const DEFAULT_PORT = 0;
 const STOP_REQUEST_POLL_MS = 150;
 const HEARTBEAT_LOG_INTERVAL_MS = 5_000;
 
@@ -83,10 +79,7 @@ export interface StartRuntimeController {
 
 export interface StartResult {
   root: string;
-  host: string;
-  port: number;
-  url: string;
-  openedBrowser: boolean;
+  mode: "auto";
   runtime: StartRuntimeController;
 }
 
@@ -396,18 +389,13 @@ function verifyRuntimeStatePaths(repoRoot: string): StartupPreflightProbeResult 
 
 function toRunningRuntimeState(
   pid: number,
-  token: string,
 ): RuntimeStateRecord {
   return {
     schema_version: 1,
     pid,
-    server_token: token,
-    host: DEFAULT_HOST,
-    port: DEFAULT_PORT,
     server_state: "running",
     mode: "auto",
     started_at: new Date().toISOString(),
-    browser_opened: false,
   };
 }
 
@@ -531,9 +519,7 @@ export async function startAegis(
   const recoveredRuntime = readRuntimeState(repoRoot);
   const isAlreadyRunning = recoveredRuntime
     && recoveredRuntime.server_state !== "stopped"
-    && (recoveredRuntime.server_token
-      ? await isAegisOwned(recoveredRuntime)
-      : isProcessRunning(recoveredRuntime.pid));
+    && isProcessRunning(recoveredRuntime.pid);
 
   if (isAlreadyRunning) {
     throw new Error(
@@ -542,8 +528,7 @@ export async function startAegis(
   }
 
   const resolvedConfig = config ?? loadConfig(repoRoot);
-  const token = randomUUID();
-  let runningState = toRunningRuntimeState(process.pid, token);
+  let runningState = toRunningRuntimeState(process.pid);
   let hasStopped = false;
   let stopRequestPoller: NodeJS.Timeout | null = null;
   let heartbeatTimer: NodeJS.Timeout | null = null;
@@ -612,10 +597,7 @@ export async function startAegis(
 
   return {
     root: repoRoot,
-    host: DEFAULT_HOST,
-    port: DEFAULT_PORT,
-    url: "aegis://terminal-daemon",
-    openedBrowser: false,
+    mode: "auto",
     runtime,
   };
 }

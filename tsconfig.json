@@ -13,11 +13,5 @@
     "outDir": "dist",
     "types": ["node", "vitest/importMeta"]
   },
-  "include": [
-    "src/index.ts",
-    "src/shared/**/*.ts",
-    "src/config/**/*.ts",
-    "src/cli/**/*.ts",
-    "src/core/dispatch-state.ts"
-  ]
+  "include": ["src/**/*.ts"]
 }

@@ -1,10 +1,10 @@
-import { isAegisOwned, isProcessRunning, readRuntimeState } from "./runtime-state.js";
+import { isProcessRunning, readRuntimeState } from "./runtime-state.js";
 
 export const STATUS_COMMAND_NAME = "status";
 
 export interface StatusSnapshot {
   server_state: "running" | "stopped";
-  mode: "auto" | "paused" | "conversational";
+  mode: "auto" | "paused";
   active_agents: number;
   queue_depth: number;
   uptime_ms: number;
@@ -17,7 +17,7 @@ export interface StatusCommandContract {
 
 const DEFAULT_SNAPSHOT: StatusSnapshot = {
   server_state: "stopped",
-  mode: "conversational",
+  mode: "auto",
   active_agents: 0,
   queue_depth: 0,
   uptime_ms: 0,
@@ -52,9 +52,7 @@ export async function getAegisStatus(root = process.cwd()): Promise<StatusSnapsh
     return DEFAULT_SNAPSHOT;
   }
 
-  const isRunning = recoveredRuntime.server_token
-    ? await isAegisOwned(recoveredRuntime)
-    : isProcessRunning(recoveredRuntime.pid);
+  const isRunning = isProcessRunning(recoveredRuntime.pid);
 
   if (recoveredRuntime.server_state !== "stopped" && isRunning) {
     return {

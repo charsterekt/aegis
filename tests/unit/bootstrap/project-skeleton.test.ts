@@ -92,21 +92,11 @@ describe("S00 project skeleton contract", () => {
 
     expect(tsconfig.compilerOptions.rootDir).toBe("src");
     expect(tsconfig.compilerOptions.outDir).toBe("dist");
-    expect(tsconfig.include).toEqual([
-      "src/index.ts",
-      "src/shared/**/*.ts",
-      "src/config/**/*.ts",
-      "src/cli/**/*.ts",
-      "src/core/dispatch-state.ts",
-    ]);
+    expect(tsconfig.include).toEqual(["src/**/*.ts"]);
     expect(testTsconfig.compilerOptions.noEmit).toBe(true);
     expect((testTsconfig.include as string[])).toEqual(
       expect.arrayContaining([
-        "src/index.ts",
-        "src/shared/**/*.ts",
-        "src/config/**/*.ts",
-        "src/cli/**/*.ts",
-        "src/core/dispatch-state.ts",
+        "src/**/*.ts",
         "tests/**/*.ts",
         "vitest.config.ts",
       ]),
@@ -284,6 +274,17 @@ describe("S00 project skeleton contract", () => {
     expect(vitestConfig.default.test?.projects).toBeUndefined();
     expect(vitestConfig.default.test?.include).toEqual(["tests/**/*.{test,spec}.{ts,tsx}"]);
     expect(vitestConfig.default.test?.environment).toBe("node");
+  });
+
+  it("keeps the stripped source tree free of hidden legacy orchestration modules", () => {
+    expect(existsSync(path.join(repoRoot, "src", "castes"))).toBe(false);
+    expect(existsSync(path.join(repoRoot, "src", "labor"))).toBe(false);
+    expect(existsSync(path.join(repoRoot, "src", "merge"))).toBe(false);
+    expect(existsSync(path.join(repoRoot, "src", "runtime"))).toBe(false);
+    expect(existsSync(path.join(repoRoot, "src", "tracker"))).toBe(false);
+    expect(existsSync(path.join(repoRoot, "src", "cli", "parse-command.ts"))).toBe(false);
+    expect(existsSync(path.join(repoRoot, "src", "shared", "issue-id.ts"))).toBe(false);
+    expect(existsSync(path.join(repoRoot, "src", "shared", "steer-command-reference.ts"))).toBe(false);
   });
 
   it("creates the workspace skeleton required by the workspace contract", () => {

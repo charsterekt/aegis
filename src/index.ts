@@ -60,7 +60,7 @@ export async function runCli(
   if (command === "start") {
     const overrides = parseStartOverrides(argv.slice(1));
     const result = await startAegis(root, overrides);
-    console.log(`Aegis started at ${result.url} (pid ${process.pid})`);
+    console.log(`Aegis started in ${result.mode} mode (pid ${process.pid})`);
     return manifest;
   }
 

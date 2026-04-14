@@ -5,11 +5,7 @@
     "noEmit": true
   },
   "include": [
-    "src/index.ts",
-    "src/shared/**/*.ts",
-    "src/config/**/*.ts",
-    "src/cli/**/*.ts",
-    "src/core/dispatch-state.ts",
+    "src/**/*.ts",
     "tests/**/*.ts",
     "vitest.config.ts"
   ]

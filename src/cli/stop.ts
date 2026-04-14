@@ -1,6 +1,5 @@
 import {
   clearStopRequest,
-  isAegisOwned,
   isProcessRunning,
   readRuntimeState,
   writeStopRequest,
@@ -75,9 +74,7 @@ export async function stopAegis(
     };
   }
 
-  const owned = recoveredRuntime.server_token
-    ? await isAegisOwned(recoveredRuntime)
-    : isProcessRunning(recoveredRuntime.pid);
+  const owned = isProcessRunning(recoveredRuntime.pid);
 
   if (!owned) {
     clearStopRequest(root);
@@ -107,30 +104,20 @@ export async function stopAegis(
   let stoppedGracefully = await waitForExit(recoveredRuntime.pid, gracefulTimeoutMs);
 
   if (!stoppedGracefully && isProcessRunning(recoveredRuntime.pid)) {
-    if (recoveredRuntime.server_token && !(await isAegisOwned(recoveredRuntime))) {
-      stoppedGracefully = true;
-    } else {
-      process.kill(recoveredRuntime.pid, "SIGTERM");
-      stoppedGracefully = await waitForExit(recoveredRuntime.pid, 5_000);
-    }
+    process.kill(recoveredRuntime.pid, "SIGTERM");
+    stoppedGracefully = await waitForExit(recoveredRuntime.pid, 5_000);
   }
   let forced = false;
 
   if (!stoppedGracefully && isProcessRunning(recoveredRuntime.pid)) {
-    if (recoveredRuntime.server_token && !(await isAegisOwned(recoveredRuntime))) {
-      stoppedGracefully = true;
-    } else {
-      forced = true;
-      process.kill(recoveredRuntime.pid, "SIGKILL");
-      stoppedGracefully = await waitForExit(recoveredRuntime.pid, 2_000);
-    }
+    forced = true;
+    process.kill(recoveredRuntime.pid, "SIGKILL");
+    stoppedGracefully = await waitForExit(recoveredRuntime.pid, 2_000);
   }
 
   clearStopRequest(root);
   if (!stoppedGracefully) {
-    const stillOwned = recoveredRuntime.server_token
-      ? await isAegisOwned(recoveredRuntime)
-      : isProcessRunning(recoveredRuntime.pid);
+    const stillOwned = isProcessRunning(recoveredRuntime.pid);
 
     if (stillOwned) {
       throw new Error(
