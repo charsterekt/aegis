@@ -46,6 +46,7 @@ afterEach(() => {
 
 describe("dispatchReadyWork", () => {
   it("marks oracle dispatch as running and records the returned session id", async () => {
+    const root = createTempRoot();
     const result = await dispatchReadyWork({
       dispatchState: emptyDispatchState(),
       decisions: [
@@ -58,7 +59,7 @@ describe("dispatchReadyWork", () => {
       ],
       runtime: createRuntime(),
       sessionProvenanceId: "daemon-1",
-      root: "repo",
+      root,
       now: "2026-04-14T12:00:00.000Z",
     });
 
@@ -76,6 +77,7 @@ describe("dispatchReadyWork", () => {
   });
 
   it("puts failed launches on cooldown so the same issue is not redispatched immediately", async () => {
+    const root = createTempRoot();
     const result = await dispatchReadyWork({
       dispatchState: emptyDispatchState(),
       decisions: [
@@ -98,7 +100,7 @@ describe("dispatchReadyWork", () => {
         },
       },
       sessionProvenanceId: "daemon-1",
-      root: "repo",
+      root,
       now: "2026-04-14T12:00:00.000Z",
     });
 
@@ -108,6 +110,7 @@ describe("dispatchReadyWork", () => {
   });
 
   it("stops dispatching the rest of the current pass after a launch failure", async () => {
+    const root = createTempRoot();
     let calls = 0;
     const result = await dispatchReadyWork({
       dispatchState: emptyDispatchState(),
@@ -138,7 +141,7 @@ describe("dispatchReadyWork", () => {
         },
       },
       sessionProvenanceId: "daemon-1",
-      root: "repo",
+      root,
       now: "2026-04-14T12:00:00.000Z",
     });
 
