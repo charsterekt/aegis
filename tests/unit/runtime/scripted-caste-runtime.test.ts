@@ -4,17 +4,27 @@ import { ScriptedCasteRuntime } from "../../../src/runtime/scripted-caste-runtim
 
 describe("ScriptedCasteRuntime", () => {
   it("returns deterministic output and tool usage for the requested caste", async () => {
-    const runtime = new ScriptedCasteRuntime({
-      oracle: () => ({
-        output: JSON.stringify({
-          files_affected: ["src/index.ts"],
-          estimated_complexity: "moderate",
-          decompose: false,
-          ready: true,
+    const runtime = new ScriptedCasteRuntime(
+      {
+        oracle: {
+          reference: "openai-codex:gpt-5.4-mini",
+          provider: "openai-codex",
+          modelId: "gpt-5.4-mini",
+          thinkingLevel: "medium",
+        },
+      },
+      {
+        oracle: () => ({
+          output: JSON.stringify({
+            files_affected: ["src/index.ts"],
+            estimated_complexity: "moderate",
+            decompose: false,
+            ready: true,
+          }),
+          toolsUsed: ["read_file"],
         }),
-        toolsUsed: ["read_file"],
-      }),
-    });
+      },
+    );
 
     const result = await runtime.run({
       caste: "oracle",
@@ -28,5 +38,21 @@ describe("ScriptedCasteRuntime", () => {
     expect(result.status).toBe("succeeded");
     expect(result.toolsUsed).toEqual(["read_file"]);
     expect(result.outputText).toContain("\"ready\":true");
+    expect(result).toMatchObject({
+      modelRef: "openai-codex:gpt-5.4-mini",
+      provider: "openai-codex",
+      modelId: "gpt-5.4-mini",
+      thinkingLevel: "medium",
+      messageLog: [
+        {
+          role: "user",
+          content: "prompt",
+        },
+        {
+          role: "assistant",
+          content: expect.stringContaining("\"ready\":true"),
+        },
+      ],
+    });
   });
 });

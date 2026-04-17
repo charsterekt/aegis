@@ -1,8 +1,12 @@
+import type { CasteConfigKey } from "./caste-config.js";
+import { CASTE_CONFIG_KEYS } from "./caste-config.js";
+
 export const AEGIS_DIRECTORY = ".aegis";
 
 export const CONFIG_TOP_LEVEL_KEYS = [
   "runtime",
   "models",
+  "thinking",
   "concurrency",
   "thresholds",
   "janus",
@@ -10,12 +14,17 @@ export const CONFIG_TOP_LEVEL_KEYS = [
   "git",
 ] as const;
 
-export const MODEL_KEYS = [
-  "oracle",
-  "titan",
-  "sentinel",
-  "janus",
+export const MODEL_KEYS = CASTE_CONFIG_KEYS;
+export const THINKING_KEYS = CASTE_CONFIG_KEYS;
+
+export const THINKING_LEVELS = [
+  "off",
+  "low",
+  "medium",
+  "high",
 ] as const;
+
+export type AegisThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 export const CONCURRENCY_KEYS = [
   "max_agents",
@@ -46,10 +55,10 @@ export const RUNTIME_STATE_FILES = [
 export interface AegisConfig {
   runtime: string;
   models: {
-    oracle: string;
-    titan: string;
-    sentinel: string;
-    janus: string;
+    [key in CasteConfigKey]: string;
+  };
+  thinking: {
+    [key in CasteConfigKey]: AegisThinkingLevel;
   };
   concurrency: {
     max_agents: number;

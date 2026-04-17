@@ -90,6 +90,11 @@ describe("S01 init project contract seed", () => {
         ),
       ).toEqual(DEFAULT_AEGIS_CONFIG);
       expect(
+        JSON.parse(
+          readFileSync(path.join(tempRepo, ".aegis", "config.json"), "utf8"),
+        ).thinking,
+      ).toEqual(DEFAULT_AEGIS_CONFIG.thinking);
+      expect(
         loadDispatchState(tempRepo),
       ).toEqual(emptyDispatchState());
       expect(

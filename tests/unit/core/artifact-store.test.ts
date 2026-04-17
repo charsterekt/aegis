@@ -43,4 +43,27 @@ describe("persistArtifact", () => {
     });
     expect(existsSync(`${artifactPath}.tmp`)).toBe(false);
   });
+
+  it("supports transcript artifacts with an explicit artifact id", () => {
+    const root = createTempRoot();
+    const ref = persistArtifact(root, {
+      family: "transcripts",
+      issueId: "aegis-123",
+      artifactId: "oracle",
+      artifact: {
+        issueId: "aegis-123",
+        caste: "oracle",
+        prompt: "Scout aegis-123",
+      },
+    });
+
+    const artifactPath = path.join(root, ".aegis", "transcripts", "aegis-123--oracle.json");
+
+    expect(ref).toBe(path.join(".aegis", "transcripts", "aegis-123--oracle.json"));
+    expect(existsSync(artifactPath)).toBe(true);
+    expect(JSON.parse(readFileSync(artifactPath, "utf8"))).toMatchObject({
+      issueId: "aegis-123",
+      caste: "oracle",
+    });
+  });
 });

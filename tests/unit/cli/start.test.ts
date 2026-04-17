@@ -12,6 +12,9 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { initProject } from "../../../src/config/init-project.js";
+import {
+  StartupPreflightBlockedError,
+} from "../../../src/cli/startup-preflight.js";
 import { verifyTrackerRepository } from "../../../src/cli/start.js";
 
 const tempRoots: string[] = [];
@@ -365,5 +368,55 @@ describe("startAegis daemon loop", () => {
     ).toBe(true);
 
     await result.runtime.stop();
+  });
+
+  it("blocks startup when configured pi model validation fails", async () => {
+    const root = createTempRoot();
+    initProject(root);
+
+    const configPath = path.join(root, ".aegis", "config.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8")) as {
+      runtime: string;
+    };
+    writeFileSync(
+      configPath,
+      `${JSON.stringify({
+        ...config,
+        runtime: "pi",
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    mkdirSync(path.join(root, ".pi"), { recursive: true });
+    writeFileSync(path.join(root, ".pi", "settings.json"), "{}\n", "utf8");
+
+    const startModule = await import("../../../src/cli/start.js");
+
+    await expect(startModule.startAegis(root, {}, {
+      verifyTracker: () => undefined,
+      verifyGitRepo: () => undefined,
+      probeBeadsCli: () => ({
+        ok: true,
+        detail: "Beads CLI is available.",
+      }),
+      registerSignalHandlers: false,
+      verifyModelRefs: () => ({
+        ok: false,
+        detail:
+          'Configured provider "openai-codex" for "titan" is not authenticated. Authenticated providers: anthropic',
+        fix: "authenticate the configured provider or update the configured model ref",
+      }),
+    })).rejects.toMatchObject({
+      name: StartupPreflightBlockedError.name,
+      report: {
+        overall: "blocked",
+        checks: expect.arrayContaining([
+          expect.objectContaining({
+            id: "model_refs",
+            status: "fail",
+            detail: expect.stringContaining("Authenticated providers: anthropic"),
+          }),
+        ]),
+      },
+    });
   });
 });

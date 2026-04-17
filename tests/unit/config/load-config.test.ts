@@ -22,6 +22,7 @@ import {
   CONFIG_TOP_LEVEL_KEYS,
   RUNTIME_STATE_FILES,
 } from "../../../src/config/schema.js";
+import { applyConfigPatch } from "../../../src/config/load-config.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..");
 const tempRoots: string[] = [];
@@ -98,6 +99,9 @@ describe("S01 config contract seed", () => {
         ...DEFAULT_AEGIS_CONFIG.models,
         oracle: "pi:oracle-fast",
       },
+      thinking: {
+        ...DEFAULT_AEGIS_CONFIG.thinking,
+      },
       labor: {
         base_path: ".aegis/custom-labors",
       },
@@ -119,6 +123,34 @@ describe("S01 config contract seed", () => {
     expect(loadConfig(projectRoot).thresholds).toEqual({
       ...DEFAULT_AEGIS_CONFIG.thresholds,
       stuck_warning_seconds: 30,
+    });
+  });
+
+  it("fills missing thinking fields from defaults", () => {
+    const projectRoot = createTempProjectRoot();
+
+    writeConfigFixture(projectRoot, {
+      thinking: {
+        titan: "high",
+      },
+    });
+
+    expect(loadConfig(projectRoot).thinking).toEqual({
+      ...DEFAULT_AEGIS_CONFIG.thinking,
+      titan: "high",
+    });
+  });
+
+  it("patches nested thinking fields without replacing the domain", () => {
+    const next = applyConfigPatch(DEFAULT_AEGIS_CONFIG, {
+      thinking: {
+        janus: "high",
+      },
+    });
+
+    expect(next.thinking).toEqual({
+      ...DEFAULT_AEGIS_CONFIG.thinking,
+      janus: "high",
     });
   });
 
@@ -155,6 +187,34 @@ describe("S01 config contract seed", () => {
 
     expect(() => loadConfig(projectRoot)).toThrow(
       'Expected "models.oracle" to be a string',
+    );
+  });
+
+  it("rejects invalid thinking level values", () => {
+    const projectRoot = createTempProjectRoot();
+
+    writeConfigFixture(projectRoot, {
+      thinking: {
+        oracle: "extreme",
+      },
+    });
+
+    expect(() => loadConfig(projectRoot)).toThrow(
+      'Expected "thinking.oracle" to be one of "off", "low", "medium", "high"',
+    );
+  });
+
+  it("rejects non-string thinking level values", () => {
+    const projectRoot = createTempProjectRoot();
+
+    writeConfigFixture(projectRoot, {
+      thinking: {
+        oracle: 5,
+      },
+    });
+
+    expect(() => loadConfig(projectRoot)).toThrow(
+      'Expected "thinking.oracle" to be a string',
     );
   });
 

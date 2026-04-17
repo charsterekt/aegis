@@ -10,7 +10,7 @@ import { parseJanusResolutionArtifact } from "../castes/janus/janus-parser.js";
 import { planLaborCreation } from "../labor/create-labor.js";
 import type { RuntimeCasteAction } from "../cli/runtime-command.js";
 import type { AegisIssue } from "../tracker/issue-model.js";
-import type { CasteRuntime } from "../runtime/caste-runtime.js";
+import type { CasteRunInput, CasteRuntime, CasteSessionResult } from "../runtime/caste-runtime.js";
 import { loadConfig } from "../config/load-config.js";
 import {
   enqueueMergeCandidate,
@@ -97,24 +97,80 @@ function saveRecord(root: string, issueId: string, record: DispatchRecord) {
   saveDispatchState(root, replaceDispatchRecord(state, issueId, record));
 }
 
+function persistSessionArtifact(
+  root: string,
+  action: RuntimeCasteAction,
+  runInput: CasteRunInput,
+  session: CasteSessionResult,
+) {
+  return persistArtifact(root, {
+    family: "transcripts",
+    issueId: runInput.issueId,
+    artifactId: runInput.caste,
+    artifact: {
+      issueId: runInput.issueId,
+      caste: runInput.caste,
+      action,
+      prompt: runInput.prompt,
+      workingDirectory: runInput.workingDirectory,
+      modelRef: session.modelRef,
+      provider: session.provider,
+      modelId: session.modelId,
+      thinkingLevel: session.thinkingLevel,
+      sessionId: session.sessionId,
+      toolsUsed: session.toolsUsed,
+      messageLog: session.messageLog,
+      outputText: session.outputText,
+      status: session.status,
+      error: session.error ?? null,
+      startedAt: session.startedAt,
+      finishedAt: session.finishedAt,
+    },
+  });
+}
+
+function createSessionMetadata(
+  transcriptRef: string,
+  runInput: CasteRunInput,
+  session: CasteSessionResult,
+) {
+  return {
+    transcriptRef,
+    prompt: runInput.prompt,
+    workingDirectory: runInput.workingDirectory,
+    modelRef: session.modelRef,
+    provider: session.provider,
+    modelId: session.modelId,
+    thinkingLevel: session.thinkingLevel,
+    sessionId: session.sessionId,
+    toolsUsed: session.toolsUsed,
+    status: session.status,
+  };
+}
+
 async function runScout(
   input: RunCasteCommandInput,
   issue: AegisIssue,
   record: DispatchRecord,
   now: string,
 ): Promise<CasteCommandResult> {
-  const session = await input.runtime.run({
+  const runInput = {
     caste: "oracle",
     issueId: issue.id,
     root: input.root,
     workingDirectory: input.root,
     prompt: buildOraclePrompt(issue),
-  });
+  } satisfies CasteRunInput;
+  const session = await input.runtime.run(runInput);
+  const transcriptRef = persistSessionArtifact(input.root, input.action, runInput, session);
   const assessment = parseOracleAssessment(session.outputText);
   const artifactRef = persistArtifact(input.root, {
     family: "oracle",
     issueId: issue.id,
-    artifact: assessment,
+    artifact: {
+      ...assessment,
+      session: createSessionMetadata(transcriptRef, runInput, session),
+    },
   });
   saveRecord(input.root, issue.id, {
     ...clearDownstreamArtifactRefs(record),
@@ -127,7 +183,7 @@ async function runScout(
     action: input.action,
     issueId: issue.id,
     stage: "scouted",
-    artifactRefs: [artifactRef],
+    artifactRefs: [artifactRef, transcriptRef],
   };
 }
 
@@ -149,13 +205,15 @@ async function runImplement(
     mkdirSync(labor.laborPath, { recursive: true });
   }
 
-  const session = await input.runtime.run({
+  const runInput = {
     caste: "titan",
     issueId: issue.id,
     root: input.root,
     workingDirectory: labor.laborPath,
     prompt: buildTitanPrompt(issue, labor.laborPath),
-  });
+  } satisfies CasteRunInput;
+  const session = await input.runtime.run(runInput);
+  const transcriptRef = persistSessionArtifact(input.root, input.action, runInput, session);
   const artifact = parseTitanArtifact(session.outputText);
   const artifactRef = persistArtifact(input.root, {
     family: "titan",
@@ -165,6 +223,7 @@ async function runImplement(
       labor_path: labor.laborPath,
       candidate_branch: labor.branchName,
       base_branch: labor.baseBranch,
+      session: createSessionMetadata(transcriptRef, runInput, session),
     },
   });
   saveRecord(input.root, issue.id, {
@@ -179,7 +238,7 @@ async function runImplement(
     action: input.action,
     issueId: issue.id,
     stage: artifact.outcome === "success" ? "implemented" : "failed",
-    artifactRefs: [artifactRef],
+    artifactRefs: [artifactRef, transcriptRef],
   };
 }
 
@@ -193,18 +252,23 @@ async function runReview(
     throw new Error("Review requires a merged issue.");
   }
 
-  const session = await input.runtime.run({
+  const runInput = {
     caste: "sentinel",
     issueId: issue.id,
     root: input.root,
     workingDirectory: input.root,
     prompt: buildSentinelPrompt(issue),
-  });
+  } satisfies CasteRunInput;
+  const session = await input.runtime.run(runInput);
+  const transcriptRef = persistSessionArtifact(input.root, input.action, runInput, session);
   const verdict = parseSentinelVerdict(session.outputText);
   const artifactRef = persistArtifact(input.root, {
     family: "sentinel",
     issueId: issue.id,
-    artifact: verdict,
+    artifact: {
+      ...verdict,
+      session: createSessionMetadata(transcriptRef, runInput, session),
+    },
   });
 
   if (verdict.verdict === "pass" && input.tracker.closeIssue) {
@@ -225,7 +289,7 @@ async function runReview(
     action: input.action,
     issueId: issue.id,
     stage: verdict.verdict === "pass" ? "reviewed" : "failed",
-    artifactRefs: [artifactRef],
+    artifactRefs: [artifactRef, transcriptRef],
   };
 }
 
@@ -235,18 +299,23 @@ async function runJanus(
   record: DispatchRecord,
   now: string,
 ): Promise<CasteCommandResult> {
-  const session = await input.runtime.run({
+  const runInput = {
     caste: "janus",
     issueId: issue.id,
     root: input.root,
     workingDirectory: input.root,
     prompt: buildJanusPrompt(issue),
-  });
+  } satisfies CasteRunInput;
+  const session = await input.runtime.run(runInput);
+  const transcriptRef = persistSessionArtifact(input.root, input.action, runInput, session);
   const artifact = parseJanusResolutionArtifact(session.outputText);
   const artifactRef = persistArtifact(input.root, {
     family: "janus",
     issueId: issue.id,
-    artifact,
+    artifact: {
+      ...artifact,
+      session: createSessionMetadata(transcriptRef, runInput, session),
+    },
   });
   const stage = artifact.recommendedNextAction === "requeue"
     ? "queued_for_merge"
@@ -266,7 +335,7 @@ async function runJanus(
     action: input.action,
     issueId: issue.id,
     stage,
-    artifactRefs: [artifactRef],
+    artifactRefs: [artifactRef, transcriptRef],
   };
 }
 

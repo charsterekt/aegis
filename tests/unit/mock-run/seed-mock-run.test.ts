@@ -5,17 +5,13 @@ import { CONFIG_TOP_LEVEL_KEYS } from "../../../src/config/schema.js";
 import { buildMockRunConfig } from "../../../src/mock-run/seed-mock-run.js";
 
 describe("buildMockRunConfig", () => {
-  it("keeps mock-run config within the stripped MVP schema", () => {
+  it("builds a live-ready mock-run config from central defaults", () => {
     const config = buildMockRunConfig();
 
     expect(Object.keys(config)).toEqual(CONFIG_TOP_LEVEL_KEYS);
-    expect(config.runtime).toBe("scripted");
-    expect(config.models).toEqual({
-      ...DEFAULT_AEGIS_CONFIG.models,
-      oracle: "pi:gemma-4-31b-it",
-      titan: "pi:gemma-4-31b-it",
-      sentinel: "pi:gemma-4-31b-it",
-    });
+    expect(config.runtime).toBe("pi");
+    expect(config.models).toEqual(DEFAULT_AEGIS_CONFIG.models);
+    expect(config.thinking).toEqual(DEFAULT_AEGIS_CONFIG.thinking);
     expect(config.concurrency).toEqual({
       max_agents: 10,
       max_oracles: 5,
@@ -28,11 +24,13 @@ describe("buildMockRunConfig", () => {
     expect(config).not.toHaveProperty("economics");
   });
 
-  it("uses the same stripped config domains for bounded mock runs", () => {
-    const config = buildMockRunConfig({ uncapped: false });
+  it("allows explicit scripted fallback without changing model config", () => {
+    const config = buildMockRunConfig({ runtime: "scripted", uncapped: false });
 
     expect(Object.keys(config)).toEqual(CONFIG_TOP_LEVEL_KEYS);
     expect(config.runtime).toBe("scripted");
+    expect(config.models).toEqual(DEFAULT_AEGIS_CONFIG.models);
+    expect(config.thinking).toEqual(DEFAULT_AEGIS_CONFIG.thinking);
     expect(config.concurrency).toEqual(DEFAULT_AEGIS_CONFIG.concurrency);
   });
 });

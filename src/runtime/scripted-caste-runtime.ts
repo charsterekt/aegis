@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 
-import type { CasteName, CasteRunInput, CasteRuntime, CasteSessionResult } from "./caste-runtime.js";
+import type {
+  CasteName,
+  CasteRunInput,
+  CasteRuntime,
+  CasteSessionResult,
+} from "./caste-runtime.js";
+import type { AegisThinkingLevel } from "../config/schema.js";
 
 type ScriptedResponse = {
   output: string;
@@ -9,9 +15,37 @@ type ScriptedResponse = {
 };
 
 type ScriptedHandlers = Partial<Record<CasteName, (input: CasteRunInput) => ScriptedResponse>>;
+type ScriptedModelConfig = {
+  reference: string;
+  provider: string;
+  modelId: string;
+  thinkingLevel: AegisThinkingLevel;
+};
+type ScriptedModelConfigs = Partial<Record<CasteName, ScriptedModelConfig>>;
+
+function isScriptedHandlers(
+  value: ScriptedModelConfigs | ScriptedHandlers,
+): value is ScriptedHandlers {
+  return Object.values(value).every((entry) => entry === undefined || typeof entry === "function");
+}
 
 export class ScriptedCasteRuntime implements CasteRuntime {
-  constructor(private readonly handlers: ScriptedHandlers = {}) {}
+  private readonly modelConfigs: ScriptedModelConfigs;
+  private readonly handlers: ScriptedHandlers;
+
+  constructor(
+    modelConfigsOrHandlers: ScriptedModelConfigs | ScriptedHandlers = {},
+    handlers: ScriptedHandlers = {},
+  ) {
+    if (isScriptedHandlers(modelConfigsOrHandlers)) {
+      this.modelConfigs = {};
+      this.handlers = modelConfigsOrHandlers;
+      return;
+    }
+
+    this.modelConfigs = modelConfigsOrHandlers;
+    this.handlers = handlers;
+  }
 
   async run(input: CasteRunInput): Promise<CasteSessionResult> {
     const startedAt = new Date().toISOString();
@@ -20,13 +54,33 @@ export class ScriptedCasteRuntime implements CasteRuntime {
       toolsUsed: [],
     };
     const finishedAt = new Date().toISOString();
+    const modelConfig = this.modelConfigs[input.caste] ?? {
+      reference: "scripted:deterministic",
+      provider: "scripted",
+      modelId: "deterministic",
+      thinkingLevel: "off" as const,
+    };
 
     return {
       sessionId: randomUUID(),
       caste: input.caste,
+      modelRef: modelConfig.reference,
+      provider: modelConfig.provider,
+      modelId: modelConfig.modelId,
+      thinkingLevel: modelConfig.thinkingLevel,
       status: response.error ? "failed" : "succeeded",
       outputText: response.output,
       toolsUsed: response.toolsUsed ?? [],
+      messageLog: [
+        {
+          role: "user",
+          content: input.prompt,
+        },
+        {
+          role: "assistant",
+          content: response.output,
+        },
+      ],
       startedAt,
       finishedAt,
       ...(response.error ? { error: response.error } : {}),
@@ -34,8 +88,46 @@ export class ScriptedCasteRuntime implements CasteRuntime {
   }
 }
 
-export function createDefaultScriptedCasteRuntime(root = process.cwd(), issueId = "issue"): CasteRuntime {
-  return new ScriptedCasteRuntime({
+function parseConfiguredModel(
+  reference: string,
+  thinkingLevel: AegisThinkingLevel,
+): ScriptedModelConfig {
+  const separatorIndex = reference.indexOf(":");
+  if (separatorIndex <= 0 || separatorIndex === reference.length - 1) {
+    return {
+      reference,
+      provider: "unknown",
+      modelId: "unknown",
+      thinkingLevel,
+    };
+  }
+
+  return {
+    reference,
+    provider: reference.slice(0, separatorIndex),
+    modelId: reference.slice(separatorIndex + 1),
+    thinkingLevel,
+  };
+}
+
+export function createScriptedModelConfigs(
+  configuredModels: Record<CasteName, string>,
+  thinkingLevels: Record<CasteName, AegisThinkingLevel>,
+): ScriptedModelConfigs {
+  return {
+    oracle: parseConfiguredModel(configuredModels.oracle, thinkingLevels.oracle),
+    titan: parseConfiguredModel(configuredModels.titan, thinkingLevels.titan),
+    sentinel: parseConfiguredModel(configuredModels.sentinel, thinkingLevels.sentinel),
+    janus: parseConfiguredModel(configuredModels.janus, thinkingLevels.janus),
+  };
+}
+
+export function createDefaultScriptedCasteRuntime(
+  modelConfigs: ScriptedModelConfigs = {},
+  root = process.cwd(),
+  issueId = "issue",
+): CasteRuntime {
+  return new ScriptedCasteRuntime(modelConfigs, {
     oracle: () => ({
       output: JSON.stringify({
         files_affected: [],

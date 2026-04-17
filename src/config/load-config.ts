@@ -9,10 +9,12 @@ import {
   JANUS_KEYS,
   LABOR_KEYS,
   MODEL_KEYS,
+  THINKING_KEYS,
+  THINKING_LEVELS,
   THRESHOLD_KEYS,
   GIT_KEYS,
 } from "./schema.js";
-import type { AegisConfig } from "./schema.js";
+import type { AegisConfig, AegisThinkingLevel } from "./schema.js";
 
 export { AEGIS_DIRECTORY } from "./schema.js";
 
@@ -55,6 +57,18 @@ function assertBoolean(value: unknown, fieldPath: string) {
   }
 }
 
+function assertThinkingLevel(
+  value: unknown,
+  fieldPath: string,
+): asserts value is AegisThinkingLevel {
+  assertString(value, fieldPath);
+  if (!THINKING_LEVELS.includes(value as AegisThinkingLevel)) {
+    throw new Error(
+      `Expected "${fieldPath}" to be one of ${THINKING_LEVELS.map((level) => `"${level}"`).join(", ")}`,
+    );
+  }
+}
+
 function assertNumber(value: unknown, fieldPath: string): asserts value is number {
   if (typeof value !== "number" || Number.isNaN(value)) {
     throw new Error(`Expected "${fieldPath}" to be a number`);
@@ -94,6 +108,14 @@ export function validatePartialConfig(config: unknown): asserts config is Partia
     validateKnownKeys(config.models, "models", MODEL_KEYS);
     for (const key of Object.keys(config.models)) {
       assertString(config.models[key], `models.${key}`);
+    }
+  }
+
+  if ("thinking" in config) {
+    assertRecord(config.thinking, "thinking");
+    validateKnownKeys(config.thinking, "thinking", THINKING_KEYS);
+    for (const key of Object.keys(config.thinking)) {
+      assertThinkingLevel(config.thinking[key], `thinking.${key}`);
     }
   }
 
@@ -176,6 +198,10 @@ export function mergeConfig(config: PartialConfig): AegisConfig {
       ...DEFAULT_AEGIS_CONFIG.models,
       ...config.models,
     },
+    thinking: {
+      ...DEFAULT_AEGIS_CONFIG.thinking,
+      ...config.thinking,
+    },
     concurrency: {
       ...DEFAULT_AEGIS_CONFIG.concurrency,
       ...config.concurrency,
@@ -212,6 +238,10 @@ export function applyConfigPatch(
     models: {
       ...current.models,
       ...partial.models,
+    },
+    thinking: {
+      ...current.thinking,
+      ...partial.thinking,
     },
     concurrency: {
       ...current.concurrency,
