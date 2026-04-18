@@ -1,10 +1,20 @@
 import {
   createAgentSession,
   createCodingTools,
+  createEditTool,
   createReadOnlyTools,
+  createReadTool,
+  createWriteTool,
+  type EditOperations,
+  type ReadOperations,
+  type WriteOperations,
   type AgentSessionEvent,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
+import { constants as fsConstants } from "node:fs";
+import { access as fsAccess, mkdir as fsMkdir, readFile as fsReadFile, writeFile as fsWriteFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import {
   createOracleEmitAssessmentTool,
@@ -13,6 +23,27 @@ import {
   ORACLE_EMIT_ASSESSMENT_TOOL_NAME,
   stringifyOracleAssessment,
 } from "../castes/oracle/oracle-tool-contract.js";
+import {
+  createTitanEmitArtifactTool,
+  enforceTitanToolPayloadContract,
+  extractTitanArtifactFromToolEvent,
+  stringifyTitanArtifact,
+  TITAN_EMIT_ARTIFACT_TOOL_NAME,
+} from "../castes/titan/titan-tool-contract.js";
+import {
+  createSentinelEmitVerdictTool,
+  enforceSentinelToolPayloadContract,
+  extractSentinelVerdictFromToolEvent,
+  SENTINEL_EMIT_VERDICT_TOOL_NAME,
+  stringifySentinelVerdict,
+} from "../castes/sentinel/sentinel-tool-contract.js";
+import {
+  createJanusEmitResolutionTool,
+  enforceJanusToolPayloadContract,
+  extractJanusResolutionFromToolEvent,
+  JANUS_EMIT_RESOLUTION_TOOL_NAME,
+  stringifyJanusResolutionArtifact,
+} from "../castes/janus/janus-tool-contract.js";
 import type {
   CasteName,
   CasteRunInput,
@@ -21,6 +52,8 @@ import type {
   CasteSessionResult,
 } from "./caste-runtime.js";
 import type { ResolvedConfiguredCasteModel } from "./pi-model-config.js";
+
+type RuntimeTool = ReturnType<typeof createCodingTools>[number];
 
 function extractAssistantText(event: AgentSessionEvent): string {
   if (event.type !== "message_end") {
@@ -60,26 +93,228 @@ function extractMessageRole(event: AgentSessionEvent): CasteSessionMessage["role
     : null;
 }
 
-function resolveTools(caste: CasteName, workingDirectory: string) {
+function normalizePathForComparison(candidatePath: string) {
+  const resolved = path.resolve(candidatePath);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function resolvePathWithinScope(candidatePath: string, allowedRoot: string) {
+  const expanded = candidatePath === "~"
+    ? os.homedir()
+    : candidatePath.startsWith("~/")
+      ? path.join(os.homedir(), candidatePath.slice(2))
+      : candidatePath;
+  return path.isAbsolute(expanded)
+    ? path.resolve(expanded)
+    : path.resolve(allowedRoot, expanded);
+}
+
+function isPathWithinScope(targetPath: string, allowedRoot: string) {
+  const normalizedTarget = normalizePathForComparison(
+    resolvePathWithinScope(targetPath, allowedRoot),
+  );
+  const normalizedRoot = normalizePathForComparison(allowedRoot);
+  const rootPrefix = normalizedRoot.endsWith(path.sep)
+    ? normalizedRoot
+    : `${normalizedRoot}${path.sep}`;
+  return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(rootPrefix);
+}
+
+function assertMockRunPathScope(targetPath: string, allowedRoot: string) {
+  if (isPathWithinScope(targetPath, allowedRoot)) {
+    return;
+  }
+
+  throw new Error(
+    `Mock-run Titan guard blocked path outside labor scope: ${targetPath}`,
+  );
+}
+
+function isMockRunRepositoryRoot(root: string) {
+  return path.basename(path.resolve(root)) === "aegis-mock-run";
+}
+
+function resolveToolPathFromInput(
+  input: unknown,
+  workingDirectory: string,
+): string | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const candidate = input as { path?: unknown; file_path?: unknown };
+  const rawPath = typeof candidate.path === "string"
+    ? candidate.path
+    : typeof candidate.file_path === "string"
+      ? candidate.file_path
+      : null;
+  if (!rawPath || rawPath.trim().length === 0) {
+    return null;
+  }
+
+  return resolvePathWithinScope(rawPath, workingDirectory);
+}
+
+function wrapToolWithMockRunPathGuard(
+  tool: RuntimeTool,
+  workingDirectory: string,
+): RuntimeTool {
+  if (typeof tool.execute !== "function") {
+    return tool;
+  }
+
+  const execute = tool.execute.bind(tool);
+  return {
+    ...tool,
+    async execute(
+      toolCallId: Parameters<RuntimeTool["execute"]>[0],
+      input: Parameters<RuntimeTool["execute"]>[1],
+      signal: Parameters<RuntimeTool["execute"]>[2],
+      onUpdate: Parameters<RuntimeTool["execute"]>[3],
+    ) {
+      const resolvedPath = resolveToolPathFromInput(input, workingDirectory);
+      if (!resolvedPath) {
+        throw new Error(
+          `Mock-run Titan guard blocked '${tool.name}' call without explicit path.`,
+        );
+      }
+      assertMockRunPathScope(resolvedPath, workingDirectory);
+
+      return execute(toolCallId, input, signal, onUpdate);
+    },
+  };
+}
+
+function createMockRunGuardedTitanTools(workingDirectory: string) {
+  const readOperations: ReadOperations = {
+    async readFile(absolutePath) {
+      assertMockRunPathScope(absolutePath, workingDirectory);
+      return fsReadFile(absolutePath);
+    },
+    async access(absolutePath) {
+      assertMockRunPathScope(absolutePath, workingDirectory);
+      await fsAccess(absolutePath, fsConstants.R_OK);
+    },
+  };
+
+  const editOperations: EditOperations = {
+    async readFile(absolutePath) {
+      assertMockRunPathScope(absolutePath, workingDirectory);
+      return fsReadFile(absolutePath);
+    },
+    async writeFile(absolutePath, content) {
+      assertMockRunPathScope(absolutePath, workingDirectory);
+      await fsWriteFile(absolutePath, content, "utf8");
+    },
+    async access(absolutePath) {
+      assertMockRunPathScope(absolutePath, workingDirectory);
+      await fsAccess(absolutePath, fsConstants.R_OK | fsConstants.W_OK);
+    },
+  };
+
+  const writeOperations: WriteOperations = {
+    async writeFile(absolutePath, content) {
+      assertMockRunPathScope(absolutePath, workingDirectory);
+      await fsWriteFile(absolutePath, content, "utf8");
+    },
+    async mkdir(directoryPath) {
+      assertMockRunPathScope(directoryPath, workingDirectory);
+      await fsMkdir(directoryPath, { recursive: true });
+    },
+  };
+
+  return [
+    wrapToolWithMockRunPathGuard(
+      createReadTool(workingDirectory, { operations: readOperations }),
+      workingDirectory,
+    ),
+    wrapToolWithMockRunPathGuard(
+      createEditTool(workingDirectory, { operations: editOperations }),
+      workingDirectory,
+    ),
+    wrapToolWithMockRunPathGuard(
+      createWriteTool(workingDirectory, { operations: writeOperations }),
+      workingDirectory,
+    ),
+  ];
+}
+
+function resolveTools(caste: CasteName, workingDirectory: string, root: string) {
   if (caste === "titan") {
+    if (isMockRunRepositoryRoot(root)) {
+      return createMockRunGuardedTitanTools(workingDirectory);
+    }
+
     return createCodingTools(workingDirectory);
   }
 
   return createReadOnlyTools(workingDirectory);
 }
 
-function resolveCustomTools(caste: CasteName): ToolDefinition[] | undefined {
-  if (caste === "oracle") {
-    return [createOracleEmitAssessmentTool()];
-  }
-
-  return undefined;
+interface CasteToolContract {
+  label: string;
+  toolName: string;
+  payloadEnforcement: "always" | "none";
+  createTool: () => ToolDefinition;
+  enforcePayloadContract: (payload: unknown) => unknown | undefined;
+  extractStructuredOutput: (event: AgentSessionEvent) => string | null;
 }
 
-function installPayloadContractHook(caste: CasteName, session: Awaited<ReturnType<typeof createAgentSession>>["session"]) {
-  if (caste !== "oracle") {
-    return;
-  }
+const CASTE_TOOL_CONTRACTS: Record<CasteName, CasteToolContract> = {
+  oracle: {
+    label: "Oracle",
+    toolName: ORACLE_EMIT_ASSESSMENT_TOOL_NAME,
+    payloadEnforcement: "always",
+    createTool: createOracleEmitAssessmentTool,
+    enforcePayloadContract: enforceOracleToolPayloadContract,
+    extractStructuredOutput(event) {
+      const assessment = extractOracleAssessmentFromToolEvent(event);
+      return assessment ? stringifyOracleAssessment(assessment) : null;
+    },
+  },
+  titan: {
+    label: "Titan",
+    toolName: TITAN_EMIT_ARTIFACT_TOOL_NAME,
+    payloadEnforcement: "always",
+    createTool: createTitanEmitArtifactTool,
+    enforcePayloadContract: enforceTitanToolPayloadContract,
+    extractStructuredOutput(event) {
+      const artifact = extractTitanArtifactFromToolEvent(event);
+      return artifact ? stringifyTitanArtifact(artifact) : null;
+    },
+  },
+  sentinel: {
+    label: "Sentinel",
+    toolName: SENTINEL_EMIT_VERDICT_TOOL_NAME,
+    payloadEnforcement: "always",
+    createTool: createSentinelEmitVerdictTool,
+    enforcePayloadContract: enforceSentinelToolPayloadContract,
+    extractStructuredOutput(event) {
+      const verdict = extractSentinelVerdictFromToolEvent(event);
+      return verdict ? stringifySentinelVerdict(verdict) : null;
+    },
+  },
+  janus: {
+    label: "Janus",
+    toolName: JANUS_EMIT_RESOLUTION_TOOL_NAME,
+    payloadEnforcement: "always",
+    createTool: createJanusEmitResolutionTool,
+    enforcePayloadContract: enforceJanusToolPayloadContract,
+    extractStructuredOutput(event) {
+      const artifact = extractJanusResolutionFromToolEvent(event);
+      return artifact ? stringifyJanusResolutionArtifact(artifact) : null;
+    },
+  },
+};
+
+function resolveCustomTools(caste: CasteName): ToolDefinition[] {
+  return [CASTE_TOOL_CONTRACTS[caste].createTool()];
+}
+
+function installPayloadContractHook(
+  contract: CasteToolContract,
+  session: Awaited<ReturnType<typeof createAgentSession>>["session"],
+) {
 
   const existingOnPayload = session.agent.onPayload;
   session.agent.onPayload = async (payload, model) => {
@@ -87,7 +322,7 @@ function installPayloadContractHook(caste: CasteName, session: Awaited<ReturnTyp
       ? await existingOnPayload(payload, model)
       : undefined;
     const effectivePayload = existingPayload === undefined ? payload : existingPayload;
-    const enforcedPayload = enforceOracleToolPayloadContract(effectivePayload);
+    const enforcedPayload = contract.enforcePayloadContract(effectivePayload);
 
     if (enforcedPayload !== undefined) {
       return enforcedPayload;
@@ -117,25 +352,34 @@ export class PiCasteRuntime implements CasteRuntime {
       role: "user",
       content: input.prompt,
     }];
+    const toolContract = CASTE_TOOL_CONTRACTS[input.caste];
+    const baseTools = resolveTools(input.caste, input.workingDirectory, input.root);
+    const activeToolNames = [...new Set([
+      ...baseTools.map((tool) => tool.name),
+      toolContract.toolName,
+    ])];
     const customTools = resolveCustomTools(input.caste);
     const { session } = await createAgentSession({
       cwd: input.workingDirectory,
       model: modelConfig.model,
       thinkingLevel: modelConfig.thinkingLevel,
-      tools: resolveTools(input.caste, input.workingDirectory),
-      ...(customTools ? { customTools } : {}),
+      tools: baseTools,
+      customTools,
     });
-    installPayloadContractHook(input.caste, session);
+    session.setActiveToolsByName(activeToolNames);
+    if (toolContract.payloadEnforcement === "always") {
+      installPayloadContractHook(toolContract, session);
+    }
     const messages: string[] = [];
     const toolsUsed: string[] = [];
-    let oracleStructuredOutput: string | null = null;
+    let structuredOutput: string | null = null;
 
     try {
       await new Promise<void>((resolve, reject) => {
         const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
-          const oracleAssessment = extractOracleAssessmentFromToolEvent(event);
-          if (oracleAssessment) {
-            oracleStructuredOutput = stringifyOracleAssessment(oracleAssessment);
+          const casteOutput = toolContract.extractStructuredOutput(event);
+          if (casteOutput) {
+            structuredOutput = casteOutput;
           }
 
           if (event.type === "tool_execution_start") {
@@ -163,9 +407,9 @@ export class PiCasteRuntime implements CasteRuntime {
               reject(new Error(state.error));
               return;
             }
-            if (input.caste === "oracle" && !oracleStructuredOutput) {
+            if (!structuredOutput) {
               reject(new Error(
-                `Oracle tool contract violation: missing '${ORACLE_EMIT_ASSESSMENT_TOOL_NAME}' output.`,
+                `${toolContract.label} tool contract violation: missing '${toolContract.toolName}' output.`,
               ));
               return;
             }
@@ -186,7 +430,7 @@ export class PiCasteRuntime implements CasteRuntime {
         modelId: modelConfig.modelId,
         thinkingLevel: modelConfig.thinkingLevel,
         status: "succeeded",
-        outputText: oracleStructuredOutput ?? messages.at(-1) ?? "",
+        outputText: structuredOutput ?? messages.at(-1) ?? "",
         toolsUsed,
         messageLog,
         startedAt,
@@ -201,7 +445,7 @@ export class PiCasteRuntime implements CasteRuntime {
         modelId: modelConfig.modelId,
         thinkingLevel: modelConfig.thinkingLevel,
         status: "failed",
-        outputText: oracleStructuredOutput ?? messages.at(-1) ?? "",
+        outputText: structuredOutput ?? messages.at(-1) ?? "",
         toolsUsed,
         messageLog,
         startedAt,

@@ -1,6 +1,7 @@
 import path from "node:path";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -36,6 +37,14 @@ function createIssue(issueId: string): AegisIssue {
     childIds: [],
     labels: [],
   };
+}
+
+function runGit(root: string, args: string[]) {
+  return execFileSync("git", args, {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true,
+  });
 }
 
 describe("runCasteCommand", () => {
@@ -242,6 +251,7 @@ describe("runCasteCommand", () => {
         }),
       }),
       resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => ".aegis/labors",
       ensureLabor: vi.fn(),
     });
 
@@ -261,7 +271,155 @@ describe("runCasteCommand", () => {
           transcriptRef: path.join(".aegis", "transcripts", "aegis-123--titan.json"),
           status: "succeeded",
         },
+        git_proof: {
+          status_before_ref: null,
+          status_after_ref: null,
+          changed_files_manifest_ref: null,
+          diff_ref: null,
+        },
       });
+  });
+
+  it("does not advance implementation when Titan runtime session failed", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-124": {
+          issueId: "aegis-124",
+          stage: "scouted",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-124.json"),
+          sentinelVerdictRef: null,
+          fileScope: null,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    await expect(runCasteCommand({
+      root,
+      action: "implement",
+      issueId: "aegis-124",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-124")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        titan: () => ({
+          output: JSON.stringify({
+            outcome: "success",
+            summary: "json present but runtime flagged failed",
+            files_changed: ["src/index.ts"],
+            tests_and_checks_run: [],
+            known_risks: [],
+            follow_up_work: [],
+            learnings_written_to_mnemosyne: [],
+          }),
+          error: "Titan tool contract violation: missing emit_titan_artifact output",
+        }),
+      }),
+      resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => ".aegis/labors",
+      ensureLabor: vi.fn(),
+    })).rejects.toThrow("Titan session failed for aegis-124");
+
+    const state = JSON.parse(
+      readFileSync(path.join(root, ".aegis", "dispatch-state.json"), "utf8"),
+    ) as {
+      records: Record<string, { stage: string; titanHandoffRef?: string | null }>;
+    };
+
+    expect(state.records["aegis-124"]?.stage).toBe("scouted");
+    expect(state.records["aegis-124"]?.titanHandoffRef ?? null).toBeNull();
+    expect(existsSync(path.join(root, ".aegis", "titan", "aegis-124.json"))).toBe(false);
+  });
+
+  it("captures git proof refs when Titan runs in a real labor worktree", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-234": {
+          issueId: "aegis-234",
+          stage: "scouted",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-234.json"),
+          sentinelVerdictRef: null,
+          fileScope: null,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    writeFileSync(path.join(root, "README.md"), "# baseline\n", "utf8");
+    runGit(root, ["init"]);
+    runGit(root, ["config", "user.email", "test@aegis.local"]);
+    runGit(root, ["config", "user.name", "Aegis Test"]);
+    runGit(root, ["add", "--all"]);
+    runGit(root, ["commit", "-m", "baseline"]);
+    runGit(root, ["branch", "-M", "main"]);
+
+    const result = await runCasteCommand({
+      root,
+      action: "implement",
+      issueId: "aegis-234",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-234")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        titan: (input) => {
+          writeFileSync(path.join(input.workingDirectory, "phase-i-proof.txt"), "proof\n", "utf8");
+          return {
+            output: JSON.stringify({
+              outcome: "success",
+              summary: "implemented in worktree",
+              files_changed: ["phase-i-proof.txt"],
+              tests_and_checks_run: [],
+              known_risks: [],
+              follow_up_work: [],
+              learnings_written_to_mnemosyne: [],
+            }),
+            toolsUsed: ["write_file"],
+          };
+        },
+      }),
+      resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => "scratchpad",
+    });
+
+    expect(result).toMatchObject({
+      action: "implement",
+      issueId: "aegis-234",
+      stage: "implemented",
+    });
+
+    const artifact = JSON.parse(
+      readFileSync(path.join(root, ".aegis", "titan", "aegis-234.json"), "utf8"),
+    ) as {
+      labor_path: string;
+      git_proof: {
+        status_before_ref: string | null;
+        status_after_ref: string | null;
+        changed_files_manifest_ref: string | null;
+        diff_ref: string | null;
+      };
+    };
+
+    expect(artifact.labor_path).toBe(path.join(root, "scratchpad", "aegis-234"));
+    expect(artifact.git_proof.status_before_ref).toBeTruthy();
+    expect(artifact.git_proof.status_after_ref).toBeTruthy();
+    expect(artifact.git_proof.changed_files_manifest_ref).toBeTruthy();
+    expect(artifact.git_proof.diff_ref).toBeTruthy();
   });
 
   it("clears review-stage refs when implement reruns from a later record", async () => {
@@ -311,6 +469,7 @@ describe("runCasteCommand", () => {
         }),
       }),
       resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => ".aegis/labors",
       ensureLabor: vi.fn(),
     });
 
@@ -346,7 +505,7 @@ describe("runCasteCommand", () => {
         known_risks: [],
         follow_up_work: [],
         learnings_written_to_mnemosyne: [],
-        labor_path: ".aegis/labors/labor-aegis-123",
+        labor_path: ".aegis/labors/aegis-123",
         candidate_branch: "aegis/aegis-123",
         base_branch: "main",
       }, null, 2)}\n`,

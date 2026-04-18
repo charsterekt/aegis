@@ -178,6 +178,10 @@ export function buildMockRunConfig(options?: {
   const baseConfig = {
     ...DEFAULT_AEGIS_CONFIG,
     runtime,
+    labor: {
+      ...DEFAULT_AEGIS_CONFIG.labor,
+      base_path: "scratchpad",
+    },
   };
 
   if (!uncapped) return baseConfig;

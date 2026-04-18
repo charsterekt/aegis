@@ -12,6 +12,7 @@ describe("buildMockRunConfig", () => {
     expect(config.runtime).toBe("pi");
     expect(config.models).toEqual(DEFAULT_AEGIS_CONFIG.models);
     expect(config.thinking).toEqual(DEFAULT_AEGIS_CONFIG.thinking);
+    expect(config.labor.base_path).toBe("scratchpad");
     expect(config.concurrency).toEqual({
       max_agents: 10,
       max_oracles: 5,
@@ -31,6 +32,7 @@ describe("buildMockRunConfig", () => {
     expect(config.runtime).toBe("scripted");
     expect(config.models).toEqual(DEFAULT_AEGIS_CONFIG.models);
     expect(config.thinking).toEqual(DEFAULT_AEGIS_CONFIG.thinking);
+    expect(config.labor.base_path).toBe("scratchpad");
     expect(config.concurrency).toEqual(DEFAULT_AEGIS_CONFIG.concurrency);
   });
 });
