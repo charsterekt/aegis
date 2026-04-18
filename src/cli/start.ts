@@ -4,8 +4,6 @@ import { accessSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
-
 import { loadConfig } from "../config/load-config.js";
 import { runCasteCommand as defaultRunCasteCommand } from "../core/caste-runner.js";
 import { runDaemonCycle as defaultRunDaemonCycle, runLoopPhase } from "../core/loop-runner.js";
@@ -16,7 +14,6 @@ import {
 } from "../core/dispatch-state.js";
 import {
   AEGIS_DIRECTORY,
-  MODEL_KEYS,
   RUNTIME_STATE_FILES,
   type AegisConfig,
 } from "../config/schema.js";
@@ -32,6 +29,7 @@ import {
   type RuntimeCommandResponse,
 } from "./runtime-command.js";
 import { createCasteRuntime } from "../runtime/create-caste-runtime.js";
+import { verifyConfiguredPiModels } from "../runtime/pi-model-config.js";
 import { runMergeNext as defaultRunMergeNext } from "../merge/merge-next.js";
 import {
   formatStartupPreflight,
@@ -107,6 +105,7 @@ export interface StartCommandOptions {
   verifyTracker?: (root: string) => void;
   verifyGitRepo?: () => void;
   probeBeadsCli?: () => StartupPreflightProbeResult;
+  verifyModelRefs?: (config: AegisConfig) => StartupPreflightProbeResult;
   registerSignalHandlers?: boolean;
   runDaemonCycle?: (root: string) => Promise<void>;
   runCasteCommand?: (root: string, action: RuntimeCasteAction, issueId: string) => Promise<unknown>;
@@ -318,59 +317,6 @@ function verifyRuntimeLocalConfig(
   };
 }
 
-function verifyConfiguredModels(config: AegisConfig): StartupPreflightProbeResult {
-  if (config.runtime !== "pi") {
-    return {
-      ok: true,
-      detail: `Runtime "${config.runtime}" does not require Pi model validation.`,
-    };
-  }
-
-  try {
-    for (const modelKey of MODEL_KEYS) {
-      const reference = config.models[modelKey];
-      const separatorIndex = reference.indexOf(":");
-
-      if (separatorIndex === -1) {
-        throw new Error(
-          `Invalid configured model for "${modelKey}": expected "<provider>:<model-id>"`,
-        );
-      }
-
-      const provider = reference.slice(0, separatorIndex);
-      const modelId = reference.slice(separatorIndex + 1);
-      const resolvedProvider = provider === "pi" ? "google" : provider;
-
-      if (!getProviders().includes(resolvedProvider as KnownProvider)) {
-        throw new Error(`Invalid configured model for "${modelKey}": unknown provider "${provider}"`);
-      }
-
-      if (modelId === "default") {
-        continue;
-      }
-
-      const model = getModels(resolvedProvider as KnownProvider).find(
-        (candidate) => candidate.id === modelId,
-      );
-
-      if (!model) {
-        throw new Error(`Invalid configured model for "${modelKey}": unknown model "${reference}"`);
-      }
-    }
-
-    return {
-      ok: true,
-      detail: "Configured model refs are valid.",
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      detail: toErrorMessage(error),
-      fix: "update `.aegis/config.json` so each configured model is a valid Pi model reference",
-    };
-  }
-}
-
 function verifyRuntimeStatePaths(repoRoot: string): StartupPreflightProbeResult {
   const aegisDir = path.join(repoRoot, AEGIS_DIRECTORY);
 
@@ -502,6 +448,7 @@ export async function startAegis(
     verifyGitRepository(repoRoot);
   });
   const beadsCliProbe = options.probeBeadsCli ?? probeBeadsCli;
+  const verifyModelRefs = options.verifyModelRefs ?? verifyConfiguredPiModels;
 
   void overrides;
   let config: AegisConfig | undefined;
@@ -530,7 +477,7 @@ export async function startAegis(
     },
     verifyRuntimeAdapter,
     verifyRuntimeLocalConfig: (loadedConfig) => verifyRuntimeLocalConfig(repoRoot, loadedConfig),
-    verifyModelRefs: verifyConfiguredModels,
+    verifyModelRefs,
     verifyRuntimeStatePaths,
   });
 

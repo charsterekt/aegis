@@ -55,6 +55,7 @@ afterEach(() => {
 
 describe("reapFinishedWork", () => {
   it("moves successful oracle runs to the generic scouted stage", async () => {
+    const root = createTempRoot();
     const runtime: AgentRuntime = {
       async launch() {
         throw new Error("unused");
@@ -75,7 +76,7 @@ describe("reapFinishedWork", () => {
       dispatchState: createRunningState(),
       runtime,
       issueIds: ["ISSUE-1"],
-      root: "repo",
+      root,
       now: "2026-04-14T12:00:00.000Z",
     });
 
@@ -89,6 +90,7 @@ describe("reapFinishedWork", () => {
   });
 
   it("marks failed sessions as failed and increments counters", async () => {
+    const root = createTempRoot();
     const runtime: AgentRuntime = {
       async launch() {
         throw new Error("unused");
@@ -110,7 +112,7 @@ describe("reapFinishedWork", () => {
       dispatchState: createRunningState(),
       runtime,
       issueIds: ["ISSUE-1"],
-      root: "repo",
+      root,
       now: "2026-04-14T12:00:00.000Z",
     });
 

@@ -168,18 +168,16 @@ function createDatabaseName(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}`;
 }
 
-export function buildMockRunConfig(options?: { uncapped?: boolean }) {
+export function buildMockRunConfig(options?: {
+  uncapped?: boolean;
+  runtime?: "pi" | "scripted";
+}) {
   const uncapped = options?.uncapped ?? true;
+  const runtime = options?.runtime ?? "pi";
 
   const baseConfig = {
     ...DEFAULT_AEGIS_CONFIG,
-    runtime: "scripted",
-    models: {
-      ...DEFAULT_AEGIS_CONFIG.models,
-      oracle: "pi:gemma-4-31b-it",
-      titan: "pi:gemma-4-31b-it",
-      sentinel: "pi:gemma-4-31b-it",
-    },
+    runtime,
   };
 
   if (!uncapped) return baseConfig;
@@ -333,11 +331,7 @@ export async function seedMockRun(options: SeedMockRunOptions = {}): Promise<See
     generatedAt: new Date().toISOString(),
     issueIdByKey,
     initialReadyKeys,
-    configuredModels: {
-      oracle: mockRunConfig.models.oracle,
-      titan: mockRunConfig.models.titan,
-      sentinel: mockRunConfig.models.sentinel,
-    },
+    configuredModels: { ...mockRunConfig.models },
   });
 
   return {

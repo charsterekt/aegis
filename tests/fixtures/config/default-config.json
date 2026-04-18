@@ -1,10 +1,16 @@
 {
   "runtime": "scripted",
   "models": {
-    "oracle": "pi:default",
-    "titan": "pi:default",
-    "sentinel": "pi:default",
-    "janus": "pi:default"
+    "oracle": "openai-codex:gpt-5.4-mini",
+    "titan": "openai-codex:gpt-5.4-mini",
+    "sentinel": "openai-codex:gpt-5.4-mini",
+    "janus": "openai-codex:gpt-5.4-mini"
+  },
+  "thinking": {
+    "oracle": "medium",
+    "titan": "medium",
+    "sentinel": "medium",
+    "janus": "medium"
   },
   "concurrency": {
     "max_agents": 3,

@@ -1,11 +1,18 @@
 import {
-  codingTools,
   createAgentSession,
-  readOnlyTools,
+  createCodingTools,
+  createReadOnlyTools,
   type AgentSessionEvent,
 } from "@mariozechner/pi-coding-agent";
 
-import type { CasteName, CasteRunInput, CasteRuntime, CasteSessionResult } from "./caste-runtime.js";
+import type {
+  CasteName,
+  CasteRunInput,
+  CasteRuntime,
+  CasteSessionMessage,
+  CasteSessionResult,
+} from "./caste-runtime.js";
+import type { ResolvedConfiguredCasteModel } from "./pi-model-config.js";
 
 function extractAssistantText(event: AgentSessionEvent): string {
   if (event.type !== "message_end") {
@@ -34,20 +41,46 @@ function extractAssistantText(event: AgentSessionEvent): string {
     .join("");
 }
 
-function resolveTools(caste: CasteName) {
-  if (caste === "titan") {
-    return codingTools;
+function extractMessageRole(event: AgentSessionEvent): CasteSessionMessage["role"] | null {
+  if (event.type !== "message_end") {
+    return null;
   }
 
-  return readOnlyTools;
+  const message = event.message as { role?: unknown } | undefined;
+  return message?.role === "user" || message?.role === "assistant"
+    ? message.role
+    : null;
+}
+
+function resolveTools(caste: CasteName, workingDirectory: string) {
+  if (caste === "titan") {
+    return createCodingTools(workingDirectory);
+  }
+
+  return createReadOnlyTools(workingDirectory);
 }
 
 export class PiCasteRuntime implements CasteRuntime {
+  constructor(
+    private readonly modelConfigs: Partial<Record<CasteName, ResolvedConfiguredCasteModel>> = {},
+  ) {}
+
   async run(input: CasteRunInput): Promise<CasteSessionResult> {
     const startedAt = new Date().toISOString();
+    const modelConfig = this.modelConfigs[input.caste];
+    if (!modelConfig) {
+      throw new Error(`Missing configured Pi model for caste "${input.caste}".`);
+    }
+
+    const messageLog: CasteSessionMessage[] = [{
+      role: "user",
+      content: input.prompt,
+    }];
     const { session } = await createAgentSession({
       cwd: input.workingDirectory,
-      tools: resolveTools(input.caste),
+      model: modelConfig.model,
+      thinkingLevel: modelConfig.thinkingLevel,
+      tools: resolveTools(input.caste, input.workingDirectory),
     });
     const messages: string[] = [];
     const toolsUsed: string[] = [];
@@ -61,8 +94,15 @@ export class PiCasteRuntime implements CasteRuntime {
           }
 
           const text = extractAssistantText(event);
+          const role = extractMessageRole(event);
           if (text.length > 0) {
             messages.push(text);
+            if (role) {
+              messageLog.push({
+                role,
+                content: text,
+              });
+            }
             return;
           }
 
@@ -85,9 +125,14 @@ export class PiCasteRuntime implements CasteRuntime {
       return {
         sessionId: session.sessionId,
         caste: input.caste,
+        modelRef: modelConfig.reference,
+        provider: modelConfig.provider,
+        modelId: modelConfig.modelId,
+        thinkingLevel: modelConfig.thinkingLevel,
         status: "succeeded",
         outputText: messages.at(-1) ?? "",
         toolsUsed,
+        messageLog,
         startedAt,
         finishedAt: new Date().toISOString(),
       };
@@ -95,9 +140,14 @@ export class PiCasteRuntime implements CasteRuntime {
       return {
         sessionId: session.sessionId,
         caste: input.caste,
+        modelRef: modelConfig.reference,
+        provider: modelConfig.provider,
+        modelId: modelConfig.modelId,
+        thinkingLevel: modelConfig.thinkingLevel,
         status: "failed",
         outputText: messages.at(-1) ?? "",
         toolsUsed,
+        messageLog,
         startedAt,
         finishedAt: new Date().toISOString(),
         error: error instanceof Error ? error.message : String(error),

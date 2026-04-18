@@ -13,12 +13,6 @@ function makeConfig(): AegisConfig {
   return {
     ...DEFAULT_AEGIS_CONFIG,
     runtime: "pi",
-    models: {
-      ...DEFAULT_AEGIS_CONFIG.models,
-      titan: "pi:default",
-      sentinel: "pi:default",
-      janus: "pi:default",
-    },
   };
 }
 
@@ -159,5 +153,25 @@ describe("runStartupPreflight", () => {
       ["runtime_state_paths", "fail"],
     ]);
     expect(report.checks.filter((check) => check.status === "skipped")).toHaveLength(0);
+  });
+
+  it("surfaces auth-aware model validation guidance in the model_refs check", () => {
+    const report = runStartupPreflight("repo", makeDeps({
+      verifyModelRefs: () => ({
+        ok: false,
+        detail:
+          'Configured provider "openai-codex" for "titan" is not authenticated. Authenticated providers: anthropic',
+        fix: "authenticate the configured provider or update the configured model ref",
+      }),
+    }));
+
+    expect(report.overall).toBe("blocked");
+    const modelRefsCheck = report.checks.find((check) => check.id === "model_refs");
+
+    expect(modelRefsCheck).toMatchObject({
+      id: "model_refs",
+      status: "fail",
+    });
+    expect(modelRefsCheck?.detail).toContain("Authenticated providers: anthropic");
   });
 });

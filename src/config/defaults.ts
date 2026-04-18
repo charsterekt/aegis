@@ -1,13 +1,10 @@
+import { createCasteConfig } from "./caste-config.js";
 import type { AegisConfig } from "./schema.js";
 
 export const DEFAULT_AEGIS_CONFIG: AegisConfig = {
   runtime: "scripted",
-  models: {
-    oracle: "pi:default",
-    titan: "pi:default",
-    sentinel: "pi:default",
-    janus: "pi:default",
-  },
+  models: createCasteConfig(() => "openai-codex:gpt-5.4-mini"),
+  thinking: createCasteConfig(() => "medium"),
   concurrency: {
     max_agents: 3,
     max_oracles: 1,

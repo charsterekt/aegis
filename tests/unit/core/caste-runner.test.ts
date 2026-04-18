@@ -50,8 +50,17 @@ describe("runCasteCommand", () => {
       tracker: {
         getIssue: vi.fn(async () => createIssue("aegis-123")),
       },
-      runtime: new ScriptedCasteRuntime({
-        oracle: () => ({
+      runtime: new ScriptedCasteRuntime(
+        {
+          oracle: {
+            reference: "openai-codex:gpt-5.4-mini",
+            provider: "openai-codex",
+            modelId: "gpt-5.4-mini",
+            thinkingLevel: "medium",
+          },
+        },
+        {
+          oracle: () => ({
           output: JSON.stringify({
             files_affected: ["src/index.ts"],
             estimated_complexity: "moderate",
@@ -59,20 +68,65 @@ describe("runCasteCommand", () => {
             ready: true,
           }),
           toolsUsed: ["read_file"],
-        }),
-      }),
+          }),
+        },
+      ),
     });
 
     const artifactPath = path.join(root, ".aegis", "oracle", "aegis-123.json");
+    const transcriptPath = path.join(root, ".aegis", "transcripts", "aegis-123--oracle.json");
 
     expect(result).toMatchObject({
       action: "scout",
       issueId: "aegis-123",
       stage: "scouted",
-      artifactRefs: [path.join(".aegis", "oracle", "aegis-123.json")],
+      artifactRefs: [
+        path.join(".aegis", "oracle", "aegis-123.json"),
+        path.join(".aegis", "transcripts", "aegis-123--oracle.json"),
+      ],
     });
     expect(JSON.parse(readFileSync(artifactPath, "utf8"))).toMatchObject({
       ready: true,
+      session: {
+        transcriptRef: path.join(".aegis", "transcripts", "aegis-123--oracle.json"),
+        prompt: "Scout aegis-123: Example",
+        workingDirectory: root,
+        modelRef: "openai-codex:gpt-5.4-mini",
+        provider: "openai-codex",
+        modelId: "gpt-5.4-mini",
+        thinkingLevel: "medium",
+        sessionId: expect.any(String),
+        toolsUsed: ["read_file"],
+        status: "succeeded",
+      },
+    });
+    expect(JSON.parse(readFileSync(transcriptPath, "utf8"))).toMatchObject({
+      issueId: "aegis-123",
+      caste: "oracle",
+      action: "scout",
+      prompt: "Scout aegis-123: Example",
+      workingDirectory: root,
+      modelRef: "openai-codex:gpt-5.4-mini",
+      provider: "openai-codex",
+      modelId: "gpt-5.4-mini",
+      thinkingLevel: "medium",
+      sessionId: expect.any(String),
+      toolsUsed: ["read_file"],
+      messageLog: [
+        {
+          role: "user",
+          content: "Scout aegis-123: Example",
+        },
+        {
+          role: "assistant",
+          content: expect.stringContaining("\"ready\":true"),
+        },
+      ],
+      outputText: expect.stringContaining("\"ready\":true"),
+      status: "succeeded",
+      error: null,
+      startedAt: expect.any(String),
+      finishedAt: expect.any(String),
     });
   });
 
@@ -195,8 +249,19 @@ describe("runCasteCommand", () => {
       action: "implement",
       issueId: "aegis-123",
       stage: "implemented",
-      artifactRefs: [path.join(".aegis", "titan", "aegis-123.json")],
+      artifactRefs: [
+        path.join(".aegis", "titan", "aegis-123.json"),
+        path.join(".aegis", "transcripts", "aegis-123--titan.json"),
+      ],
     });
+
+    expect(JSON.parse(readFileSync(path.join(root, ".aegis", "titan", "aegis-123.json"), "utf8")))
+      .toMatchObject({
+        session: {
+          transcriptRef: path.join(".aegis", "transcripts", "aegis-123--titan.json"),
+          status: "succeeded",
+        },
+      });
   });
 
   it("clears review-stage refs when implement reruns from a later record", async () => {

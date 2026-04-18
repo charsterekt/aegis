@@ -1,4 +1,22 @@
 import type { MockRunManifest } from "./types.js";
+import { DEFAULT_AEGIS_CONFIG } from "../config/defaults.js";
+
+function parseDefaultPiSettings(reference: string) {
+  const separatorIndex = reference.indexOf(":");
+  if (separatorIndex <= 0 || separatorIndex === reference.length - 1) {
+    throw new Error(`Invalid default mock-run model reference: ${reference}`);
+  }
+
+  return {
+    defaultProvider: reference.slice(0, separatorIndex),
+    defaultModel: reference.slice(separatorIndex + 1),
+  };
+}
+
+const DEFAULT_PI_SETTINGS = {
+  ...parseDefaultPiSettings(DEFAULT_AEGIS_CONFIG.models.oracle),
+  defaultThinkingLevel: DEFAULT_AEGIS_CONFIG.thinking.oracle,
+};
 
 export const TODO_BASELINE_FILES: Record<string, string> = {
   ".gitignore": [
@@ -22,11 +40,7 @@ export const TODO_BASELINE_FILES: Record<string, string> = {
     ".aegis/transcripts/",
   ].join("\n"),
   ".pi/settings.json": JSON.stringify(
-    {
-      defaultProvider: "google",
-      defaultModel: "gemma-4-31b-it",
-      defaultThinkingLevel: "high",
-    },
+    DEFAULT_PI_SETTINGS,
     null,
     2,
   ),

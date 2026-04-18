@@ -53,6 +53,7 @@ afterEach(() => {
 
 describe("monitorActiveWork", () => {
   it("flags long-running work for kill once the kill threshold expires", async () => {
+    const root = createTempRoot();
     const terminate = vi.fn(async () => ({
       sessionId: "session-1",
       status: "failed" as const,
@@ -79,20 +80,21 @@ describe("monitorActiveWork", () => {
         stuck_warning_seconds: 90,
         stuck_kill_seconds: 150,
       },
-      root: "repo",
+      root,
       now: "2026-04-14T12:00:00.000Z",
     });
 
     expect(result.killList).toEqual(["ISSUE-1"]);
     expect(result.readyToReap).toEqual(["ISSUE-1"]);
     expect(terminate).toHaveBeenCalledWith(
-      "repo",
+      root,
       "session-1",
       "Exceeded stuck kill threshold.",
     );
   });
 
   it("marks succeeded sessions as ready for reap", async () => {
+    const root = createTempRoot();
     const runtime: AgentRuntime = {
       async launch() {
         throw new Error("unused");
@@ -116,7 +118,7 @@ describe("monitorActiveWork", () => {
         stuck_warning_seconds: 90,
         stuck_kill_seconds: 150,
       },
-      root: "repo",
+      root,
       now: "2026-04-14T12:00:00.000Z",
     });
 
