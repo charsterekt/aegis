@@ -11,8 +11,8 @@ export type TriageSkipReason =
 export interface DispatchDecision {
   issueId: string;
   title: string;
-  caste: "oracle";
-  stage: "scouting";
+  caste: "oracle" | "titan";
+  stage: "scouting" | "implementing";
 }
 
 export interface SkipDecision {
@@ -42,13 +42,40 @@ function isCoolingDown(record: DispatchRecord, nowMs: number) {
 }
 
 function needsFuturePhase(record: DispatchRecord) {
-  return record.stage !== "failed" && record.stage !== "pending";
+  return record.stage !== "failed" && record.stage !== "pending" && record.stage !== "scouted";
 }
 
 function countActiveOracles(state: DispatchState) {
   return Object.values(state.records).filter(
     (record) => record.runningAgent?.caste === "oracle",
   ).length;
+}
+
+function countActiveTitans(state: DispatchState) {
+  return Object.values(state.records).filter(
+    (record) => record.runningAgent?.caste === "titan",
+  ).length;
+}
+
+function resolveDecision(
+  issue: TrackerReadyIssue,
+  record: DispatchRecord | undefined,
+): DispatchDecision {
+  if (record?.stage === "scouted") {
+    return {
+      issueId: issue.id,
+      title: issue.title,
+      caste: "titan",
+      stage: "implementing",
+    };
+  }
+
+  return {
+    issueId: issue.id,
+    title: issue.title,
+    caste: "oracle",
+    stage: "scouting",
+  };
 }
 
 export function triageReadyWork(input: TriageInput): TriageResult {
@@ -59,8 +86,10 @@ export function triageReadyWork(input: TriageInput): TriageResult {
     (record) => record.runningAgent !== null,
   ).length;
   const activeOracleCount = countActiveOracles(input.dispatchState);
+  const activeTitanCount = countActiveTitans(input.dispatchState);
   let reservedAgents = 0;
   let reservedOracles = 0;
+  let reservedTitans = 0;
 
   for (const issue of input.readyIssues) {
     const record = input.dispatchState.records[issue.id];
@@ -89,12 +118,14 @@ export function triageReadyWork(input: TriageInput): TriageResult {
       continue;
     }
 
+    const decision = resolveDecision(issue, record);
     const reachedAgentCapacity =
       activeAgentCount + reservedAgents >= input.config.concurrency.max_agents;
-    const reachedOracleCapacity =
-      activeOracleCount + reservedOracles >= input.config.concurrency.max_oracles;
+    const reachedCasteCapacity = decision.caste === "oracle"
+      ? activeOracleCount + reservedOracles >= input.config.concurrency.max_oracles
+      : activeTitanCount + reservedTitans >= input.config.concurrency.max_titans;
 
-    if (reachedAgentCapacity || reachedOracleCapacity) {
+    if (reachedAgentCapacity || reachedCasteCapacity) {
       skipped.push({
         issueId: issue.id,
         reason: "capacity",
@@ -102,14 +133,13 @@ export function triageReadyWork(input: TriageInput): TriageResult {
       continue;
     }
 
-    dispatchable.push({
-      issueId: issue.id,
-      title: issue.title,
-      caste: "oracle",
-      stage: "scouting",
-    });
+    dispatchable.push(decision);
     reservedAgents += 1;
-    reservedOracles += 1;
+    if (decision.caste === "oracle") {
+      reservedOracles += 1;
+    } else {
+      reservedTitans += 1;
+    }
   }
 
   return {

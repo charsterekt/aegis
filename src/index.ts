@@ -9,6 +9,7 @@ import { formatMergeCommandResult, runDirectMergeCommand } from "./cli/merge-com
 import { formatPhaseCommandResult, runDirectPhaseCommand } from "./cli/phase-command.js";
 import { parseStartOverrides, startAegis } from "./cli/start.js";
 import { stopAegis } from "./cli/stop.js";
+import { streamDaemonView } from "./cli/stream.js";
 import { initProject } from "./config/init-project.js";
 import { resolveProjectPaths, type ProjectPaths } from "./shared/paths.js";
 
@@ -70,6 +71,18 @@ export async function runCli(
   if (command === "status") {
     const snapshot = await getAegisStatus(root);
     console.log(formatStatusSnapshot(snapshot));
+    return manifest;
+  }
+
+  if (command === "stream") {
+    const target = argv[1] ?? "daemon";
+    if (target !== "daemon") {
+      console.error(`Unsupported stream target: ${target}`);
+      process.exitCode = 1;
+      return manifest;
+    }
+
+    await streamDaemonView(root);
     return manifest;
   }
 

@@ -39,6 +39,36 @@ function createRunningState(): DispatchState {
   };
 }
 
+function createTitanRunningState(): DispatchState {
+  return {
+    schemaVersion: 1,
+    records: {
+      "ISSUE-2": {
+        issueId: "ISSUE-2",
+        stage: "implementing",
+        runningAgent: {
+          caste: "titan",
+          sessionId: "session-2",
+          startedAt: "2026-04-14T11:55:00.000Z",
+        },
+        oracleAssessmentRef: ".aegis/oracle/ISSUE-2.json",
+        titanHandoffRef: null,
+        titanClarificationRef: null,
+        sentinelVerdictRef: null,
+        janusArtifactRef: null,
+        failureTranscriptRef: null,
+        fileScope: null,
+        failureCount: 0,
+        consecutiveFailures: 0,
+        failureWindowStartMs: null,
+        cooldownUntil: null,
+        sessionProvenanceId: "daemon-1",
+        updatedAt: "2026-04-14T11:55:00.000Z",
+      },
+    },
+  };
+}
+
 const tempRoots: string[] = [];
 
 function createTempRoot() {
@@ -126,6 +156,42 @@ describe("reapFinishedWork", () => {
       consecutiveFailures: 1,
     });
     expect(result.state.records["ISSUE-1"]?.cooldownUntil).toBeTruthy();
+  });
+
+  it("moves successful titan runs to implemented stage while clearing running assignment", async () => {
+    const root = createTempRoot();
+    const runtime: AgentRuntime = {
+      async launch() {
+        throw new Error("unused");
+      },
+      async readSession() {
+        return {
+          sessionId: "session-2",
+          status: "succeeded",
+          finishedAt: "2026-04-14T11:56:00.000Z",
+        };
+      },
+      async terminate() {
+        return null;
+      },
+    };
+
+    const result = await reapFinishedWork({
+      dispatchState: createTitanRunningState(),
+      runtime,
+      issueIds: ["ISSUE-2"],
+      root,
+      now: "2026-04-14T12:00:00.000Z",
+    });
+
+    expect(result.completed).toEqual(["ISSUE-2"]);
+    expect(result.failed).toEqual([]);
+    expect(result.state.records["ISSUE-2"]).toMatchObject({
+      issueId: "ISSUE-2",
+      stage: "implemented",
+      runningAgent: null,
+      oracleAssessmentRef: ".aegis/oracle/ISSUE-2.json",
+    });
   });
 
   it("writes a reap phase log even when nothing is ready to reap", async () => {

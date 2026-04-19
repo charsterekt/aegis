@@ -24,10 +24,19 @@ import {
   readTitanMergeCandidate,
   saveMergeQueueState,
 } from "../merge/merge-state.js";
+import { writePhaseLog } from "./phase-log.js";
 
 interface TrackerLike {
   getIssue(id: string, root?: string): Promise<AegisIssue>;
   closeIssue?(id: string, root?: string): Promise<void>;
+  createIssue?(
+    input: {
+      title: string;
+      description: string;
+      dependencies?: string[];
+    },
+    root?: string,
+  ): Promise<string>;
 }
 
 export interface RunCasteCommandInput {
@@ -125,6 +134,75 @@ function buildSentinelPrompt(issue: AegisIssue) {
     "Return only JSON. No markdown fences. No prose before or after JSON.",
     "JSON schema keys: verdict, reviewSummary, issuesFound, followUpIssueIds, riskAreas.",
   ].join("\n");
+}
+
+function truncate(text: string, maxLength: number) {
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength - 3)}...`;
+}
+
+function offsetTimestamp(baseTimestamp: string, offsetMilliseconds: number) {
+  const baseTime = Date.parse(baseTimestamp);
+  if (!Number.isFinite(baseTime)) {
+    return new Date().toISOString();
+  }
+
+  return new Date(baseTime + offsetMilliseconds).toISOString();
+}
+
+async function createSentinelFollowUpIssues(
+  input: RunCasteCommandInput,
+  issue: AegisIssue,
+  verdict: ReturnType<typeof parseSentinelVerdict>,
+  now: string,
+) {
+  if (
+    verdict.verdict !== "fail"
+    || verdict.issuesFound.length === 0
+    || verdict.followUpIssueIds.length > 0
+    || !input.tracker.createIssue
+  ) {
+    return verdict.followUpIssueIds;
+  }
+
+  const createdIssueIds: string[] = [];
+  for (const finding of verdict.issuesFound) {
+    const issueTitle = truncate(`[sentinel][${issue.id}] ${finding}`, 120);
+    const issueDescription = [
+      `Auto-created from Sentinel review for ${issue.id}.`,
+      `Review summary: ${verdict.reviewSummary}`,
+      `Finding: ${finding}`,
+      verdict.riskAreas.length > 0
+        ? `Risk areas: ${verdict.riskAreas.join(", ")}`
+        : "Risk areas: none",
+    ].join("\n");
+
+    const createdIssueId = await input.tracker.createIssue(
+      {
+        title: issueTitle,
+        description: issueDescription,
+        dependencies: [`discovered-from:${issue.id}`],
+      },
+      input.root,
+    );
+    createdIssueIds.push(createdIssueId);
+    writePhaseLog(input.root, {
+      timestamp: offsetTimestamp(now, 20 + createdIssueIds.length),
+      phase: "dispatch",
+      issueId: issue.id,
+      action: "sentinel_followup_created",
+      outcome: "created",
+      detail: JSON.stringify({
+        followUpIssueId: createdIssueId,
+        finding,
+      }),
+    });
+  }
+
+  return [...verdict.followUpIssueIds, ...createdIssueIds];
 }
 
 function buildJanusPrompt(issue: AegisIssue) {
@@ -389,6 +467,14 @@ async function runReview(
     throw new Error("Review requires a merged issue.");
   }
 
+  writePhaseLog(input.root, {
+    timestamp: offsetTimestamp(now, 0),
+    phase: "dispatch",
+    issueId: issue.id,
+    action: "sentinel_review_started",
+    outcome: "running",
+  });
+
   const runInput = {
     caste: "sentinel",
     issueId: issue.id,
@@ -400,17 +486,38 @@ async function runReview(
   const transcriptRef = persistSessionArtifact(input.root, input.action, runInput, session);
   assertSuccessfulSession(runInput, session);
   const verdict = parseSentinelVerdict(session.outputText);
+  if (verdict.issuesFound.length > 0) {
+    writePhaseLog(input.root, {
+      timestamp: offsetTimestamp(now, 10),
+      phase: "dispatch",
+      issueId: issue.id,
+      action: "sentinel_issues_discovered",
+      outcome: "found",
+      detail: JSON.stringify({
+        count: verdict.issuesFound.length,
+      }),
+    });
+  }
+  const resolvedFollowUpIssueIds = await createSentinelFollowUpIssues(input, issue, verdict, now);
   const artifactRef = persistArtifact(input.root, {
     family: "sentinel",
     issueId: issue.id,
     artifact: {
       ...verdict,
+      followUpIssueIds: resolvedFollowUpIssueIds,
       session: createSessionMetadata(transcriptRef, runInput, session),
     },
   });
 
   if (verdict.verdict === "pass" && input.tracker.closeIssue) {
     await input.tracker.closeIssue(issue.id, input.root);
+    writePhaseLog(input.root, {
+      timestamp: offsetTimestamp(now, 40),
+      phase: "dispatch",
+      issueId: issue.id,
+      action: "sentinel_originating_issue_closed",
+      outcome: "closed",
+    });
   }
 
   saveRecord(input.root, issue.id, {
@@ -421,6 +528,17 @@ async function runReview(
     titanClarificationRef: record.titanClarificationRef ?? null,
     sentinelVerdictRef: artifactRef,
     updatedAt: now,
+  });
+  writePhaseLog(input.root, {
+    timestamp: offsetTimestamp(now, 50),
+    phase: "dispatch",
+    issueId: issue.id,
+    action: "sentinel_review_completed",
+    outcome: verdict.verdict === "pass" ? "reviewed" : "failed",
+    sessionId: session.sessionId,
+    detail: JSON.stringify({
+      followUpIssueCount: resolvedFollowUpIssueIds.length,
+    }),
   });
 
   return {
@@ -437,6 +555,14 @@ async function runJanus(
   record: DispatchRecord,
   now: string,
 ): Promise<CasteCommandResult> {
+  writePhaseLog(input.root, {
+    timestamp: offsetTimestamp(now, 0),
+    phase: "dispatch",
+    issueId: issue.id,
+    action: "janus_resolution_started",
+    outcome: "running",
+  });
+
   const runInput = {
     caste: "janus",
     issueId: issue.id,
@@ -483,6 +609,17 @@ async function runJanus(
     sentinelVerdictRef: record.sentinelVerdictRef,
     janusArtifactRef: artifactRef,
     updatedAt: now,
+  });
+  writePhaseLog(input.root, {
+    timestamp: offsetTimestamp(now, 10),
+    phase: "dispatch",
+    issueId: issue.id,
+    action: "janus_resolution_completed",
+    outcome: stage,
+    sessionId: session.sessionId,
+    detail: JSON.stringify({
+      recommendedNextAction: artifact.recommendedNextAction,
+    }),
   });
 
   return {

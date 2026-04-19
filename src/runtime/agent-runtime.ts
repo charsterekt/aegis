@@ -2,8 +2,8 @@ export interface RuntimeLaunchInput {
   root: string;
   issueId: string;
   title: string;
-  caste: "oracle";
-  stage: "scouting";
+  caste: "oracle" | "titan";
+  stage: "scouting" | "implementing";
 }
 
 export interface RuntimeLaunchResult {

@@ -69,4 +69,40 @@ describe("BeadsTrackerClient", () => {
       expect.any(Function),
     );
   });
+
+  it("creates a follow-up issue through bd create with discovered-from dependency", async () => {
+    const execFile = vi.fn(
+      (
+        _command: string,
+        _args: readonly string[],
+        _options: object,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        callback(null, JSON.stringify({ id: "aegis-456", status: "open" }), "");
+      },
+    );
+    const tracker = new BeadsTrackerClient({ execFile });
+
+    const createdIssueId = await tracker.createIssue?.({
+      title: "[sentinel][aegis-123] update tests",
+      description: "Auto-created follow-up from sentinel",
+      dependencies: ["discovered-from:aegis-123"],
+    }, "repo");
+
+    expect(createdIssueId).toBe("aegis-456");
+    expect(execFile).toHaveBeenCalledWith(
+      "bd",
+      [
+        "create",
+        "[sentinel][aegis-123] update tests",
+        "--description",
+        "Auto-created follow-up from sentinel",
+        "--deps",
+        "discovered-from:aegis-123",
+        "--json",
+      ],
+      expect.objectContaining({ cwd: "repo" }),
+      expect.any(Function),
+    );
+  });
 });

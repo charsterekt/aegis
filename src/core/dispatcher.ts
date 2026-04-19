@@ -38,6 +38,10 @@ export async function dispatchReadyWork(input: DispatchInput): Promise<DispatchR
         caste: decision.caste,
         stage: decision.stage,
       });
+      const previous = records[decision.issueId];
+      const oracleAssessmentRef = decision.caste === "oracle"
+        ? null
+        : previous?.oracleAssessmentRef ?? null;
 
       records[decision.issueId] = {
         issueId: decision.issueId,
@@ -47,12 +51,16 @@ export async function dispatchReadyWork(input: DispatchInput): Promise<DispatchR
           sessionId: launched.sessionId,
           startedAt: launched.startedAt,
         },
-        oracleAssessmentRef: null,
+        oracleAssessmentRef,
+        titanHandoffRef: null,
+        titanClarificationRef: null,
         sentinelVerdictRef: null,
-        fileScope: null,
-        failureCount: records[decision.issueId]?.failureCount ?? 0,
-        consecutiveFailures: records[decision.issueId]?.consecutiveFailures ?? 0,
-        failureWindowStartMs: records[decision.issueId]?.failureWindowStartMs ?? null,
+        janusArtifactRef: null,
+        failureTranscriptRef: null,
+        fileScope: previous?.fileScope ?? null,
+        failureCount: previous?.failureCount ?? 0,
+        consecutiveFailures: previous?.consecutiveFailures ?? 0,
+        failureWindowStartMs: previous?.failureWindowStartMs ?? null,
         cooldownUntil: null,
         sessionProvenanceId: input.sessionProvenanceId,
         updatedAt: timestamp,
@@ -65,6 +73,10 @@ export async function dispatchReadyWork(input: DispatchInput): Promise<DispatchR
         action: `launch_${decision.caste}`,
         outcome: "running",
         sessionId: launched.sessionId,
+        detail: JSON.stringify({
+          caste: decision.caste,
+          stage: decision.stage,
+        }),
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -74,7 +86,11 @@ export async function dispatchReadyWork(input: DispatchInput): Promise<DispatchR
         stage: "failed",
         runningAgent: null,
         oracleAssessmentRef: previous?.oracleAssessmentRef ?? null,
+        titanHandoffRef: previous?.titanHandoffRef ?? null,
+        titanClarificationRef: previous?.titanClarificationRef ?? null,
         sentinelVerdictRef: previous?.sentinelVerdictRef ?? null,
+        janusArtifactRef: previous?.janusArtifactRef ?? null,
+        failureTranscriptRef: previous?.failureTranscriptRef ?? null,
         fileScope: previous?.fileScope ?? null,
         failureCount: (previous?.failureCount ?? 0) + 1,
         consecutiveFailures: (previous?.consecutiveFailures ?? 0) + 1,

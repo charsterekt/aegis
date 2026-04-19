@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { ScriptedCasteRuntime } from "../../../src/runtime/scripted-caste-runtime.js";
+import {
+  ScriptedCasteRuntime,
+  createDefaultScriptedCasteRuntime,
+} from "../../../src/runtime/scripted-caste-runtime.js";
 
 describe("ScriptedCasteRuntime", () => {
   it("returns deterministic output and tool usage for the requested caste", async () => {
@@ -54,5 +57,39 @@ describe("ScriptedCasteRuntime", () => {
         },
       ],
     });
+  });
+
+  it("can force deterministic sentinel failure for selected issues through env override", async () => {
+    const previous = process.env.AEGIS_SCRIPTED_SENTINEL_FAIL_ISSUES;
+    process.env.AEGIS_SCRIPTED_SENTINEL_FAIL_ISSUES = "aegis-999";
+
+    try {
+      const runtime = createDefaultScriptedCasteRuntime({
+        sentinel: {
+          reference: "openai-codex:gpt-5.4-mini",
+          provider: "openai-codex",
+          modelId: "gpt-5.4-mini",
+          thinkingLevel: "medium",
+        },
+      });
+
+      const result = await runtime.run({
+        caste: "sentinel",
+        issueId: "aegis-999",
+        root: "repo",
+        workingDirectory: "repo",
+        prompt: "review prompt",
+      });
+
+      expect(result.status).toBe("succeeded");
+      expect(result.outputText).toContain("\"verdict\":\"fail\"");
+      expect(result.outputText).toContain("review-observability");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.AEGIS_SCRIPTED_SENTINEL_FAIL_ISSUES;
+      } else {
+        process.env.AEGIS_SCRIPTED_SENTINEL_FAIL_ISSUES = previous;
+      }
+    }
   });
 });
