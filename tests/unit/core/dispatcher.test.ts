@@ -76,6 +76,62 @@ describe("dispatchReadyWork", () => {
     });
   });
 
+  it("marks titan dispatch as running while preserving oracle assessment context", async () => {
+    const root = createTempRoot();
+    const result = await dispatchReadyWork({
+      dispatchState: {
+        schemaVersion: 1,
+        records: {
+          "ISSUE-1": {
+            issueId: "ISSUE-1",
+            stage: "scouted",
+            runningAgent: null,
+            oracleAssessmentRef: ".aegis/oracle/ISSUE-1.json",
+            titanHandoffRef: null,
+            titanClarificationRef: null,
+            sentinelVerdictRef: null,
+            janusArtifactRef: null,
+            failureTranscriptRef: null,
+            fileScope: null,
+            failureCount: 0,
+            consecutiveFailures: 0,
+            failureWindowStartMs: null,
+            cooldownUntil: null,
+            sessionProvenanceId: "daemon-0",
+            updatedAt: "2026-04-14T11:59:59.000Z",
+          },
+        },
+      },
+      decisions: [
+        {
+          issueId: "ISSUE-1",
+          title: "First",
+          caste: "titan",
+          stage: "implementing",
+        },
+      ],
+      runtime: createRuntime(),
+      sessionProvenanceId: "daemon-1",
+      root,
+      now: "2026-04-14T12:00:00.000Z",
+    });
+
+    expect(result.dispatched).toEqual(["ISSUE-1"]);
+    expect(result.state.records["ISSUE-1"]).toMatchObject({
+      issueId: "ISSUE-1",
+      stage: "implementing",
+      runningAgent: {
+        caste: "titan",
+        sessionId: "session-1",
+        startedAt: "2026-04-14T12:00:00.000Z",
+      },
+      oracleAssessmentRef: ".aegis/oracle/ISSUE-1.json",
+      titanHandoffRef: null,
+      sentinelVerdictRef: null,
+      sessionProvenanceId: "daemon-1",
+    });
+  });
+
   it("puts failed launches on cooldown so the same issue is not redispatched immediately", async () => {
     const root = createTempRoot();
     const result = await dispatchReadyWork({

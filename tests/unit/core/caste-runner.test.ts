@@ -1,5 +1,5 @@
 import path from "node:path";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 
@@ -765,6 +765,178 @@ describe("runCasteCommand", () => {
       stage: "reviewed",
     });
     expect(closeIssue).toHaveBeenCalledWith("aegis-999", root);
+  });
+
+  it("auto-creates follow-up issues when Sentinel fails without pre-registered IDs", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-1001": {
+          issueId: "aegis-1001",
+          stage: "merged",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-1001.json"),
+          titanHandoffRef: path.join(".aegis", "titan", "aegis-1001.json"),
+          sentinelVerdictRef: null,
+          fileScope: null,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    const createFollowUpIssue = vi
+      .fn()
+      .mockResolvedValueOnce("aegis-2001")
+      .mockResolvedValueOnce("aegis-2002");
+
+    const result = await runCasteCommand({
+      root,
+      action: "review",
+      issueId: "aegis-1001",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-1001")),
+        createIssue: createFollowUpIssue,
+      },
+      runtime: new ScriptedCasteRuntime({
+        sentinel: () => ({
+          output: JSON.stringify({
+            verdict: "fail",
+            reviewSummary: "needs fixes",
+            issuesFound: ["update tests", "tighten validation"],
+            followUpIssueIds: [],
+            riskAreas: ["coverage", "runtime checks"],
+          }),
+        }),
+      }),
+    });
+
+    expect(result).toMatchObject({
+      action: "review",
+      issueId: "aegis-1001",
+      stage: "failed",
+    });
+    expect(createFollowUpIssue).toHaveBeenCalledTimes(2);
+    expect(createFollowUpIssue).toHaveBeenNthCalledWith(1, {
+      title: "[sentinel][aegis-1001] update tests",
+      description: [
+        "Auto-created from Sentinel review for aegis-1001.",
+        "Review summary: needs fixes",
+        "Finding: update tests",
+        "Risk areas: coverage, runtime checks",
+      ].join("\n"),
+      dependencies: ["discovered-from:aegis-1001"],
+    }, root);
+    expect(createFollowUpIssue).toHaveBeenNthCalledWith(2, {
+      title: "[sentinel][aegis-1001] tighten validation",
+      description: [
+        "Auto-created from Sentinel review for aegis-1001.",
+        "Review summary: needs fixes",
+        "Finding: tighten validation",
+        "Risk areas: coverage, runtime checks",
+      ].join("\n"),
+      dependencies: ["discovered-from:aegis-1001"],
+    }, root);
+
+    expect(JSON.parse(
+      readFileSync(path.join(root, ".aegis", "sentinel", "aegis-1001.json"), "utf8"),
+    )).toMatchObject({
+      verdict: "fail",
+      followUpIssueIds: ["aegis-2001", "aegis-2002"],
+    });
+
+    const phaseLogDirectory = path.join(root, ".aegis", "logs", "phases");
+    const phaseActions = readdirSync(phaseLogDirectory)
+      .map((fileName) =>
+        JSON.parse(readFileSync(path.join(phaseLogDirectory, fileName), "utf8")) as {
+          issueId: string;
+          action: string;
+          outcome: string;
+          detail?: string;
+        })
+      .filter((entry) => entry.issueId === "aegis-1001");
+
+    expect(phaseActions.some((entry) => entry.action === "sentinel_review_started")).toBe(true);
+    expect(phaseActions.some((entry) => entry.action === "sentinel_issues_discovered")).toBe(true);
+    expect(phaseActions.filter((entry) => entry.action === "sentinel_followup_created")).toHaveLength(2);
+    expect(phaseActions.some((entry) =>
+      entry.action === "sentinel_review_completed" && entry.outcome === "failed",
+    )).toBe(true);
+  });
+
+  it("writes janus start and completion phase logs during integration resolution", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-janus-1": {
+          issueId: "aegis-janus-1",
+          stage: "resolving_integration",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-janus-1.json"),
+          titanHandoffRef: path.join(".aegis", "titan", "aegis-janus-1.json"),
+          sentinelVerdictRef: null,
+          fileScope: null,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    const result = await runCasteCommand({
+      root,
+      action: "process",
+      issueId: "aegis-janus-1",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-janus-1")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        janus: () => ({
+          output: JSON.stringify({
+            originatingIssueId: "aegis-janus-1",
+            queueItemId: "queue-aegis-janus-1",
+            preservedLaborPath: ".aegis/labors/aegis-janus-1",
+            conflictSummary: "deterministic conflict context",
+            resolutionStrategy: "keep both changes",
+            filesTouched: ["src/index.ts"],
+            validationsRun: ["npm test"],
+            residualRisks: [],
+            recommendedNextAction: "requeue",
+          }),
+        }),
+      }),
+    });
+
+    expect(result).toMatchObject({
+      action: "process",
+      issueId: "aegis-janus-1",
+      stage: "queued_for_merge",
+    });
+
+    const phaseLogDirectory = path.join(root, ".aegis", "logs", "phases");
+    const phaseActions = readdirSync(phaseLogDirectory)
+      .map((fileName) =>
+        JSON.parse(readFileSync(path.join(phaseLogDirectory, fileName), "utf8")) as {
+          issueId: string;
+          action: string;
+          outcome: string;
+          detail?: string;
+        })
+      .filter((entry) => entry.issueId === "aegis-janus-1");
+
+    expect(phaseActions.some((entry) => entry.action === "janus_resolution_started")).toBe(true);
+    expect(phaseActions.some((entry) =>
+      entry.action === "janus_resolution_completed" && entry.outcome === "queued_for_merge",
+    )).toBe(true);
   });
 
   it("does not persist reviewed when tracker close fails after a passing review", async () => {

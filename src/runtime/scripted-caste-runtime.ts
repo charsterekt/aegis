@@ -110,6 +110,19 @@ function parseConfiguredModel(
   };
 }
 
+function parseForcedIssueSet(value: string | undefined) {
+  if (!value || value.trim().length === 0) {
+    return new Set<string>();
+  }
+
+  return new Set(
+    value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0),
+  );
+}
+
 export function createScriptedModelConfigs(
   configuredModels: Record<CasteName, string>,
   thinkingLevels: Record<CasteName, AegisThinkingLevel>,
@@ -127,6 +140,8 @@ export function createDefaultScriptedCasteRuntime(
   root = process.cwd(),
   issueId = "issue",
 ): CasteRuntime {
+  const forcedSentinelFailures = parseForcedIssueSet(process.env.AEGIS_SCRIPTED_SENTINEL_FAIL_ISSUES);
+
   return new ScriptedCasteRuntime(modelConfigs, {
     oracle: () => ({
       output: JSON.stringify({
@@ -149,16 +164,33 @@ export function createDefaultScriptedCasteRuntime(
       }),
       toolsUsed: ["write_file"],
     }),
-    sentinel: () => ({
-      output: JSON.stringify({
-        verdict: "pass",
-        reviewSummary: "deterministic scripted review",
-        issuesFound: [],
-        followUpIssueIds: [],
-        riskAreas: [],
-      }),
-      toolsUsed: ["read_file"],
-    }),
+    sentinel: (input) => {
+      if (forcedSentinelFailures.has("*") || forcedSentinelFailures.has(input.issueId)) {
+        return {
+          output: JSON.stringify({
+            verdict: "fail",
+            reviewSummary: "deterministic scripted review failure",
+            issuesFound: [
+              "add missing sentinel regression coverage",
+            ],
+            followUpIssueIds: [],
+            riskAreas: ["review-observability"],
+          }),
+          toolsUsed: ["read_file"],
+        };
+      }
+
+      return {
+        output: JSON.stringify({
+          verdict: "pass",
+          reviewSummary: "deterministic scripted review",
+          issuesFound: [],
+          followUpIssueIds: [],
+          riskAreas: [],
+        }),
+        toolsUsed: ["read_file"],
+      };
+    },
     janus: () => ({
       output: JSON.stringify({
         originatingIssueId: issueId,

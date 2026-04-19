@@ -9,6 +9,7 @@ import { BeadsTrackerClient } from "../tracker/beads-tracker.js";
 import type { AgentRuntime } from "../runtime/agent-runtime.js";
 import { createAgentRuntime } from "../runtime/scripted-agent-runtime.js";
 import { writePhaseLog } from "./phase-log.js";
+import { autoEnqueueImplementedIssuesForMerge } from "../merge/auto-enqueue.js";
 
 export type LoopPhase = "poll" | "dispatch" | "monitor" | "reap";
 
@@ -239,4 +240,6 @@ export async function runDaemonCycle(
     monitorResult.readyToReap,
     dispatchResult.dispatchState,
   );
+
+  autoEnqueueImplementedIssuesForMerge(root, timestamp);
 }

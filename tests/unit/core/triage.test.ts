@@ -39,7 +39,7 @@ describe("triageReadyWork", () => {
     ]);
   });
 
-  it("skips running work and already-progressed stages", () => {
+  it("skips running work and advances scouted issues to titan dispatch", () => {
     const result = triageReadyWork({
       readyIssues: [
         { id: "ISSUE-1", title: "Running" },
@@ -83,15 +83,18 @@ describe("triageReadyWork", () => {
       now: "2026-04-14T12:01:00.000Z",
     });
 
-    expect(result.dispatchable).toEqual([]);
+    expect(result.dispatchable).toEqual([
+      {
+        issueId: "ISSUE-2",
+        title: "Later",
+        caste: "titan",
+        stage: "implementing",
+      },
+    ]);
     expect(result.skipped).toEqual([
       {
         issueId: "ISSUE-1",
         reason: "in_progress",
-      },
-      {
-        issueId: "ISSUE-2",
-        reason: "already_progressed",
       },
     ]);
   });

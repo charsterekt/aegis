@@ -6,10 +6,13 @@ import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_AEGIS_CONFIG } from "../../../src/config/defaults.js";
-import { saveDispatchState, type DispatchRecord, type DispatchState } from "../../../src/core/dispatch-state.js";
+import { loadDispatchState, saveDispatchState, type DispatchRecord, type DispatchState } from "../../../src/core/dispatch-state.js";
+import { runDaemonCycle } from "../../../src/core/loop-runner.js";
 import { runMergeNext } from "../../../src/merge/merge-next.js";
 import { saveMergeQueueState, type MergeQueueItem } from "../../../src/merge/merge-state.js";
 import { ScriptedCasteRuntime } from "../../../src/runtime/scripted-caste-runtime.js";
+import type { AgentRuntime } from "../../../src/runtime/agent-runtime.js";
+import { BeadsTrackerClient } from "../../../src/tracker/beads-tracker.js";
 import type { AegisIssue } from "../../../src/tracker/issue-model.js";
 
 const tempRoots: string[] = [];
@@ -103,6 +106,7 @@ function writeState(root: string, issueId: string, attempts = 0) {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of tempRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
@@ -363,5 +367,94 @@ describe("runMergeNext", () => {
         process.env.AEGIS_SCRIPTED_MERGE_PLAN = previousPlan;
       }
     }
+  });
+
+  it("dispatches sentinel-created follow-up issues on the next daemon cycle", async () => {
+    const root = createTempRoot();
+    writeState(root, "aegis-444");
+
+    const readyIssues: Array<{ id: string; title: string }> = [];
+    const issueCatalog = new Map<string, AegisIssue>([
+      ["aegis-444", createIssue("aegis-444")],
+    ]);
+
+    vi.spyOn(BeadsTrackerClient.prototype, "listReadyIssues").mockImplementation(async () => [
+      ...readyIssues,
+    ]);
+
+    const trackerWithFollowUps = {
+      getIssue: vi.fn(async (issueId: string) => issueCatalog.get(issueId) ?? createIssue(issueId)),
+      createIssue: vi.fn(async () => {
+        const followUpIssueId = "aegis-445";
+        issueCatalog.set(followUpIssueId, createIssue(followUpIssueId));
+        readyIssues.splice(0, readyIssues.length, {
+          id: followUpIssueId,
+          title: "Sentinel follow-up",
+        });
+        return followUpIssueId;
+      }),
+    };
+
+    const mergeResult = await runMergeNext(root, {
+      tracker: trackerWithFollowUps as any,
+      runtime: new ScriptedCasteRuntime({
+        sentinel: () => ({
+          output: JSON.stringify({
+            verdict: "fail",
+            reviewSummary: "needs coverage hardening",
+            issuesFound: ["add sentinel regression seam"],
+            followUpIssueIds: [],
+            riskAreas: ["observability"],
+          }),
+        }),
+      }),
+      executor: {
+        execute: vi.fn(async () => ({
+          outcome: "merged" as const,
+          detail: "Merged cleanly.",
+        })),
+      },
+      now: "2026-04-14T12:30:00.000Z",
+    });
+
+    expect(mergeResult).toMatchObject({
+      action: "merge_next",
+      issueId: "aegis-444",
+      status: "failed",
+      stage: "failed",
+    });
+    expect(readyIssues).toEqual([
+      { id: "aegis-445", title: "Sentinel follow-up" },
+    ]);
+
+    const runtime: AgentRuntime = {
+      launch: vi.fn(async (input) => ({
+        sessionId: `session-${input.issueId}`,
+        startedAt: new Date().toISOString(),
+      })),
+      readSession: vi.fn(async () => null),
+      terminate: vi.fn(async () => null),
+    };
+
+    await runDaemonCycle(root, {
+      runtime,
+      sessionProvenanceId: "daemon-test",
+    });
+
+    expect(runtime.launch).toHaveBeenCalledWith(expect.objectContaining({
+      issueId: "aegis-445",
+      caste: "oracle",
+      stage: "scouting",
+    }));
+
+    const dispatchState = loadDispatchState(root);
+    expect(dispatchState.records["aegis-445"]).toMatchObject({
+      issueId: "aegis-445",
+      stage: "scouting",
+      runningAgent: {
+        caste: "oracle",
+      },
+      sessionProvenanceId: "daemon-test",
+    });
   });
 });

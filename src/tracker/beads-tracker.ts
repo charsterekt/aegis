@@ -1,6 +1,10 @@
 import { execFile } from "node:child_process";
 
-import type { TrackerClient, TrackerReadyIssue } from "./tracker.js";
+import type {
+  TrackerClient,
+  TrackerCreateIssueInput,
+  TrackerReadyIssue,
+} from "./tracker.js";
 import type { AegisIssue, IssueStatus, WorkIssueClass } from "./issue-model.js";
 
 type ExecFileLike = (
@@ -25,6 +29,14 @@ interface RawBeadsIssue {
   dependencies?: unknown;
   parent_id?: unknown;
   child_ids?: unknown;
+}
+
+function normalizeIssueId(value: unknown): string | null {
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+
+  return null;
 }
 
 function normalizeReadyIssue(issue: RawBeadsIssue, index: number): TrackerReadyIssue {
@@ -208,6 +220,66 @@ export class BeadsTrackerClient implements TrackerClient {
 
           void stdout;
           resolve();
+        },
+      );
+    });
+  }
+
+  async createIssue(
+    input: TrackerCreateIssueInput,
+    root = process.cwd(),
+  ): Promise<string> {
+    const args = [
+      "create",
+      input.title,
+      "--description",
+      input.description,
+      "--json",
+    ];
+
+    if (input.dependencies && input.dependencies.length > 0) {
+      args.splice(args.length - 1, 0, "--deps", input.dependencies.join(","));
+    }
+
+    return new Promise((resolve, reject) => {
+      this.execFileImpl(
+        "bd",
+        args,
+        {
+          cwd: root,
+          encoding: "utf8",
+          maxBuffer: 10 * 1024 * 1024,
+          windowsHide: true,
+        },
+        (error, stdout, stderr) => {
+          if (error) {
+            const detail = stderr?.trim() ? ` ${stderr.trim()}` : "";
+            reject(new Error(`bd create failed:${detail}`));
+            return;
+          }
+
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(stdout);
+          } catch (parseError) {
+            const detail = parseError instanceof Error ? parseError.message : String(parseError);
+            reject(new Error(`bd create returned invalid JSON: ${detail}`));
+            return;
+          }
+
+          const payload = Array.isArray(parsed) ? parsed[0] : parsed;
+          if (!payload || typeof payload !== "object") {
+            reject(new Error("bd create returned an invalid issue payload"));
+            return;
+          }
+
+          const issueId = normalizeIssueId((payload as RawBeadsIssue).id);
+          if (!issueId) {
+            reject(new Error("bd create payload is missing issue id"));
+            return;
+          }
+
+          resolve(issueId);
         },
       );
     });

@@ -92,3 +92,19 @@ npm run build
 - Scope stays Phase J only.
 - No merge-tier redesign here (already Phase F/I concern).
 - CI remains deterministic; live parallel proof remains explicit QA/operator run.
+
+## Phase J notes (2026-04-19)
+
+- Added daemon stream surface at `aegis stream daemon` with runtime + phase tailing from `.aegis/logs/daemon.log` and `.aegis/logs/phases/*.json`.
+- Stream now prints phase `detail=` payloads so Sentinel follow-up ids and dispatch attempt sets are human-visible in terminal.
+- Added dispatch-phase events for Sentinel and Janus lifecycle boundaries:
+  - `sentinel_review_started`
+  - `sentinel_issues_discovered`
+  - `sentinel_followup_created`
+  - `sentinel_review_completed`
+  - `janus_resolution_started`
+  - `janus_resolution_completed`
+- Added deterministic seam proving post-review follow-up pickup while daemon loop stays active:
+  - `tests/unit/merge/merge-next.test.ts` now verifies `runMergeNext` Sentinel failure creates a follow-up issue and the next `runDaemonCycle` dispatches it.
+- Live QA stream evidence captured under mock-run workspace:
+  - `../aegis-qa/aegis-mock-run/.aegis/logs/phase-j-stream-sentinel-fail-v2.txt`

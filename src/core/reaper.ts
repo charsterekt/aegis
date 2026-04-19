@@ -20,10 +20,22 @@ export interface ReapResult {
   failed: string[];
 }
 
+function resolveCompletedStage(record: DispatchRecord): string {
+  if (record.stage === "scouting") {
+    return "scouted";
+  }
+
+  if (record.stage === "implementing") {
+    return "implemented";
+  }
+
+  return record.stage;
+}
+
 function toCompletedRecord(record: DispatchRecord, timestamp: string): DispatchRecord {
   return {
     ...record,
-    stage: "scouted",
+    stage: resolveCompletedStage(record),
     runningAgent: null,
     consecutiveFailures: 0,
     cooldownUntil: null,
@@ -66,14 +78,15 @@ export async function reapFinishedWork(input: ReapInput): Promise<ReapResult> {
     }
 
     if (snapshot.status === "succeeded") {
-      records[issueId] = toCompletedRecord(record, timestamp);
+      const completedRecord = toCompletedRecord(record, timestamp);
+      records[issueId] = completedRecord;
       completed.push(issueId);
       writePhaseLog(input.root, {
         timestamp,
         phase: "reap",
         issueId,
         action: "finalize_session",
-        outcome: "scouted",
+        outcome: completedRecord.stage,
         sessionId: snapshot.sessionId,
       });
       continue;
