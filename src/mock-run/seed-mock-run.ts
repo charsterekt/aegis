@@ -6,6 +6,7 @@ import path from "node:path";
 import { DEFAULT_AEGIS_CONFIG } from "../config/defaults.js";
 import { initProject } from "../config/init-project.js";
 import { resolveProjectRelativePath } from "../config/load-config.js";
+import { resolveDefaultMockWorkspaceRoot } from "./mock-paths.js";
 import { TODO_MOCK_RUN_MANIFEST } from "./todo-manifest.js";
 import type { MockRunIssueDefinition } from "./types.js";
 
@@ -27,6 +28,8 @@ export interface MockRunBdSupport {
   supported: boolean;
   reason: string;
 }
+
+export const MOCK_RUN_LABOR_BASE_PATH = ".aegis/labors";
 
 interface MockRunManifestFile {
   /** Relative path from the manifest file to the repo root (always "..") */
@@ -178,6 +181,10 @@ export function buildMockRunConfig(options?: {
   const baseConfig = {
     ...DEFAULT_AEGIS_CONFIG,
     runtime,
+    labor: {
+      ...DEFAULT_AEGIS_CONFIG.labor,
+      base_path: MOCK_RUN_LABOR_BASE_PATH,
+    },
   };
 
   if (!uncapped) return baseConfig;
@@ -266,7 +273,7 @@ export async function seedMockRun(options: SeedMockRunOptions = {}): Promise<See
     );
   }
 
-  const workspaceRoot = path.resolve(options.workspaceRoot ?? process.cwd());
+  const workspaceRoot = path.resolve(options.workspaceRoot ?? resolveDefaultMockWorkspaceRoot());
   const repoName = options.repoName ?? TODO_MOCK_RUN_MANIFEST.repoName;
   const beadsPrefix = options.beadsPrefix ?? TODO_MOCK_RUN_MANIFEST.beadsPrefix;
   const repoRoot = path.join(workspaceRoot, repoName);

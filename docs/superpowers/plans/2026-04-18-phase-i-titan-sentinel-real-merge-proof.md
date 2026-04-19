@@ -2,13 +2,21 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deliver Phase I from the real Pi proof spec: Titan runs live in scratchpad git worktrees, merge queue performs real merge in mock-run repo, Sentinel runs live strictly post-merge, and artifacts include changed-files plus diff references.
+**Goal:** Deliver Phase I from the real Pi proof spec: Titan runs live in labor git worktrees, merge queue performs real merge in mock-run repo, Sentinel runs live strictly post-merge, and artifacts include changed-files plus diff references.
 
 **Spec anchor:** `docs/superpowers/specs/2026-04-16-aegis-real-pi-proof-design.md` (Phase I required outcomes + exit proof).
 
 **Architecture:** Keep CI deterministic. Add artifact enrichment at caste/merge boundaries, keep queue policy deterministic, and run live proof only through explicit operator/QA commands on seeded mock-run.
 
 **Tech stack:** TypeScript, Vitest seam tests, existing `aegis merge next` pipeline, Pi runtime, mock-run seed flow.
+
+## Plan augmentation (2026-04-18)
+
+- Enforce `labor.base_path` as runtime source of truth for labor/worktree placement (no hardcoded `.aegis/labors` usage in planner/runner paths).
+- Set seeded mock-run live default labor root to `.aegis/labors/` to satisfy Phase I labor-worktree proof while keeping labor placement config-driven.
+- Add deterministic seam proving `runtime: "pi"` chooses real git merge path (with scripted Sentinel to avoid token usage in CI).
+- Harden Titan/Sentinel/Janus prompts to require strict JSON-schema outputs and reduce live parser drift.
+- Enforce Oracle-style function-tool contracts for Titan/Sentinel/Janus in Pi runtime so live runs emit machine-parseable artifacts without relying on free-text JSON compliance.
 
 ---
 
@@ -98,7 +106,7 @@ npm run build
 ```
 
 **Exit proof gate (must be true):**
-- Titan live run writes real file edits inside scratchpad worktree.
+- Titan live run writes real file edits inside configured labor worktree.
 - `merge next` produces real merge result in mock-run repo.
 - Sentinel executes only after merge success and closes passing issue.
 - Titan/Janus artifacts include changed-files and diff references.

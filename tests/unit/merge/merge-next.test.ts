@@ -1,6 +1,7 @@
 import path from "node:path";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -12,6 +13,14 @@ import { ScriptedCasteRuntime } from "../../../src/runtime/scripted-caste-runtim
 import type { AegisIssue } from "../../../src/tracker/issue-model.js";
 
 const tempRoots: string[] = [];
+
+function runGit(root: string, args: string[]) {
+  return execFileSync("git", args, {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+}
 
 function createTempRoot() {
   const root = mkdtempSync(path.join(tmpdir(), "aegis-merge-next-"));
@@ -100,6 +109,61 @@ afterEach(() => {
 });
 
 describe("runMergeNext", () => {
+  it("uses real git merge execution when runtime is pi", async () => {
+    const root = createTempRoot();
+    writeFileSync(
+      path.join(root, ".aegis", "config.json"),
+      `${JSON.stringify({
+        ...DEFAULT_AEGIS_CONFIG,
+        runtime: "pi",
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    runGit(root, ["init"]);
+    runGit(root, ["config", "user.email", "test@aegis.local"]);
+    runGit(root, ["config", "user.name", "Aegis Test"]);
+    writeFileSync(path.join(root, "README.md"), "baseline\n", "utf8");
+    runGit(root, ["add", "--all"]);
+    runGit(root, ["commit", "-m", "baseline"]);
+    runGit(root, ["branch", "-M", "main"]);
+
+    runGit(root, ["checkout", "-b", "aegis/aegis-900"]);
+    writeFileSync(path.join(root, "README.md"), "phase-i merge change\n", "utf8");
+    runGit(root, ["add", "README.md"]);
+    runGit(root, ["commit", "-m", "candidate change"]);
+    runGit(root, ["checkout", "main"]);
+
+    writeState(root, "aegis-900");
+
+    const result = await runMergeNext(root, {
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-900")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        sentinel: () => ({
+          output: JSON.stringify({
+            verdict: "pass",
+            reviewSummary: "merged cleanly",
+            issuesFound: [],
+            followUpIssueIds: [],
+            riskAreas: [],
+          }),
+        }),
+      }),
+      now: "2026-04-14T12:30:00.000Z",
+    });
+
+    expect(result).toMatchObject({
+      action: "merge_next",
+      status: "merged",
+      issueId: "aegis-900",
+      tier: "T1",
+      stage: "reviewed",
+    });
+    expect(readFileSync(path.join(root, "README.md"), "utf8")).toContain("phase-i merge change");
+  });
+
   it("merges queued work, runs Sentinel post-merge, and advances the issue to reviewed", async () => {
     const root = createTempRoot();
     writeState(root, "aegis-123");

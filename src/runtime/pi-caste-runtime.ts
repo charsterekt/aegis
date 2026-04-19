@@ -13,6 +13,27 @@ import {
   ORACLE_EMIT_ASSESSMENT_TOOL_NAME,
   stringifyOracleAssessment,
 } from "../castes/oracle/oracle-tool-contract.js";
+import {
+  createTitanEmitArtifactTool,
+  enforceTitanToolPayloadContract,
+  extractTitanArtifactFromToolEvent,
+  stringifyTitanArtifact,
+  TITAN_EMIT_ARTIFACT_TOOL_NAME,
+} from "../castes/titan/titan-tool-contract.js";
+import {
+  createSentinelEmitVerdictTool,
+  enforceSentinelToolPayloadContract,
+  extractSentinelVerdictFromToolEvent,
+  SENTINEL_EMIT_VERDICT_TOOL_NAME,
+  stringifySentinelVerdict,
+} from "../castes/sentinel/sentinel-tool-contract.js";
+import {
+  createJanusEmitResolutionTool,
+  enforceJanusToolPayloadContract,
+  extractJanusResolutionFromToolEvent,
+  JANUS_EMIT_RESOLUTION_TOOL_NAME,
+  stringifyJanusResolutionArtifact,
+} from "../castes/janus/janus-tool-contract.js";
 import type {
   CasteName,
   CasteRunInput,
@@ -68,18 +89,66 @@ function resolveTools(caste: CasteName, workingDirectory: string) {
   return createReadOnlyTools(workingDirectory);
 }
 
-function resolveCustomTools(caste: CasteName): ToolDefinition[] | undefined {
-  if (caste === "oracle") {
-    return [createOracleEmitAssessmentTool()];
-  }
-
-  return undefined;
+interface CasteToolContract {
+  label: string;
+  toolName: string;
+  createTool: () => ToolDefinition;
+  enforcePayloadContract: (payload: unknown) => unknown | undefined;
+  extractStructuredOutput: (event: AgentSessionEvent) => string | null;
 }
 
-function installPayloadContractHook(caste: CasteName, session: Awaited<ReturnType<typeof createAgentSession>>["session"]) {
-  if (caste !== "oracle") {
-    return;
-  }
+const CASTE_TOOL_CONTRACTS: Record<CasteName, CasteToolContract> = {
+  oracle: {
+    label: "Oracle",
+    toolName: ORACLE_EMIT_ASSESSMENT_TOOL_NAME,
+    createTool: createOracleEmitAssessmentTool,
+    enforcePayloadContract: enforceOracleToolPayloadContract,
+    extractStructuredOutput(event) {
+      const assessment = extractOracleAssessmentFromToolEvent(event);
+      return assessment ? stringifyOracleAssessment(assessment) : null;
+    },
+  },
+  titan: {
+    label: "Titan",
+    toolName: TITAN_EMIT_ARTIFACT_TOOL_NAME,
+    createTool: createTitanEmitArtifactTool,
+    enforcePayloadContract: enforceTitanToolPayloadContract,
+    extractStructuredOutput(event) {
+      const artifact = extractTitanArtifactFromToolEvent(event);
+      return artifact ? stringifyTitanArtifact(artifact) : null;
+    },
+  },
+  sentinel: {
+    label: "Sentinel",
+    toolName: SENTINEL_EMIT_VERDICT_TOOL_NAME,
+    createTool: createSentinelEmitVerdictTool,
+    enforcePayloadContract: enforceSentinelToolPayloadContract,
+    extractStructuredOutput(event) {
+      const verdict = extractSentinelVerdictFromToolEvent(event);
+      return verdict ? stringifySentinelVerdict(verdict) : null;
+    },
+  },
+  janus: {
+    label: "Janus",
+    toolName: JANUS_EMIT_RESOLUTION_TOOL_NAME,
+    createTool: createJanusEmitResolutionTool,
+    enforcePayloadContract: enforceJanusToolPayloadContract,
+    extractStructuredOutput(event) {
+      const artifact = extractJanusResolutionFromToolEvent(event);
+      return artifact ? stringifyJanusResolutionArtifact(artifact) : null;
+    },
+  },
+};
+
+function resolveCustomTools(caste: CasteName): ToolDefinition[] {
+  return [CASTE_TOOL_CONTRACTS[caste].createTool()];
+}
+
+function installPayloadContractHook(
+  contract: CasteToolContract,
+  session: Awaited<ReturnType<typeof createAgentSession>>["session"],
+  shouldEnforce: () => boolean,
+) {
 
   const existingOnPayload = session.agent.onPayload;
   session.agent.onPayload = async (payload, model) => {
@@ -87,7 +156,14 @@ function installPayloadContractHook(caste: CasteName, session: Awaited<ReturnTyp
       ? await existingOnPayload(payload, model)
       : undefined;
     const effectivePayload = existingPayload === undefined ? payload : existingPayload;
-    const enforcedPayload = enforceOracleToolPayloadContract(effectivePayload);
+    if (!shouldEnforce()) {
+      if (existingPayload !== undefined) {
+        return effectivePayload;
+      }
+
+      return undefined;
+    }
+    const enforcedPayload = contract.enforcePayloadContract(effectivePayload);
 
     if (enforcedPayload !== undefined) {
       return enforcedPayload;
@@ -99,6 +175,15 @@ function installPayloadContractHook(caste: CasteName, session: Awaited<ReturnTyp
 
     return undefined;
   };
+}
+
+function createContractRepairPrompt(contract: CasteToolContract) {
+  return [
+    `Tool contract repair required: no '${contract.toolName}' output was captured.`,
+    `Call '${contract.toolName}' now with the final artifact payload.`,
+    "Do not call any other tools.",
+    "Do not return prose or markdown.",
+  ].join("\n");
 }
 
 export class PiCasteRuntime implements CasteRuntime {
@@ -117,25 +202,46 @@ export class PiCasteRuntime implements CasteRuntime {
       role: "user",
       content: input.prompt,
     }];
+    const toolContract = CASTE_TOOL_CONTRACTS[input.caste];
+    const baseTools = resolveTools(input.caste, input.workingDirectory);
+    const activeToolNames = [...new Set([
+      ...baseTools.map((tool) => tool.name),
+      toolContract.toolName,
+    ])];
     const customTools = resolveCustomTools(input.caste);
     const { session } = await createAgentSession({
       cwd: input.workingDirectory,
       model: modelConfig.model,
       thinkingLevel: modelConfig.thinkingLevel,
-      tools: resolveTools(input.caste, input.workingDirectory),
-      ...(customTools ? { customTools } : {}),
+      tools: baseTools,
+      customTools,
     });
-    installPayloadContractHook(input.caste, session);
+    session.setActiveToolsByName(activeToolNames);
+    let enforceContractPayload = false;
+    installPayloadContractHook(toolContract, session, () => enforceContractPayload);
     const messages: string[] = [];
     const toolsUsed: string[] = [];
-    let oracleStructuredOutput: string | null = null;
+    let structuredOutput: string | null = null;
 
     try {
       await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        let repairAttempted = false;
+
+        const settle = (action: () => void) => {
+          if (settled) {
+            return;
+          }
+
+          settled = true;
+          unsubscribe();
+          action();
+        };
+
         const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
-          const oracleAssessment = extractOracleAssessmentFromToolEvent(event);
-          if (oracleAssessment) {
-            oracleStructuredOutput = stringifyOracleAssessment(oracleAssessment);
+          const casteOutput = toolContract.extractStructuredOutput(event);
+          if (casteOutput) {
+            structuredOutput = casteOutput;
           }
 
           if (event.type === "tool_execution_start") {
@@ -157,24 +263,53 @@ export class PiCasteRuntime implements CasteRuntime {
           }
 
           if (event.type === "agent_end") {
-            unsubscribe();
             const state = session.state as { error?: string | null };
             if (state.error) {
-              reject(new Error(state.error));
+              const errorMessage = typeof state.error === "string"
+                ? state.error
+                : "Unknown Pi session error.";
+              settle(() => {
+                reject(new Error(errorMessage));
+              });
               return;
             }
-            if (input.caste === "oracle" && !oracleStructuredOutput) {
+
+            if (structuredOutput) {
+              settle(() => {
+                resolve();
+              });
+              return;
+            }
+
+            if (!repairAttempted) {
+              repairAttempted = true;
+              enforceContractPayload = true;
+              const repairPrompt = createContractRepairPrompt(toolContract);
+              messageLog.push({
+                role: "user",
+                content: repairPrompt,
+              });
+
+              void session.prompt(repairPrompt).catch((error: unknown) => {
+                settle(() => {
+                  reject(error);
+                });
+              });
+              return;
+            }
+
+            settle(() => {
               reject(new Error(
-                `Oracle tool contract violation: missing '${ORACLE_EMIT_ASSESSMENT_TOOL_NAME}' output.`,
+                `${toolContract.label} tool contract violation: missing '${toolContract.toolName}' output.`,
               ));
-              return;
-            }
-            resolve();
+            });
           }
         });
 
         void session.prompt(input.prompt).catch((error: unknown) => {
-          reject(error);
+          settle(() => {
+            reject(error);
+          });
         });
       });
 
@@ -186,7 +321,7 @@ export class PiCasteRuntime implements CasteRuntime {
         modelId: modelConfig.modelId,
         thinkingLevel: modelConfig.thinkingLevel,
         status: "succeeded",
-        outputText: oracleStructuredOutput ?? messages.at(-1) ?? "",
+        outputText: structuredOutput ?? messages.at(-1) ?? "",
         toolsUsed,
         messageLog,
         startedAt,
@@ -201,7 +336,7 @@ export class PiCasteRuntime implements CasteRuntime {
         modelId: modelConfig.modelId,
         thinkingLevel: modelConfig.thinkingLevel,
         status: "failed",
-        outputText: oracleStructuredOutput ?? messages.at(-1) ?? "",
+        outputText: structuredOutput ?? messages.at(-1) ?? "",
         toolsUsed,
         messageLog,
         startedAt,

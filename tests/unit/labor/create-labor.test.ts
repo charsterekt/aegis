@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { buildLaborBranchName, planLaborCreation } from "../../../src/labor/create-labor.js";
@@ -8,10 +10,11 @@ describe("planLaborCreation", () => {
       issueId: "aegis-123",
       projectRoot: "repo",
       baseBranch: "main",
+      laborBasePath: "scratchpad",
     });
 
     expect(buildLaborBranchName("aegis-123")).toBe("aegis/aegis-123");
-    expect(plan.laborPath).toContain(".aegis");
+    expect(plan.laborPath).toBe(path.join(path.resolve("repo"), "scratchpad", "aegis-123"));
     expect(plan.createWorktreeCommand.args).toEqual([
       "worktree",
       "add",

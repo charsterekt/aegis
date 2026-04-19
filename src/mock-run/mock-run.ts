@@ -3,8 +3,8 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { isProcessRunning, readRuntimeState, type RuntimeStateRecord } from "../cli/runtime-state.js";
+import { resolveDefaultMockRepoRoot } from "./mock-paths.js";
 
-const MOCK_DIR = path.join(process.cwd(), "aegis-mock-run");
 const MOCK_START_TIMEOUT_MS = 10_000;
 const MOCK_START_POLL_MS = 100;
 
@@ -22,6 +22,12 @@ export interface RunMockCommandOptions {
 
 function normalizeExecutable(command: string) {
   return command === "node" ? process.execPath : command;
+}
+
+function resolveAegisCliPath() {
+  const currentFilePath = fileURLToPath(import.meta.url);
+  const currentDirectory = path.dirname(currentFilePath);
+  return path.resolve(currentDirectory, "..", "..", "dist", "index.js");
 }
 
 function isMockAegisStartCommand(args: readonly string[]) {
@@ -70,16 +76,17 @@ export async function runMockCommand(
   options: RunMockCommandOptions = {},
 ) {
   if (args.length === 0) {
+    const aegisCliPath = resolveAegisCliPath();
     console.log("Usage: npm run mock:run -- <command> [args...]");
-    console.log("  npm run mock:run -- node ../dist/index.js status");
-    console.log("  npm run mock:run -- node ../dist/index.js start");
+    console.log(`  npm run mock:run -- node ${aegisCliPath} status`);
+    console.log(`  npm run mock:run -- node ${aegisCliPath} start`);
     process.exit(1);
   }
 
   const executeFile = options.execFileSync ?? execFileSync;
   const spawnProcess = options.spawn ?? spawn;
   const waitForDaemonStart = options.waitForDaemonStart ?? waitForMockDaemonStart;
-  const mockDir = options.mockDir ?? MOCK_DIR;
+  const mockDir = options.mockDir ?? resolveDefaultMockRepoRoot();
   const startTimeoutMs = options.startTimeoutMs ?? MOCK_START_TIMEOUT_MS;
 
   if (isMockAegisStartCommand(args)) {

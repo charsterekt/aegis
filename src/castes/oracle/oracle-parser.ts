@@ -82,11 +82,11 @@ export function parseOracleAssessment(raw: string): OracleAssessment {
     ready: assertBoolean(obj["ready"], "ready"),
   };
 
-  if ("sub_issues" in obj) {
+  if ("sub_issues" in obj && obj["sub_issues"] !== null) {
     assessment.sub_issues = assertStringArray(obj["sub_issues"], "sub_issues");
   }
 
-  if ("blockers" in obj) {
+  if ("blockers" in obj && obj["blockers"] !== null) {
     assessment.blockers = assertStringArray(obj["blockers"], "blockers");
   }
 

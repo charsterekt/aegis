@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { loadDispatchState, type DispatchRecord } from "../core/dispatch-state.js";
 import { loadMergeQueueState, type MergeQueueItem } from "../merge/merge-state.js";
 import { runMockCommand, type RunMockCommandOptions } from "./mock-run.js";
+import { resolveDefaultMockWorkspaceRoot } from "./mock-paths.js";
 import { seedMockRun, type SeedMockRunResult } from "./seed-mock-run.js";
 import { BeadsTrackerClient } from "../tracker/beads-tracker.js";
 import type { RuntimeStateRecord } from "../cli/runtime-state.js";
@@ -22,6 +23,12 @@ type MockCommandRunner = (
 
 interface TrackerLike {
   getIssue(id: string, root?: string): Promise<AegisIssue>;
+}
+
+function resolveAegisCliPath() {
+  const currentFilePath = fileURLToPath(import.meta.url);
+  const currentDirectory = path.dirname(currentFilePath);
+  return path.resolve(currentDirectory, "..", "..", "dist", "index.js");
 }
 
 export interface MockAcceptanceDependencies {
@@ -382,7 +389,10 @@ async function withTemporaryEnv<T>(
 export async function runMockAcceptance(
   options: MockAcceptanceDependencies = {},
 ): Promise<MockAcceptanceResult> {
-  const workspaceRoot = path.resolve(options.cwd ?? process.cwd());
+  const workspaceRoot = options.cwd
+    ? path.resolve(options.cwd)
+    : resolveDefaultMockWorkspaceRoot();
+  const aegisCliPath = resolveAegisCliPath();
   const seed = await (options.seedMockRun ?? seedMockRun)({ workspaceRoot });
   const happyIssueId = requireIssueId(seed, HAPPY_PATH_ISSUE_KEY);
   const janusIssueId = requireIssueId(seed, JANUS_ISSUE_KEY);
@@ -390,24 +400,24 @@ export async function runMockAcceptance(
   const collectSurface = options.collectMockAcceptanceSurface ?? collectMockAcceptanceSurface;
   const tracker = options.tracker ?? new BeadsTrackerClient();
 
-  await runCommand(["node", "../dist/index.js", "start"], { mockDir: seed.repoRoot });
-  await runCommand(["node", "../dist/index.js", "status"], { mockDir: seed.repoRoot });
-  await runCommand(["node", "../dist/index.js", "stop"], { mockDir: seed.repoRoot });
-  await runCommand(["node", "../dist/index.js", "status"], { mockDir: seed.repoRoot });
+  await runCommand(["node", aegisCliPath, "start"], { mockDir: seed.repoRoot });
+  await runCommand(["node", aegisCliPath, "status"], { mockDir: seed.repoRoot });
+  await runCommand(["node", aegisCliPath, "stop"], { mockDir: seed.repoRoot });
+  await runCommand(["node", aegisCliPath, "status"], { mockDir: seed.repoRoot });
 
-  await runCommand(["node", "../dist/index.js", "scout", happyIssueId], { mockDir: seed.repoRoot });
-  await runCommand(["node", "../dist/index.js", "implement", happyIssueId], { mockDir: seed.repoRoot });
-  await runCommand(["node", "../dist/index.js", "process", happyIssueId], { mockDir: seed.repoRoot });
-  await runCommand(["node", "../dist/index.js", "merge", "next"], { mockDir: seed.repoRoot });
+  await runCommand(["node", aegisCliPath, "scout", happyIssueId], { mockDir: seed.repoRoot });
+  await runCommand(["node", aegisCliPath, "implement", happyIssueId], { mockDir: seed.repoRoot });
+  await runCommand(["node", aegisCliPath, "process", happyIssueId], { mockDir: seed.repoRoot });
+  await runCommand(["node", aegisCliPath, "merge", "next"], { mockDir: seed.repoRoot });
 
-  await runCommand(["node", "../dist/index.js", "scout", janusIssueId], { mockDir: seed.repoRoot });
-  await runCommand(["node", "../dist/index.js", "implement", janusIssueId], { mockDir: seed.repoRoot });
-  await runCommand(["node", "../dist/index.js", "process", janusIssueId], { mockDir: seed.repoRoot });
+  await runCommand(["node", aegisCliPath, "scout", janusIssueId], { mockDir: seed.repoRoot });
+  await runCommand(["node", aegisCliPath, "implement", janusIssueId], { mockDir: seed.repoRoot });
+  await runCommand(["node", aegisCliPath, "process", janusIssueId], { mockDir: seed.repoRoot });
 
   const surface = await withTemporaryEnv(SCRIPTED_MERGE_PLAN_ENV, buildScriptedMergePlan(janusIssueId), async () => {
-    await runCommand(["node", "../dist/index.js", "merge", "next"], { mockDir: seed.repoRoot });
-    await runCommand(["node", "../dist/index.js", "merge", "next"], { mockDir: seed.repoRoot });
-    await runCommand(["node", "../dist/index.js", "merge", "next"], { mockDir: seed.repoRoot });
+    await runCommand(["node", aegisCliPath, "merge", "next"], { mockDir: seed.repoRoot });
+    await runCommand(["node", aegisCliPath, "merge", "next"], { mockDir: seed.repoRoot });
+    await runCommand(["node", aegisCliPath, "merge", "next"], { mockDir: seed.repoRoot });
     return collectSurface(seed.repoRoot, {
       happyIssueId,
       janusIssueId,

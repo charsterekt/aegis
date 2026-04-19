@@ -1,17 +1,23 @@
-import { mkdirSync } from "node:fs";
-
 import type { DispatchRecord } from "./dispatch-state.js";
 import { loadDispatchState, replaceDispatchRecord, saveDispatchState } from "./dispatch-state.js";
 import { persistArtifact } from "./artifact-store.js";
 import { parseOracleAssessment } from "../castes/oracle/oracle-parser.js";
 import { parseTitanArtifact } from "../castes/titan/titan-parser.js";
+import { TITAN_EMIT_ARTIFACT_TOOL_NAME } from "../castes/titan/titan-tool-contract.js";
 import { parseSentinelVerdict } from "../castes/sentinel/sentinel-parser.js";
+import { SENTINEL_EMIT_VERDICT_TOOL_NAME } from "../castes/sentinel/sentinel-tool-contract.js";
 import { parseJanusResolutionArtifact } from "../castes/janus/janus-parser.js";
-import { planLaborCreation } from "../labor/create-labor.js";
+import { JANUS_EMIT_RESOLUTION_TOOL_NAME } from "../castes/janus/janus-tool-contract.js";
+import { planLaborCreation, prepareLaborWorktree, type LaborCreationPlan } from "../labor/create-labor.js";
 import type { RuntimeCasteAction } from "../cli/runtime-command.js";
 import type { AegisIssue } from "../tracker/issue-model.js";
 import type { CasteRunInput, CasteRuntime, CasteSessionResult } from "../runtime/caste-runtime.js";
 import { loadConfig } from "../config/load-config.js";
+import {
+  captureGitProofPair,
+  completeGitProofPair,
+  persistGitProofArtifacts,
+} from "./git-proof.js";
 import {
   enqueueMergeCandidate,
   loadMergeQueueState,
@@ -31,7 +37,8 @@ export interface RunCasteCommandInput {
   tracker: TrackerLike;
   runtime: CasteRuntime;
   resolveBaseBranch?: () => string;
-  ensureLabor?: (laborPath: string) => void;
+  resolveLaborBasePath?: () => string;
+  ensureLabor?: (plan: LaborCreationPlan) => void;
   now?: string;
 }
 
@@ -70,15 +77,66 @@ function buildOraclePrompt(issue: AegisIssue) {
 }
 
 function buildTitanPrompt(issue: AegisIssue, laborPath: string) {
-  return `Implement ${issue.id} in ${laborPath}: ${issue.title}`;
+  const description = issue.description?.trim() || "No description provided.";
+  const blockers = issue.blockers.length > 0 ? issue.blockers.join(", ") : "none";
+  const labels = issue.labels.length > 0 ? issue.labels.join(", ") : "none";
+
+  return [
+    `Implement issue ${issue.id}.`,
+    `Title: ${issue.title}`,
+    `Description: ${description}`,
+    `Status: ${issue.status}`,
+    `Blockers: ${blockers}`,
+    `Labels: ${labels}`,
+    `Working directory: ${laborPath}`,
+    `Call tool '${TITAN_EMIT_ARTIFACT_TOOL_NAME}' exactly once as final step after all file edits and checks complete.`,
+    "If required project files do not exist, create minimal versions that satisfy the issue contract.",
+    "Treat ordinary naming/tooling ambiguity as solvable: choose reasonable defaults and proceed.",
+    "Use outcome=clarification only for hard blockers (missing required credentials/access, missing mandatory external inputs, or conflicting non-resolvable requirements).",
+    "Return only JSON. No markdown fences. No prose before or after JSON.",
+    "JSON schema keys: outcome, summary, files_changed, tests_and_checks_run, known_risks, follow_up_work, learnings_written_to_mnemosyne, blocking_question, handoff_note.",
+    "If work is blocked, set outcome to clarification and include blocking_question plus handoff_note.",
+  ].join("\n");
+}
+
+function buildTitanClarificationRetryPrompt(
+  issue: AegisIssue,
+  laborPath: string,
+  clarificationSummary: string,
+) {
+  return [
+    buildTitanPrompt(issue, laborPath),
+    "",
+    "AUTOMATIC RETRY CONTEXT:",
+    `Previous run returned clarification: ${clarificationSummary}`,
+    "Assume default stack when unspecified: Node.js + TypeScript + node:test.",
+    "Proceed with best-effort implementation now and emit success/failure artifact.",
+    "Only return clarification if a hard blocker still exists after applying defaults.",
+  ].join("\n");
 }
 
 function buildSentinelPrompt(issue: AegisIssue) {
-  return `Review ${issue.id}: ${issue.title}`;
+  const description = issue.description?.trim() || "No description provided.";
+  return [
+    `Review merged issue ${issue.id}.`,
+    `Title: ${issue.title}`,
+    `Description: ${description}`,
+    `Call tool '${SENTINEL_EMIT_VERDICT_TOOL_NAME}' exactly once as final step after review is complete.`,
+    "Return only JSON. No markdown fences. No prose before or after JSON.",
+    "JSON schema keys: verdict, reviewSummary, issuesFound, followUpIssueIds, riskAreas.",
+  ].join("\n");
 }
 
 function buildJanusPrompt(issue: AegisIssue) {
-  return `Process integration for ${issue.id}: ${issue.title}`;
+  const description = issue.description?.trim() || "No description provided.";
+  return [
+    `Process integration conflict for issue ${issue.id}.`,
+    `Title: ${issue.title}`,
+    `Description: ${description}`,
+    `Call tool '${JANUS_EMIT_RESOLUTION_TOOL_NAME}' exactly once as final step after conflict analysis is complete.`,
+    "Return only JSON. No markdown fences. No prose before or after JSON.",
+    "JSON schema keys: originatingIssueId, queueItemId, preservedLaborPath, conflictSummary, resolutionStrategy, filesTouched, validationsRun, residualRisks, recommendedNextAction.",
+  ].join("\n");
 }
 
 function clearDownstreamArtifactRefs(record: DispatchRecord) {
@@ -102,11 +160,12 @@ function persistSessionArtifact(
   action: RuntimeCasteAction,
   runInput: CasteRunInput,
   session: CasteSessionResult,
+  options: { artifactId?: string } = {},
 ) {
   return persistArtifact(root, {
     family: "transcripts",
     issueId: runInput.issueId,
-    artifactId: runInput.caste,
+    artifactId: options.artifactId ?? runInput.caste,
     artifact: {
       issueId: runInput.issueId,
       caste: runInput.caste,
@@ -148,6 +207,21 @@ function createSessionMetadata(
   };
 }
 
+function assertSuccessfulSession(
+  runInput: CasteRunInput,
+  session: CasteSessionResult,
+) {
+  if (session.status === "succeeded") {
+    return;
+  }
+
+  const casteLabel = `${runInput.caste[0].toUpperCase()}${runInput.caste.slice(1)}`;
+  const detail = session.error?.trim().length
+    ? session.error
+    : `Runtime returned status=${session.status}.`;
+  throw new Error(`${casteLabel} session failed for ${runInput.issueId}: ${detail}`);
+}
+
 async function runScout(
   input: RunCasteCommandInput,
   issue: AegisIssue,
@@ -163,6 +237,7 @@ async function runScout(
   } satisfies CasteRunInput;
   const session = await input.runtime.run(runInput);
   const transcriptRef = persistSessionArtifact(input.root, input.action, runInput, session);
+  assertSuccessfulSession(runInput, session);
   const assessment = parseOracleAssessment(session.outputText);
   const artifactRef = persistArtifact(input.root, {
     family: "oracle",
@@ -193,16 +268,26 @@ async function runImplement(
   record: DispatchRecord,
   now: string,
 ): Promise<CasteCommandResult> {
-  const baseBranch = input.resolveBaseBranch?.() ?? loadConfig(input.root).git.base_branch;
+  let configCache: ReturnType<typeof loadConfig> | null = null;
+  const resolveConfig = () => {
+    if (configCache === null) {
+      configCache = loadConfig(input.root);
+    }
+    return configCache;
+  };
+  const baseBranch = input.resolveBaseBranch?.() ?? resolveConfig().git.base_branch;
+  const laborBasePath = input.resolveLaborBasePath?.() ?? resolveConfig().labor.base_path;
   const labor = planLaborCreation({
     issueId: issue.id,
     projectRoot: input.root,
     baseBranch,
+    laborBasePath,
   });
 
-  input.ensureLabor?.(labor.laborPath);
-  if (!input.ensureLabor) {
-    mkdirSync(labor.laborPath, { recursive: true });
+  if (input.ensureLabor) {
+    input.ensureLabor(labor);
+  } else {
+    prepareLaborWorktree(labor);
   }
 
   const runInput = {
@@ -212,9 +297,51 @@ async function runImplement(
     workingDirectory: labor.laborPath,
     prompt: buildTitanPrompt(issue, labor.laborPath),
   } satisfies CasteRunInput;
-  const session = await input.runtime.run(runInput);
-  const transcriptRef = persistSessionArtifact(input.root, input.action, runInput, session);
-  const artifact = parseTitanArtifact(session.outputText);
+  const gitProofPair = captureGitProofPair(labor.laborPath);
+  const transcriptRefs: string[] = [];
+
+  const runTitanSession = async (candidateInput: CasteRunInput) => {
+    const session = await input.runtime.run(candidateInput);
+    const attemptIndex = transcriptRefs.length;
+    const transcriptArtifactId = attemptIndex === 0
+      ? candidateInput.caste
+      : `${candidateInput.caste}-retry-${attemptIndex}`;
+    const transcriptRef = persistSessionArtifact(input.root, input.action, candidateInput, session, {
+      artifactId: transcriptArtifactId,
+    });
+    transcriptRefs.push(transcriptRef);
+    assertSuccessfulSession(candidateInput, session);
+    const artifact = parseTitanArtifact(session.outputText);
+
+    return {
+      runInput: candidateInput,
+      session,
+      transcriptRef,
+      artifact,
+    };
+  };
+
+  const firstAttempt = await runTitanSession(runInput);
+  const finalAttempt = firstAttempt.artifact.outcome === "clarification"
+    ? await runTitanSession({
+      ...runInput,
+      prompt: buildTitanClarificationRetryPrompt(
+        issue,
+        labor.laborPath,
+        firstAttempt.artifact.summary,
+      ),
+    })
+    : firstAttempt;
+
+  const completedGitProof = completeGitProofPair(labor.laborPath, gitProofPair);
+  const gitProofRefs = persistGitProofArtifacts(
+    input.root,
+    "titan",
+    issue.id,
+    labor.laborPath,
+    completedGitProof,
+  );
+  const artifact = finalAttempt.artifact;
   const artifactRef = persistArtifact(input.root, {
     family: "titan",
     issueId: issue.id,
@@ -223,7 +350,17 @@ async function runImplement(
       labor_path: labor.laborPath,
       candidate_branch: labor.branchName,
       base_branch: labor.baseBranch,
-      session: createSessionMetadata(transcriptRef, runInput, session),
+      git_proof: {
+        status_before_ref: gitProofRefs.statusBeforeRef,
+        status_after_ref: gitProofRefs.statusAfterRef,
+        changed_files_manifest_ref: gitProofRefs.changedFilesManifestRef,
+        diff_ref: gitProofRefs.diffRef,
+      },
+      session: createSessionMetadata(
+        finalAttempt.transcriptRef,
+        finalAttempt.runInput,
+        finalAttempt.session,
+      ),
     },
   });
   saveRecord(input.root, issue.id, {
@@ -238,7 +375,7 @@ async function runImplement(
     action: input.action,
     issueId: issue.id,
     stage: artifact.outcome === "success" ? "implemented" : "failed",
-    artifactRefs: [artifactRef, transcriptRef],
+    artifactRefs: [artifactRef, ...transcriptRefs],
   };
 }
 
@@ -261,6 +398,7 @@ async function runReview(
   } satisfies CasteRunInput;
   const session = await input.runtime.run(runInput);
   const transcriptRef = persistSessionArtifact(input.root, input.action, runInput, session);
+  assertSuccessfulSession(runInput, session);
   const verdict = parseSentinelVerdict(session.outputText);
   const artifactRef = persistArtifact(input.root, {
     family: "sentinel",
@@ -306,14 +444,30 @@ async function runJanus(
     workingDirectory: input.root,
     prompt: buildJanusPrompt(issue),
   } satisfies CasteRunInput;
+  const gitProofPair = captureGitProofPair(runInput.workingDirectory);
   const session = await input.runtime.run(runInput);
+  const completedGitProof = completeGitProofPair(runInput.workingDirectory, gitProofPair);
   const transcriptRef = persistSessionArtifact(input.root, input.action, runInput, session);
+  assertSuccessfulSession(runInput, session);
   const artifact = parseJanusResolutionArtifact(session.outputText);
+  const gitProofRefs = persistGitProofArtifacts(
+    input.root,
+    "janus",
+    issue.id,
+    runInput.workingDirectory,
+    completedGitProof,
+  );
   const artifactRef = persistArtifact(input.root, {
     family: "janus",
     issueId: issue.id,
     artifact: {
       ...artifact,
+      git_proof: {
+        status_before_ref: gitProofRefs.statusBeforeRef,
+        status_after_ref: gitProofRefs.statusAfterRef,
+        changed_files_manifest_ref: gitProofRefs.changedFilesManifestRef,
+        diff_ref: gitProofRefs.diffRef,
+      },
       session: createSessionMetadata(transcriptRef, runInput, session),
     },
   });
