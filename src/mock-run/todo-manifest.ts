@@ -49,8 +49,8 @@ export const TODO_BASELINE_FILES: Record<string, string> = {
 export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   {
     key: "todo-system",
-    title: "Todo system program",
-    description: "Program epic for the deterministic mock-run todo system.",
+    title: "React todo app program",
+    description: "Program epic for autonomous delivery of a working React todo app from an empty repo baseline.",
     issueType: "epic",
     priority: 1,
     queueRole: "coordination",
@@ -61,7 +61,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   {
     key: "foundation",
     title: "Foundation slice",
-    description: "Coordination epic for foundation work.",
+    description: "Coordination epic for React scaffold and dependency baseline.",
     issueType: "epic",
     priority: 1,
     queueRole: "coordination",
@@ -71,8 +71,8 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "foundation.contract",
-    title: "[foundation] Contract seed",
-    description: "Lock the todo model, storage interface, and baseline test contract.",
+    title: "[foundation] React scaffold contract",
+    description: "Lock Vite React TypeScript scaffold contract, required scripts, and dependency policy.",
     issueType: "task",
     priority: 1,
     queueRole: "executable",
@@ -82,8 +82,8 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "foundation.lane_a",
-    title: "[foundation] Lane A",
-    description: "Implement task model and in-memory store behavior.",
+    title: "[foundation] Lane A scaffold app shell",
+    description: "Scaffold Vite React TypeScript project structure with deterministic source layout.",
     issueType: "task",
     priority: 1,
     queueRole: "executable",
@@ -93,8 +93,8 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "foundation.lane_b",
-    title: "[foundation] Lane B",
-    description: "Implement shared validation and baseline test utilities.",
+    title: "[foundation] Lane B install dependencies",
+    description: "Install and lock React runtime/build dependencies and verify project scripts.",
     issueType: "task",
     priority: 1,
     queueRole: "executable",
@@ -105,7 +105,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   {
     key: "foundation.gate",
     title: "[foundation] Gate",
-    description: "Prove the foundation slice and unlock commands.",
+    description: "Prove scaffold and dependency baseline, then unlock todo domain implementation.",
     issueType: "task",
     priority: 1,
     queueRole: "executable",
@@ -115,8 +115,8 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "commands",
-    title: "Commands slice",
-    description: "Coordination epic for command work.",
+    title: "Domain slice",
+    description: "Coordination epic for todo domain and storage behavior.",
     issueType: "epic",
     priority: 1,
     queueRole: "coordination",
@@ -126,8 +126,8 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "commands.contract",
-    title: "[commands] Contract seed",
-    description: "Define command behavior for create, list, and complete flows.",
+    title: "[commands] Todo domain contract",
+    description: "Define todo creation/list/complete behavior and storage contract for React app.",
     issueType: "task",
     priority: 1,
     queueRole: "executable",
@@ -137,8 +137,8 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "commands.lane_a",
-    title: "[commands] Lane A",
-    description: "Implement create and list commands.",
+    title: "[commands] Lane A todo state/store",
+    description: "Implement todo state model, reducers/hooks, and persistence integration.",
     issueType: "task",
     priority: 1,
     queueRole: "executable",
@@ -148,8 +148,8 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "commands.lane_b",
-    title: "[commands] Lane B",
-    description: "Implement complete-task behavior and command tests.",
+    title: "[commands] Lane B domain validation/tests",
+    description: "Implement domain validations and deterministic tests for add/list/complete flows.",
     issueType: "task",
     priority: 1,
     queueRole: "executable",
@@ -160,7 +160,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   {
     key: "commands.gate",
     title: "[commands] Gate",
-    description: "Prove the command slice and unlock integration.",
+    description: "Prove todo domain slice and unlock UI integration.",
     issueType: "task",
     priority: 1,
     queueRole: "executable",
@@ -171,7 +171,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   {
     key: "integration",
     title: "Integration slice",
-    description: "Coordination epic for CLI and reporting work.",
+    description: "Coordination epic for UI integration, README, and localhost serving proof.",
     issueType: "epic",
     priority: 1,
     queueRole: "coordination",
@@ -181,8 +181,8 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "integration.contract",
-    title: "[integration] Contract seed",
-    description: "Lock CLI integration, summary output, and end-to-end behavior.",
+    title: "[integration] UI and serve contract",
+    description: "Lock UI interaction contract, README content, and localhost run expectations.",
     issueType: "task",
     priority: 1,
     queueRole: "executable",
@@ -192,8 +192,8 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "integration.lane_a",
-    title: "[integration] Lane A",
-    description: "Implement CLI wiring.",
+    title: "[integration] Lane A implement React UI",
+    description: "Implement React todo UI with add/list/complete interactions and render-state behavior.",
     issueType: "task",
     priority: 1,
     queueRole: "executable",
@@ -203,8 +203,8 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "integration.lane_b",
-    title: "[integration] Lane B",
-    description: "Implement reporting and end-to-end verification.",
+    title: "[integration] Lane B README and localhost serve proof",
+    description: "Write README setup/run instructions and verify app serves on localhost with working UI.",
     issueType: "task",
     priority: 1,
     queueRole: "executable",
@@ -215,7 +215,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   {
     key: "integration.gate",
     title: "[integration] Gate",
-    description: "Prove the integrated todo system.",
+    description: "Prove complete working React todo app delivery with README and localhost serve evidence.",
     issueType: "task",
     priority: 1,
     queueRole: "executable",
