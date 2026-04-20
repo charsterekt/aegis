@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { streamDaemonView } from "../../../src/cli/stream.js";
+import { streamDaemonView, streamSessionView } from "../../../src/cli/stream.js";
 import { writeRuntimeState, type RuntimeStateRecord } from "../../../src/cli/runtime-state.js";
+import { writeSessionReport } from "../../../src/runtime/session-report.js";
 
 const tempRoots: string[] = [];
 
@@ -173,6 +174,63 @@ describe("streamDaemonView", () => {
     });
 
     expect(lines.some((line) => line.includes("[phase] invalid_entry file=invalid.json"))).toBe(true);
+  });
+});
+
+describe("streamSessionView", () => {
+  it("streams new session events and exits when the session finalizes", async () => {
+    const root = createTempRoot();
+    const sessionId = "session-1";
+    const eventsPath = path.join(root, ".aegis", "logs", "sessions", `${sessionId}.events.jsonl`);
+    mkdirSync(path.dirname(eventsPath), { recursive: true });
+    writeFileSync(
+      eventsPath,
+      `${JSON.stringify({
+        timestamp: "2026-04-19T16:00:00.000Z",
+        sessionId,
+        eventType: "session_started",
+        summary: "old event",
+      })}\n`,
+      "utf8",
+    );
+
+    const lines: string[] = [];
+    let sleepCalls = 0;
+    await streamSessionView(root, sessionId, {
+      maxPolls: 3,
+      pollIntervalMs: 0,
+      writeLine: (line) => {
+        lines.push(line);
+      },
+      sleep: async () => {
+        sleepCalls += 1;
+        writeFileSync(
+          eventsPath,
+          `${JSON.stringify({
+            timestamp: "2026-04-19T16:00:00.000Z",
+            sessionId,
+            eventType: "session_started",
+            summary: "old event",
+          })}\n${JSON.stringify({
+            timestamp: "2026-04-19T16:00:05.000Z",
+            sessionId,
+            eventType: "assistant_message",
+            summary: "new event",
+          })}\n`,
+          "utf8",
+        );
+        writeSessionReport(root, {
+          sessionId,
+          status: "succeeded",
+          finishedAt: "2026-04-19T16:00:06.000Z",
+        });
+      },
+    });
+
+    expect(sleepCalls).toBe(1);
+    expect(lines.some((line) => line.includes("old event"))).toBe(false);
+    expect(lines.some((line) => line.includes("event=assistant_message") && line.includes("new event"))).toBe(true);
+    expect(lines.some((line) => line.includes("status=succeeded") && line.includes("finished=2026-04-19T16:00:06.000Z"))).toBe(true);
   });
 });
 

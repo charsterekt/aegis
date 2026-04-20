@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { readRuntimeState, type RuntimeStateRecord } from "./runtime-state.js";
 import type { PhaseLogEntry } from "../core/phase-log.js";
+import { readSessionReport } from "../runtime/session-report.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 500;
 
@@ -20,12 +21,20 @@ interface DaemonStreamCursor {
   runtimeFingerprint: string | null;
 }
 
+interface SessionStreamCursor {
+  eventsOffset: number;
+}
+
 function resolveDaemonLogPath(root: string) {
   return path.join(path.resolve(root), ".aegis", "logs", "daemon.log");
 }
 
 function resolvePhaseLogDirectory(root: string) {
   return path.join(path.resolve(root), ".aegis", "logs", "phases");
+}
+
+function resolveSessionEventsPath(root: string, sessionId: string) {
+  return path.join(path.resolve(root), ".aegis", "logs", "sessions", `${sessionId}.events.jsonl`);
 }
 
 function resolveRuntimeFingerprint(state: RuntimeStateRecord | null) {
@@ -113,6 +122,99 @@ function formatPhaseEntry(entry: PhaseLogEntry) {
   }
 
   return parts.join(" ");
+}
+
+function initializeSessionCursor(root: string, sessionId: string): SessionStreamCursor {
+  const sessionEventsPath = resolveSessionEventsPath(root, sessionId);
+  return {
+    eventsOffset: existsSync(sessionEventsPath) ? statSync(sessionEventsPath).size : 0,
+  };
+}
+
+interface SessionLogEntry {
+  timestamp: string;
+  sessionId: string;
+  eventType: string;
+  summary: string;
+  detail?: string;
+}
+
+function parseSessionEvent(rawLine: string): SessionLogEntry | null {
+  const parsed = JSON.parse(rawLine) as Partial<SessionLogEntry> | null;
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+
+  if (
+    typeof parsed.timestamp !== "string"
+    || typeof parsed.sessionId !== "string"
+    || typeof parsed.eventType !== "string"
+    || typeof parsed.summary !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    timestamp: parsed.timestamp,
+    sessionId: parsed.sessionId,
+    eventType: parsed.eventType,
+    summary: parsed.summary,
+    detail: typeof parsed.detail === "string" ? parsed.detail : undefined,
+  };
+}
+
+function formatSessionEvent(entry: SessionLogEntry) {
+  const parts = [
+    `[session] ${entry.timestamp}`,
+    `session=${entry.sessionId}`,
+    `event=${entry.eventType}`,
+    `summary=${entry.summary}`,
+  ];
+
+  if (entry.detail) {
+    parts.push(`detail=${entry.detail}`);
+  }
+
+  return parts.join(" ");
+}
+
+function pollSessionStream(
+  root: string,
+  sessionId: string,
+  cursor: SessionStreamCursor,
+  writeLine: (line: string) => void,
+) {
+  const sessionEventsPath = resolveSessionEventsPath(root, sessionId);
+  if (!existsSync(sessionEventsPath)) {
+    return;
+  }
+
+  const contents = readFileSync(sessionEventsPath, "utf8");
+  if (contents.length < cursor.eventsOffset) {
+    cursor.eventsOffset = 0;
+  }
+
+  const nextChunk = contents.slice(cursor.eventsOffset);
+  cursor.eventsOffset = contents.length;
+
+  for (const line of nextChunk.split(/\r?\n/)) {
+    if (line.trim().length === 0) {
+      continue;
+    }
+
+    try {
+      const entry = parseSessionEvent(line);
+      if (!entry) {
+        writeLine("[session] invalid_event");
+        continue;
+      }
+
+      writeLine(formatSessionEvent(entry));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      writeLine(`[session] read_error detail=${detail}`);
+    }
+  }
 }
 
 function pollDaemonStream(
@@ -238,6 +340,54 @@ export async function streamDaemonView(
     }
 
     pollDaemonStream(resolvedRoot, cursor, writeLine);
+    if (pollIndex === maxPolls - 1) {
+      break;
+    }
+
+    await sleep(pollIntervalMs, options.signal);
+  }
+}
+
+export async function streamSessionView(
+  root = process.cwd(),
+  sessionId: string,
+  options: StreamDaemonOptions = {},
+) {
+  const resolvedRoot = path.resolve(root);
+  const writeLine = options.writeLine ?? ((line: string) => {
+    console.log(line);
+  });
+  const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+  const maxPolls = options.maxPolls ?? Number.POSITIVE_INFINITY;
+  const sleep = options.sleep ?? defaultSleep;
+  const cursor = initializeSessionCursor(resolvedRoot, sessionId);
+
+  writeLine(`Streaming session ${sessionId} from ${resolvedRoot}. Press Ctrl+C to stop.`);
+
+  for (let pollIndex = 0; pollIndex < maxPolls; pollIndex += 1) {
+    if (options.signal?.aborted) {
+      break;
+    }
+
+    pollSessionStream(resolvedRoot, sessionId, cursor, writeLine);
+
+    const snapshot = readSessionReport(resolvedRoot, sessionId);
+    if (snapshot && snapshot.status !== "running") {
+      const parts = [
+        "[session]",
+        `session=${snapshot.sessionId}`,
+        `status=${snapshot.status}`,
+      ];
+      if (snapshot.error) {
+        parts.push(`error=${snapshot.error}`);
+      }
+      if (snapshot.finishedAt) {
+        parts.push(`finished=${snapshot.finishedAt}`);
+      }
+      writeLine(parts.join(" "));
+      break;
+    }
+
     if (pollIndex === maxPolls - 1) {
       break;
     }
