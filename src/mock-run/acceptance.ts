@@ -2,8 +2,6 @@ import path from "node:path";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { loadDispatchState, type DispatchRecord } from "../core/dispatch-state.js";
-import { loadMergeQueueState, type MergeQueueItem } from "../merge/merge-state.js";
 import { runMockCommand, type RunMockCommandOptions } from "./mock-run.js";
 import { resolveDefaultMockWorkspaceRoot } from "./mock-paths.js";
 import { seedMockRun, type SeedMockRunResult } from "./seed-mock-run.js";
@@ -12,9 +10,16 @@ import type { RuntimeStateRecord } from "../cli/runtime-state.js";
 import { readRuntimeState } from "../cli/runtime-state.js";
 import type { AegisIssue } from "../tracker/issue-model.js";
 
-const HAPPY_PATH_ISSUE_KEY = "foundation.contract";
-const JANUS_ISSUE_KEY = "integration.contract";
-const SCRIPTED_MERGE_PLAN_ENV = "AEGIS_SCRIPTED_MERGE_PLAN";
+const FINAL_GATE_ISSUE_KEY = "integration.gate";
+const REQUIRED_APP_FILES = [
+  "package.json",
+  "README.md",
+  "src/main.tsx",
+  "src/App.tsx",
+] as const;
+
+const DEFAULT_COMPLETION_TIMEOUT_MS = 15 * 60 * 1_000;
+const DEFAULT_COMPLETION_POLL_MS = 2_000;
 
 type MockCommandRunner = (
   args: string[],
@@ -33,26 +38,12 @@ function resolveAegisCliPath() {
 
 export interface MockAcceptanceDependencies {
   cwd?: string;
-  now?: string;
   seedMockRun?: typeof seedMockRun;
   runMockCommand?: MockCommandRunner;
   collectMockAcceptanceSurface?: typeof collectMockAcceptanceSurface;
   tracker?: TrackerLike;
-}
-
-export interface MockAcceptanceRecordSummary {
-  stage: string;
-  oracleAssessmentRef: string | null;
-  titanHandoffRef: string | null;
-  sentinelVerdictRef: string | null;
-  janusArtifactRef: string | null;
-}
-
-export interface MockAcceptanceQueueSummary {
-  status: MergeQueueItem["status"];
-  attempts: number;
-  janusInvocations: number;
-  lastTier: MergeQueueItem["lastTier"];
+  completionTimeoutMs?: number;
+  completionPollMs?: number;
 }
 
 export interface MockAcceptanceIssueSummary {
@@ -70,42 +61,26 @@ export interface MockAcceptancePhaseLogSummary {
   detail: string | null;
 }
 
-export interface MockAcceptanceLaborSummary {
-  queueLaborPath: string;
-  queueLaborPathExists: boolean;
-  preservedLaborPath: string | null;
-  preservedLaborPathExists: boolean;
-  janusArtifactRef: string | null;
-  janusArtifactExists: boolean;
-  recommendedNextAction: string | null;
+export interface MockAcceptanceAppSummary {
+  requiredFiles: Record<string, boolean>;
+  readmeHasInstall: boolean;
+  readmeHasDev: boolean;
+  readmeHasLocalhost: boolean;
 }
 
 export interface MockAcceptanceSurface {
   runtimeState: RuntimeStateRecord;
-  dispatch: {
-    happy: MockAcceptanceRecordSummary;
-    janus: MockAcceptanceRecordSummary;
-  };
-  mergeQueue: {
-    happy: MockAcceptanceQueueSummary;
-    janus: MockAcceptanceQueueSummary;
-  };
   trackerIssues: {
-    happy: MockAcceptanceIssueSummary;
-    janus: MockAcceptanceIssueSummary;
+    finalGate: MockAcceptanceIssueSummary;
   };
   phaseLogs: MockAcceptancePhaseLogSummary[];
-  labor: {
-    happy: MockAcceptanceLaborSummary;
-    janus: MockAcceptanceLaborSummary;
-  };
+  app: MockAcceptanceAppSummary;
 }
 
 export interface MockAcceptanceResult {
   repoRoot: string;
   seed: SeedMockRunResult;
-  happyIssueId: string;
-  janusIssueId: string;
+  finalGateIssueId: string;
   surface: MockAcceptanceSurface;
 }
 
@@ -116,26 +91,6 @@ function requireIssueId(seed: SeedMockRunResult, key: string) {
   }
 
   return issueId;
-}
-
-function readDispatchRecord(root: string, issueId: string): DispatchRecord {
-  const state = loadDispatchState(root);
-  const record = state.records[issueId];
-  if (!record) {
-    throw new Error(`Dispatch state is missing issue ${issueId}.`);
-  }
-
-  return record;
-}
-
-function readQueueItem(root: string, issueId: string): MergeQueueItem {
-  const state = loadMergeQueueState(root);
-  const item = state.items.find((candidate) => candidate.issueId === issueId);
-  if (!item) {
-    throw new Error(`Merge queue is missing issue ${issueId}.`);
-  }
-
-  return item;
 }
 
 function readPhaseLogs(root: string): MockAcceptancePhaseLogSummary[] {
@@ -174,44 +129,28 @@ async function readIssueSummary(
   };
 }
 
-function readLaborSummary(root: string, item: MergeQueueItem): MockAcceptanceLaborSummary {
-  const queueLaborPath = path.isAbsolute(item.laborPath)
-    ? item.laborPath
-    : path.join(root, item.laborPath);
-  const janusArtifactRef = path.join(root, ".aegis", "janus", `${item.issueId}.json`);
+function readAppSummary(root: string): MockAcceptanceAppSummary {
+  const requiredFiles = Object.fromEntries(
+    REQUIRED_APP_FILES.map((relativePath) => [
+      relativePath,
+      existsSync(path.join(root, relativePath)),
+    ]),
+  ) as Record<string, boolean>;
 
-  let preservedLaborPath: string | null = null;
-  let recommendedNextAction: string | null = null;
-  if (existsSync(janusArtifactRef)) {
-    const artifact = JSON.parse(readFileSync(janusArtifactRef, "utf8")) as Record<string, unknown>;
-    preservedLaborPath = typeof artifact.preservedLaborPath === "string"
-      ? artifact.preservedLaborPath
-      : null;
-    recommendedNextAction = typeof artifact.recommendedNextAction === "string"
-      ? artifact.recommendedNextAction
-      : null;
-  }
-
-  const resolvedPreservedLaborPath = preservedLaborPath === null
-    ? null
-    : path.isAbsolute(preservedLaborPath)
-      ? preservedLaborPath
-      : path.join(root, preservedLaborPath);
+  const readmePath = path.join(root, "README.md");
+  const readme = existsSync(readmePath) ? readFileSync(readmePath, "utf8").toLowerCase() : "";
 
   return {
-    queueLaborPath: item.laborPath,
-    queueLaborPathExists: existsSync(queueLaborPath),
-    preservedLaborPath,
-    preservedLaborPathExists: resolvedPreservedLaborPath !== null && existsSync(resolvedPreservedLaborPath),
-    janusArtifactRef: existsSync(janusArtifactRef) ? path.join(".aegis", "janus", `${item.issueId}.json`) : null,
-    janusArtifactExists: existsSync(janusArtifactRef),
-    recommendedNextAction,
+    requiredFiles,
+    readmeHasInstall: readme.includes("npm install"),
+    readmeHasDev: readme.includes("npm run dev"),
+    readmeHasLocalhost: readme.includes("localhost"),
   };
 }
 
 export async function collectMockAcceptanceSurface(
   root: string,
-  issueIds: { happyIssueId: string; janusIssueId: string; tracker?: TrackerLike },
+  issueIds: { finalGateIssueId: string; tracker?: TrackerLike },
 ): Promise<MockAcceptanceSurface> {
   const runtimeState = readRuntimeState(root);
   if (!runtimeState) {
@@ -219,57 +158,15 @@ export async function collectMockAcceptanceSurface(
   }
 
   const tracker = issueIds.tracker ?? new BeadsTrackerClient();
-  const happyRecord = readDispatchRecord(root, issueIds.happyIssueId);
-  const janusRecord = readDispatchRecord(root, issueIds.janusIssueId);
-  const happyQueueItem = readQueueItem(root, issueIds.happyIssueId);
-  const janusQueueItem = readQueueItem(root, issueIds.janusIssueId);
-  const phaseLogs = readPhaseLogs(root);
-  const [happyIssue, janusIssue] = await Promise.all([
-    readIssueSummary(tracker, root, issueIds.happyIssueId),
-    readIssueSummary(tracker, root, issueIds.janusIssueId),
-  ]);
+  const finalGate = await readIssueSummary(tracker, root, issueIds.finalGateIssueId);
 
   return {
     runtimeState,
-    dispatch: {
-      happy: {
-        stage: happyRecord.stage,
-        oracleAssessmentRef: happyRecord.oracleAssessmentRef,
-        titanHandoffRef: happyRecord.titanHandoffRef ?? null,
-        sentinelVerdictRef: happyRecord.sentinelVerdictRef,
-        janusArtifactRef: happyRecord.janusArtifactRef ?? null,
-      },
-      janus: {
-        stage: janusRecord.stage,
-        oracleAssessmentRef: janusRecord.oracleAssessmentRef,
-        titanHandoffRef: janusRecord.titanHandoffRef ?? null,
-        sentinelVerdictRef: janusRecord.sentinelVerdictRef,
-        janusArtifactRef: janusRecord.janusArtifactRef ?? null,
-      },
-    },
-    mergeQueue: {
-      happy: {
-        status: happyQueueItem.status,
-        attempts: happyQueueItem.attempts,
-        janusInvocations: happyQueueItem.janusInvocations,
-        lastTier: happyQueueItem.lastTier,
-      },
-      janus: {
-        status: janusQueueItem.status,
-        attempts: janusQueueItem.attempts,
-        janusInvocations: janusQueueItem.janusInvocations,
-        lastTier: janusQueueItem.lastTier,
-      },
-    },
     trackerIssues: {
-      happy: happyIssue,
-      janus: janusIssue,
+      finalGate,
     },
-    phaseLogs,
-    labor: {
-      happy: readLaborSummary(root, happyQueueItem),
-      janus: readLaborSummary(root, janusQueueItem),
-    },
+    phaseLogs: readPhaseLogs(root),
+    app: readAppSummary(root),
   };
 }
 
@@ -278,48 +175,20 @@ export function assertMockAcceptanceSurface(surface: MockAcceptanceSurface) {
     throw new Error(`Expected mock-run runtime to be stopped, got ${surface.runtimeState.server_state}.`);
   }
 
-  if (surface.dispatch.happy.stage !== "reviewed") {
-    throw new Error(`Expected happy-path issue to be reviewed, got ${surface.dispatch.happy.stage}.`);
-  }
-
-  if (!surface.dispatch.happy.oracleAssessmentRef || !surface.dispatch.happy.titanHandoffRef || !surface.dispatch.happy.sentinelVerdictRef) {
-    throw new Error("Happy-path proof surface is missing required artifacts.");
-  }
-
-  if (surface.mergeQueue.happy.status !== "merged") {
-    throw new Error(`Expected happy-path merge queue item to be merged, got ${surface.mergeQueue.happy.status}.`);
-  }
-
-  const janusRequeued = surface.dispatch.janus.stage === "queued_for_merge"
-    && surface.mergeQueue.janus.status === "queued";
-  const janusFailClosed = surface.dispatch.janus.stage === "failed"
-    && surface.mergeQueue.janus.status === "failed"
-    && surface.labor.janus.recommendedNextAction === "manual_decision";
-
-  if (!janusRequeued && !janusFailClosed) {
+  if (surface.trackerIssues.finalGate.status !== "closed") {
     throw new Error(
-      `Expected Janus-path issue to be requeued or fail-closed, got dispatch=${surface.dispatch.janus.stage} queue=${surface.mergeQueue.janus.status}.`,
+      `Expected final integration gate issue to be closed, got ${surface.trackerIssues.finalGate.status}.`,
     );
   }
 
-  if (!surface.dispatch.janus.janusArtifactRef) {
-    throw new Error("Janus proof surface is missing its artifact reference.");
+  for (const requiredFile of REQUIRED_APP_FILES) {
+    if (!surface.app.requiredFiles[requiredFile]) {
+      throw new Error(`Missing required app file: ${requiredFile}`);
+    }
   }
 
-  if (surface.mergeQueue.janus.janusInvocations < 1) {
-    throw new Error("Janus proof surface did not record an invocation.");
-  }
-
-  if (surface.mergeQueue.janus.attempts < 3 || surface.mergeQueue.janus.lastTier !== "T3") {
-    throw new Error("Janus proof surface did not reach deterministic T3 escalation.");
-  }
-
-  if (surface.trackerIssues.happy.status !== "closed") {
-    throw new Error(`Expected happy-path tracker issue to be closed, got ${surface.trackerIssues.happy.status}.`);
-  }
-
-  if (!surface.trackerIssues.janus.status) {
-    throw new Error("Janus-path tracker issue status is missing.");
+  if (!surface.app.readmeHasInstall || !surface.app.readmeHasDev || !surface.app.readmeHasLocalhost) {
+    throw new Error("README proof is missing npm install, npm run dev, or localhost guidance.");
   }
 
   if (!surface.phaseLogs.some((entry) => entry.phase === "poll")) {
@@ -337,53 +206,32 @@ export function assertMockAcceptanceSurface(surface: MockAcceptanceSurface) {
   if (!surface.phaseLogs.some((entry) => entry.phase === "reap")) {
     throw new Error("Phase log evidence is missing the reap phase.");
   }
-
-  if (!surface.labor.happy.queueLaborPathExists || !surface.labor.janus.queueLaborPathExists) {
-    throw new Error("Labor evidence is missing the retained queue path.");
-  }
-
-  if (!surface.labor.janus.janusArtifactExists || !surface.labor.janus.preservedLaborPathExists) {
-    throw new Error("Janus labor evidence is missing the preserved worktree artifact.");
-  }
 }
 
-function buildScriptedMergePlan(issueId: string) {
-  return JSON.stringify({
-    rules: [
-      {
-        issueId,
-        candidateBranch: `aegis/${issueId}`,
-        outcomes: [
-          { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-          { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-          { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-        ],
-      },
-    ],
+function sleep(milliseconds: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, milliseconds);
   });
 }
 
-async function withTemporaryEnv<T>(
-  key: string,
-  value: string | undefined,
-  action: () => Promise<T>,
-): Promise<T> {
-  const previous = process.env[key];
-  if (value === undefined) {
-    delete process.env[key];
-  } else {
-    process.env[key] = value;
+async function waitForIssueClosed(
+  tracker: TrackerLike,
+  root: string,
+  issueId: string,
+  timeoutMs: number,
+  pollMs: number,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const issue = await tracker.getIssue(issueId, root);
+    if (issue.status === "closed") {
+      return;
+    }
+
+    await sleep(pollMs);
   }
 
-  try {
-    return await action();
-  } finally {
-    if (previous === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = previous;
-    }
-  }
+  throw new Error(`Timed out waiting for issue ${issueId} to close after ${timeoutMs}ms.`);
 }
 
 export async function runMockAcceptance(
@@ -394,43 +242,35 @@ export async function runMockAcceptance(
     : resolveDefaultMockWorkspaceRoot();
   const aegisCliPath = resolveAegisCliPath();
   const seed = await (options.seedMockRun ?? seedMockRun)({ workspaceRoot });
-  const happyIssueId = requireIssueId(seed, HAPPY_PATH_ISSUE_KEY);
-  const janusIssueId = requireIssueId(seed, JANUS_ISSUE_KEY);
+  const finalGateIssueId = requireIssueId(seed, FINAL_GATE_ISSUE_KEY);
   const runCommand = options.runMockCommand ?? runMockCommand;
   const collectSurface = options.collectMockAcceptanceSurface ?? collectMockAcceptanceSurface;
   const tracker = options.tracker ?? new BeadsTrackerClient();
 
-  await runCommand(["node", aegisCliPath, "start"], { mockDir: seed.repoRoot });
+  await runCommand(["node", aegisCliPath, "start", "--view-agent-sessions"], { mockDir: seed.repoRoot });
   await runCommand(["node", aegisCliPath, "status"], { mockDir: seed.repoRoot });
+
+  await waitForIssueClosed(
+    tracker,
+    seed.repoRoot,
+    finalGateIssueId,
+    options.completionTimeoutMs ?? DEFAULT_COMPLETION_TIMEOUT_MS,
+    options.completionPollMs ?? DEFAULT_COMPLETION_POLL_MS,
+  );
+
   await runCommand(["node", aegisCliPath, "stop"], { mockDir: seed.repoRoot });
   await runCommand(["node", aegisCliPath, "status"], { mockDir: seed.repoRoot });
 
-  await runCommand(["node", aegisCliPath, "scout", happyIssueId], { mockDir: seed.repoRoot });
-  await runCommand(["node", aegisCliPath, "implement", happyIssueId], { mockDir: seed.repoRoot });
-  await runCommand(["node", aegisCliPath, "process", happyIssueId], { mockDir: seed.repoRoot });
-  await runCommand(["node", aegisCliPath, "merge", "next"], { mockDir: seed.repoRoot });
-
-  await runCommand(["node", aegisCliPath, "scout", janusIssueId], { mockDir: seed.repoRoot });
-  await runCommand(["node", aegisCliPath, "implement", janusIssueId], { mockDir: seed.repoRoot });
-  await runCommand(["node", aegisCliPath, "process", janusIssueId], { mockDir: seed.repoRoot });
-
-  const surface = await withTemporaryEnv(SCRIPTED_MERGE_PLAN_ENV, buildScriptedMergePlan(janusIssueId), async () => {
-    await runCommand(["node", aegisCliPath, "merge", "next"], { mockDir: seed.repoRoot });
-    await runCommand(["node", aegisCliPath, "merge", "next"], { mockDir: seed.repoRoot });
-    await runCommand(["node", aegisCliPath, "merge", "next"], { mockDir: seed.repoRoot });
-    return collectSurface(seed.repoRoot, {
-      happyIssueId,
-      janusIssueId,
-      tracker,
-    });
+  const surface = await collectSurface(seed.repoRoot, {
+    finalGateIssueId,
+    tracker,
   });
   assertMockAcceptanceSurface(surface);
 
   return {
     repoRoot: seed.repoRoot,
     seed,
-    happyIssueId,
-    janusIssueId,
+    finalGateIssueId,
     surface,
   };
 }
@@ -447,8 +287,7 @@ if (isDirectExecution()) {
   runMockAcceptance().then(
     (result) => {
       console.log(`Mock acceptance completed at ${result.repoRoot}`);
-      console.log(`Happy path issue: ${result.happyIssueId}`);
-      console.log(`Janus path issue: ${result.janusIssueId}`);
+      console.log(`Final integration gate issue: ${result.finalGateIssueId}`);
     },
     (error: unknown) => {
       const details = error instanceof Error ? error.message : String(error);
