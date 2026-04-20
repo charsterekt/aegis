@@ -505,4 +505,64 @@ describe("startAegis daemon loop", () => {
       },
     });
   });
+
+  it("does not create a session viewer tracker when view-agent-sessions is disabled", async () => {
+    const root = createTempRoot();
+    initProject(root);
+
+    const startModule = await import("../../../src/cli/start.js");
+    const createSessionViewTracker = vi.fn(() => ({
+      sync: vi.fn(),
+      stop: vi.fn(),
+    }));
+    const result = await startModule.startAegis(root, {
+      viewAgentSessions: false,
+    }, {
+      verifyTracker: () => undefined,
+      verifyGitRepo: () => undefined,
+      probeBeadsCli: () => ({
+        ok: true,
+        detail: "Beads CLI is available.",
+      }),
+      registerSignalHandlers: false,
+      runDaemonCycle: async () => undefined,
+      runMergeCommand: async () => null,
+      createSessionViewTracker,
+    });
+
+    expect(createSessionViewTracker).not.toHaveBeenCalled();
+    await result.runtime.stop();
+  });
+
+  it("creates and uses a session viewer tracker when view-agent-sessions is enabled", async () => {
+    const root = createTempRoot();
+    initProject(root);
+
+    const tracker = {
+      sync: vi.fn(),
+      stop: vi.fn(),
+    };
+    const createSessionViewTracker = vi.fn(() => tracker);
+    const startModule = await import("../../../src/cli/start.js");
+    const result = await startModule.startAegis(root, {
+      viewAgentSessions: true,
+    }, {
+      verifyTracker: () => undefined,
+      verifyGitRepo: () => undefined,
+      probeBeadsCli: () => ({
+        ok: true,
+        detail: "Beads CLI is available.",
+      }),
+      registerSignalHandlers: false,
+      runDaemonCycle: async () => undefined,
+      runMergeCommand: async () => null,
+      createSessionViewTracker,
+    });
+
+    expect(createSessionViewTracker).toHaveBeenCalledWith(root);
+    expect(tracker.sync).toHaveBeenCalledWith([]);
+
+    await result.runtime.stop();
+    expect(tracker.stop).toHaveBeenCalledTimes(1);
+  });
 });

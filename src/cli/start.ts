@@ -31,6 +31,7 @@ import {
 import { createCasteRuntime } from "../runtime/create-caste-runtime.js";
 import { verifyConfiguredPiModels } from "../runtime/pi-model-config.js";
 import { runMergeNext as defaultRunMergeNext } from "../merge/merge-next.js";
+import { createSessionViewTracker, type SessionViewTracker } from "./session-view.js";
 import {
   formatStartupPreflight,
   runStartupPreflight,
@@ -112,6 +113,7 @@ export interface StartCommandOptions {
   runDaemonCycle?: (root: string) => Promise<void>;
   runCasteCommand?: (root: string, action: RuntimeCasteAction, issueId: string) => Promise<unknown>;
   runMergeCommand?: (root: string, action: RuntimeMergeAction) => Promise<unknown>;
+  createSessionViewTracker?: (root: string) => SessionViewTracker;
 }
 
 export interface TrackerProbeResult {
@@ -535,6 +537,15 @@ export async function startAegis(
     }));
   const runMergeCommand = options.runMergeCommand ?? ((candidateRoot: string, action: RuntimeMergeAction) =>
     action === "next" ? defaultRunMergeNext(candidateRoot) : Promise.resolve(null));
+  const sessionViewTrackerFactory = options.createSessionViewTracker
+    ?? ((candidateRoot: string) => createSessionViewTracker(candidateRoot, {
+      onLaunchError(detail) {
+        appendDaemonLog(candidateRoot, `[daemon][session_view_error] ${detail}`);
+      },
+    }));
+  const sessionViewTracker = overrides.viewAgentSessions
+    ? sessionViewTrackerFactory(repoRoot)
+    : null;
 
   clearStopRequest(repoRoot);
   clearRuntimeCommandArtifacts(repoRoot);
@@ -568,6 +579,7 @@ export async function startAegis(
         clearInterval(daemonLoopTimer);
         daemonLoopTimer = null;
       }
+      sessionViewTracker?.stop();
       clearStopRequest(repoRoot);
       clearRuntimeCommandArtifacts(repoRoot);
       runningState = toStoppedRuntimeState(runningState, reason);
@@ -664,6 +676,14 @@ export async function startAegis(
     try {
       await runDaemonCycle(repoRoot);
       await runMergeCommand(repoRoot, "next");
+      const runningSessions = Object.values(loadDispatchState(repoRoot).records)
+        .filter((record) => record.runningAgent !== null)
+        .map((record) => ({
+          issueId: record.issueId,
+          caste: record.runningAgent!.caste,
+          sessionId: record.runningAgent!.sessionId,
+        }));
+      sessionViewTracker?.sync(runningSessions);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       appendDaemonLog(repoRoot, `[daemon][cycle_error] ${detail}`);
