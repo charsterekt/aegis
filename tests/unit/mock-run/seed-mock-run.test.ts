@@ -8,11 +8,11 @@ import {
 } from "../../../src/mock-run/seed-mock-run.js";
 
 describe("buildMockRunConfig", () => {
-  it("builds a live-ready mock-run config from central defaults", () => {
+  it("builds a deterministic mock-run config from central defaults", () => {
     const config = buildMockRunConfig();
 
     expect(Object.keys(config)).toEqual(CONFIG_TOP_LEVEL_KEYS);
-    expect(config.runtime).toBe("pi");
+    expect(config.runtime).toBe("scripted");
     expect(config.models).toEqual(DEFAULT_AEGIS_CONFIG.models);
     expect(config.thinking).toEqual(DEFAULT_AEGIS_CONFIG.thinking);
     expect(config.labor.base_path).toBe(MOCK_RUN_LABOR_BASE_PATH);
@@ -29,10 +29,10 @@ describe("buildMockRunConfig", () => {
   });
 
   it("allows explicit scripted fallback without changing model config", () => {
-    const config = buildMockRunConfig({ runtime: "scripted", uncapped: false });
+    const config = buildMockRunConfig({ runtime: "pi", uncapped: false });
 
     expect(Object.keys(config)).toEqual(CONFIG_TOP_LEVEL_KEYS);
-    expect(config.runtime).toBe("scripted");
+    expect(config.runtime).toBe("pi");
     expect(config.models).toEqual(DEFAULT_AEGIS_CONFIG.models);
     expect(config.thinking).toEqual(DEFAULT_AEGIS_CONFIG.thinking);
     expect(config.labor.base_path).toBe(MOCK_RUN_LABOR_BASE_PATH);
