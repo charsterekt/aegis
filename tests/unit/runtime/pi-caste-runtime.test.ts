@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import path from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { JANUS_EMIT_RESOLUTION_TOOL_NAME } from "../../../src/castes/janus/janus-tool-contract.js";
 import { ORACLE_EMIT_ASSESSMENT_TOOL_NAME } from "../../../src/castes/oracle/oracle-tool-contract.js";
@@ -6,6 +10,7 @@ import { SENTINEL_EMIT_VERDICT_TOOL_NAME } from "../../../src/castes/sentinel/se
 import { TITAN_EMIT_ARTIFACT_TOOL_NAME } from "../../../src/castes/titan/titan-tool-contract.js";
 import type { CasteName } from "../../../src/runtime/caste-runtime.js";
 import { PiCasteRuntime } from "../../../src/runtime/pi-caste-runtime.js";
+import { readSessionEvents } from "../../../src/runtime/session-events.js";
 
 type MockListener = (event: any) => void;
 
@@ -137,6 +142,14 @@ const mockedAgent = vi.hoisted(() => {
   };
 });
 
+const tempRoots: string[] = [];
+
+function createTempRoot() {
+  const root = mkdtempSync(path.join(tmpdir(), "aegis-pi-session-events-"));
+  tempRoots.push(root);
+  return root;
+}
+
 vi.mock("@mariozechner/pi-coding-agent", () => ({
   createAgentSession: mockedAgent.createAgentSession,
   createCodingTools: mockedAgent.createCodingTools,
@@ -240,6 +253,12 @@ function createSingleCasteRuntime(caste: CasteName) {
 }
 
 describe("PiCasteRuntime", () => {
+  afterEach(() => {
+    for (const root of tempRoots.splice(0)) {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   beforeEach(() => {
     mockedAgent.listeners.splice(0, mockedAgent.listeners.length);
     mockedAgent.createAgentSession.mockClear();
@@ -329,6 +348,30 @@ describe("PiCasteRuntime", () => {
         : undefined;
       expect(passthroughAfterToolResult).toBeUndefined();
     }
+  });
+
+  it("persists session lifecycle events for successful runs", async () => {
+    const fixture = CONTRACT_FIXTURES.find((candidate) => candidate.caste === "oracle");
+    if (!fixture) {
+      throw new Error("Missing oracle fixture.");
+    }
+
+    configureToolSuccess(fixture);
+    const runtime = createSingleCasteRuntime("oracle");
+    const root = createTempRoot();
+    const result = await runtime.run({
+      caste: "oracle",
+      issueId: "aegis-123",
+      root,
+      workingDirectory: root,
+      prompt: "oracle run",
+    });
+
+    expect(result.status).toBe("succeeded");
+    const events = readSessionEvents(root, "pi-session-1");
+    expect(events.some((event) => event.eventType === "session_started")).toBe(true);
+    expect(events.some((event) => event.eventType === "tool_start")).toBe(true);
+    expect(events.some((event) => event.eventType === "session_finished")).toBe(true);
   });
 
   it("retries once with contract repair prompt when first run misses tool output", async () => {

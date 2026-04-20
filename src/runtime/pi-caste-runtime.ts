@@ -45,6 +45,7 @@ import type {
   CasteSessionResult,
 } from "./caste-runtime.js";
 import type { ResolvedConfiguredCasteModel } from "./pi-model-config.js";
+import { appendSessionEvent } from "./session-events.js";
 
 type PiCodingAgentModule = typeof import("@mariozechner/pi-coding-agent");
 const require = createRequire(import.meta.url);
@@ -173,6 +174,17 @@ function extractMessageRole(event: AgentSessionEvent): CasteSessionMessage["role
   return message?.role === "user" || message?.role === "assistant"
     ? message.role
     : null;
+}
+
+function writeSessionEventSafe(
+  root: string,
+  event: Parameters<typeof appendSessionEvent>[1],
+) {
+  try {
+    appendSessionEvent(root, event);
+  } catch {
+    // Session event logging must not block runtime execution.
+  }
 }
 
 function resolveShellInvocation(command: string) {
@@ -459,12 +471,23 @@ export class PiCasteRuntime implements CasteRuntime {
       tools: baseTools,
       customTools,
     });
+    writeSessionEventSafe(input.root, {
+      timestamp: startedAt,
+      sessionId: session.sessionId,
+      issueId: input.issueId,
+      caste: input.caste,
+      eventType: "session_started",
+      summary: `${toolContract.label} session started`,
+      detail: `workingDirectory=${input.workingDirectory}`,
+    });
     session.setActiveToolsByName(activeToolNames);
     let enforceContractPayload = false;
     installPayloadContractHook(toolContract, session, () => enforceContractPayload);
     const messages: string[] = [];
     const toolsUsed: string[] = [];
     let structuredOutput: string | null = null;
+    let finalStatus: "succeeded" | "failed" | null = null;
+    let finalError: string | undefined;
 
     try {
       await new Promise<void>((resolve, reject) => {
@@ -489,6 +512,14 @@ export class PiCasteRuntime implements CasteRuntime {
 
           if (event.type === "tool_execution_start") {
             toolsUsed.push(event.toolName);
+            writeSessionEventSafe(input.root, {
+              timestamp: new Date().toISOString(),
+              sessionId: session.sessionId,
+              issueId: input.issueId,
+              caste: input.caste,
+              eventType: "tool_start",
+              summary: event.toolName,
+            });
             return;
           }
 
@@ -501,6 +532,16 @@ export class PiCasteRuntime implements CasteRuntime {
                 role,
                 content: text,
               });
+              if (role === "assistant") {
+                writeSessionEventSafe(input.root, {
+                  timestamp: new Date().toISOString(),
+                  sessionId: session.sessionId,
+                  issueId: input.issueId,
+                  caste: input.caste,
+                  eventType: "assistant_message",
+                  summary: text.slice(0, 160),
+                });
+              }
             }
             return;
           }
@@ -556,6 +597,7 @@ export class PiCasteRuntime implements CasteRuntime {
         });
       });
 
+      finalStatus = "succeeded";
       return {
         sessionId: session.sessionId,
         caste: input.caste,
@@ -571,6 +613,8 @@ export class PiCasteRuntime implements CasteRuntime {
         finishedAt: new Date().toISOString(),
       };
     } catch (error) {
+      finalStatus = "failed";
+      finalError = error instanceof Error ? error.message : String(error);
       return {
         sessionId: session.sessionId,
         caste: input.caste,
@@ -584,9 +628,29 @@ export class PiCasteRuntime implements CasteRuntime {
         messageLog,
         startedAt,
         finishedAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : String(error),
+        error: finalError,
       };
     } finally {
+      if (finalStatus === "succeeded") {
+        writeSessionEventSafe(input.root, {
+          timestamp: new Date().toISOString(),
+          sessionId: session.sessionId,
+          issueId: input.issueId,
+          caste: input.caste,
+          eventType: "session_finished",
+          summary: `${toolContract.label} session finished`,
+        });
+      } else if (finalStatus === "failed") {
+        writeSessionEventSafe(input.root, {
+          timestamp: new Date().toISOString(),
+          sessionId: session.sessionId,
+          issueId: input.issueId,
+          caste: input.caste,
+          eventType: "session_failed",
+          summary: `${toolContract.label} session failed`,
+          detail: finalError,
+        });
+      }
       session.dispose();
     }
   }

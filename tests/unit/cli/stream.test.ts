@@ -188,6 +188,8 @@ describe("streamSessionView", () => {
       `${JSON.stringify({
         timestamp: "2026-04-19T16:00:00.000Z",
         sessionId,
+        issueId: "aegis-1",
+        caste: "oracle",
         eventType: "session_started",
         summary: "old event",
       })}\n`,
@@ -209,11 +211,15 @@ describe("streamSessionView", () => {
           `${JSON.stringify({
             timestamp: "2026-04-19T16:00:00.000Z",
             sessionId,
+            issueId: "aegis-1",
+            caste: "oracle",
             eventType: "session_started",
             summary: "old event",
           })}\n${JSON.stringify({
             timestamp: "2026-04-19T16:00:05.000Z",
             sessionId,
+            issueId: "aegis-1",
+            caste: "oracle",
             eventType: "assistant_message",
             summary: "new event",
           })}\n`,

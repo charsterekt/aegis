@@ -137,6 +137,8 @@ function initializeSessionCursor(root: string, sessionId: string): SessionStream
 interface SessionLogEntry {
   timestamp: string;
   sessionId: string;
+  issueId: string;
+  caste: string;
   eventType: string;
   summary: string;
   detail?: string;
@@ -151,6 +153,8 @@ function parseSessionEvent(rawLine: string): SessionLogEntry | null {
   if (
     typeof parsed.timestamp !== "string"
     || typeof parsed.sessionId !== "string"
+    || typeof parsed.issueId !== "string"
+    || typeof parsed.caste !== "string"
     || typeof parsed.eventType !== "string"
     || typeof parsed.summary !== "string"
   ) {
@@ -160,6 +164,8 @@ function parseSessionEvent(rawLine: string): SessionLogEntry | null {
   return {
     timestamp: parsed.timestamp,
     sessionId: parsed.sessionId,
+    issueId: parsed.issueId,
+    caste: parsed.caste,
     eventType: parsed.eventType,
     summary: parsed.summary,
     detail: typeof parsed.detail === "string" ? parsed.detail : undefined,
@@ -170,6 +176,8 @@ function formatSessionEvent(entry: SessionLogEntry) {
   const parts = [
     `[session] ${entry.timestamp}`,
     `session=${entry.sessionId}`,
+    `issue=${entry.issueId}`,
+    `caste=${entry.caste}`,
     `event=${entry.eventType}`,
     `summary=${entry.summary}`,
   ];

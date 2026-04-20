@@ -7,6 +7,7 @@ import type {
   CasteSessionResult,
 } from "./caste-runtime.js";
 import type { AegisThinkingLevel } from "../config/schema.js";
+import { appendSessionEvent } from "./session-events.js";
 
 type ScriptedResponse = {
   output: string;
@@ -29,6 +30,17 @@ function isScriptedHandlers(
   return Object.values(value).every((entry) => entry === undefined || typeof entry === "function");
 }
 
+function writeSessionEventSafe(
+  root: string,
+  event: Parameters<typeof appendSessionEvent>[1],
+) {
+  try {
+    appendSessionEvent(root, event);
+  } catch {
+    // Session event logging must not block scripted runtime behavior.
+  }
+}
+
 export class ScriptedCasteRuntime implements CasteRuntime {
   private readonly modelConfigs: ScriptedModelConfigs;
   private readonly handlers: ScriptedHandlers;
@@ -48,7 +60,16 @@ export class ScriptedCasteRuntime implements CasteRuntime {
   }
 
   async run(input: CasteRunInput): Promise<CasteSessionResult> {
+    const sessionId = randomUUID();
     const startedAt = new Date().toISOString();
+    writeSessionEventSafe(input.root, {
+      timestamp: startedAt,
+      sessionId,
+      issueId: input.issueId,
+      caste: input.caste,
+      eventType: "session_started",
+      summary: "Scripted session started",
+    });
     const response = this.handlers[input.caste]?.(input) ?? {
       output: "{}",
       toolsUsed: [],
@@ -61,8 +82,29 @@ export class ScriptedCasteRuntime implements CasteRuntime {
       thinkingLevel: "off" as const,
     };
 
+    if (response.output.trim().length > 0) {
+      writeSessionEventSafe(input.root, {
+        timestamp: finishedAt,
+        sessionId,
+        issueId: input.issueId,
+        caste: input.caste,
+        eventType: "assistant_message",
+        summary: response.output.slice(0, 160),
+      });
+    }
+
+    writeSessionEventSafe(input.root, {
+      timestamp: finishedAt,
+      sessionId,
+      issueId: input.issueId,
+      caste: input.caste,
+      eventType: response.error ? "session_failed" : "session_finished",
+      summary: response.error ? "Scripted session failed" : "Scripted session finished",
+      detail: response.error,
+    });
+
     return {
-      sessionId: randomUUID(),
+      sessionId,
       caste: input.caste,
       modelRef: modelConfig.reference,
       provider: modelConfig.provider,
