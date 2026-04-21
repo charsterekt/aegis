@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { CASTE_CONFIG_KEYS } from "../../../src/config/caste-config.js";
 import { DEFAULT_AEGIS_CONFIG } from "../../../src/config/defaults.js";
 import { CONFIG_TOP_LEVEL_KEYS } from "../../../src/config/schema.js";
 import {
@@ -13,8 +14,10 @@ describe("buildMockRunConfig", () => {
 
     expect(Object.keys(config)).toEqual(CONFIG_TOP_LEVEL_KEYS);
     expect(config.runtime).toBe("pi");
-    expect(config.models).toEqual(DEFAULT_AEGIS_CONFIG.models);
-    expect(config.thinking).toEqual(DEFAULT_AEGIS_CONFIG.thinking);
+    for (const caste of CASTE_CONFIG_KEYS) {
+      expect(config.models[caste]).toBe("openai-codex:gpt-5.4-mini");
+      expect(config.thinking[caste]).toBe("medium");
+    }
     expect(config.labor.base_path).toBe(MOCK_RUN_LABOR_BASE_PATH);
     expect(config.concurrency).toEqual({
       max_agents: 10,
@@ -33,8 +36,10 @@ describe("buildMockRunConfig", () => {
 
     expect(Object.keys(config)).toEqual(CONFIG_TOP_LEVEL_KEYS);
     expect(config.runtime).toBe("scripted");
-    expect(config.models).toEqual(DEFAULT_AEGIS_CONFIG.models);
-    expect(config.thinking).toEqual(DEFAULT_AEGIS_CONFIG.thinking);
+    for (const caste of CASTE_CONFIG_KEYS) {
+      expect(config.models[caste]).toBe("openai-codex:gpt-5.4-mini");
+      expect(config.thinking[caste]).toBe("medium");
+    }
     expect(config.labor.base_path).toBe(MOCK_RUN_LABOR_BASE_PATH);
     expect(config.concurrency).toEqual(DEFAULT_AEGIS_CONFIG.concurrency);
   });

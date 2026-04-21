@@ -12,8 +12,8 @@ import type { RuntimeStateRecord } from "../cli/runtime-state.js";
 import { readRuntimeState } from "../cli/runtime-state.js";
 import type { AegisIssue } from "../tracker/issue-model.js";
 
-const HAPPY_PATH_ISSUE_KEY = "foundation.contract";
-const JANUS_ISSUE_KEY = "integration.contract";
+const HAPPY_PATH_ISSUE_KEY = "setup.contract";
+const JANUS_ISSUE_KEY = "ui.contract";
 const SCRIPTED_MERGE_PLAN_ENV = "AEGIS_SCRIPTED_MERGE_PLAN";
 
 type MockCommandRunner = (

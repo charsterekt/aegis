@@ -58,11 +58,10 @@ describe("runMockAcceptance", () => {
         repoRoot: "/repo",
         databaseName: "mock-db",
         issueIdByKey: {
-          "foundation.contract": "issue-happy",
-          "integration.contract": "issue-janus",
+          "setup.contract": "issue-happy",
+          "ui.contract": "issue-janus",
         },
-        initialReadyKeys: ["foundation.contract"],
-        manifestPath: "/repo/.aegis/mock-run-manifest.json",
+        initialReadyKeys: ["setup.contract"],
       };
     });
     const runMockCommand = vi.fn(async (args: string[]) => {
