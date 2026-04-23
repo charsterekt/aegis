@@ -9,11 +9,11 @@ import {
 } from "../../../src/mock-run/seed-mock-run.js";
 
 describe("buildMockRunConfig", () => {
-  it("builds a live-ready mock-run config from central defaults", () => {
+  it("builds a deterministic proof mock-run config from central defaults", () => {
     const config = buildMockRunConfig();
 
     expect(Object.keys(config)).toEqual(CONFIG_TOP_LEVEL_KEYS);
-    expect(config.runtime).toBe("pi");
+    expect(config.runtime).toBe("scripted");
     for (const caste of CASTE_CONFIG_KEYS) {
       expect(config.models[caste]).toBe("openai-codex:gpt-5.4-mini");
       expect(config.thinking[caste]).toBe("medium");
@@ -33,11 +33,11 @@ describe("buildMockRunConfig", () => {
     expect(config).not.toHaveProperty("economics");
   });
 
-  it("allows explicit scripted fallback without changing model config", () => {
-    const config = buildMockRunConfig({ runtime: "scripted", uncapped: false });
+  it("allows explicit pi override without changing model config", () => {
+    const config = buildMockRunConfig({ runtime: "pi", uncapped: false });
 
     expect(Object.keys(config)).toEqual(CONFIG_TOP_LEVEL_KEYS);
-    expect(config.runtime).toBe("scripted");
+    expect(config.runtime).toBe("pi");
     for (const caste of CASTE_CONFIG_KEYS) {
       expect(config.models[caste]).toBe("openai-codex:gpt-5.4-mini");
       expect(config.thinking[caste]).toBe("medium");

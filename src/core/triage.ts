@@ -1,12 +1,14 @@
 import type { AegisConfig } from "../config/schema.js";
 import type { DispatchRecord, DispatchState } from "./dispatch-state.js";
+import { isOracleBlockedFromTitan } from "./stage-invariants.js";
 import type { TrackerReadyIssue } from "../tracker/tracker.js";
 
 export type TriageSkipReason =
   | "capacity"
   | "cooldown"
   | "in_progress"
-  | "already_progressed";
+  | "already_progressed"
+  | "blocked";
 
 export interface DispatchDecision {
   issueId: string;
@@ -110,11 +112,19 @@ export function triageReadyWork(input: TriageInput): TriageResult {
       continue;
     }
 
+    if (record && isOracleBlockedFromTitan(record)) {
+      skipped.push({
+        issueId: issue.id,
+        reason: "blocked",
+      });
+      continue;
+    }
+
     if (record && needsFuturePhase(record)) {
-        skipped.push({
-          issueId: issue.id,
-          reason: "already_progressed",
-        });
+      skipped.push({
+        issueId: issue.id,
+        reason: "already_progressed",
+      });
       continue;
     }
 

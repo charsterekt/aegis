@@ -164,7 +164,7 @@ export function buildMockRunConfig(options?: {
   runtime?: "pi" | "scripted";
 }) {
   const uncapped = options?.uncapped ?? true;
-  const runtime = options?.runtime ?? "pi";
+  const runtime = options?.runtime ?? "scripted";
 
   const baseConfig = {
     ...DEFAULT_AEGIS_CONFIG,

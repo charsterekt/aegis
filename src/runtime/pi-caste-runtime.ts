@@ -4,7 +4,7 @@ import {
   type FindOperations,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
-import { spawn } from "node:child_process";
+import { spawn, type SpawnOptions } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { globSync } from "glob";
@@ -52,7 +52,7 @@ let childProcessPatched = false;
 let piCodingAgentModulePromise: Promise<PiCodingAgentModule> | null = null;
 const DEFAULT_PI_SESSION_TIMEOUT_MS = 60_000;
 const DEFAULT_PI_SESSION_TIMEOUT_BY_CASTE: Record<CasteName, number> = {
-  oracle: 120_000,
+  oracle: 300_000,
   titan: 180_000,
   sentinel: 180_000,
   janus: 180_000,
@@ -198,6 +198,19 @@ function resolveShellInvocation(command: string) {
   };
 }
 
+export function buildHiddenShellSpawnOptions(
+  cwd: string,
+  env?: NodeJS.ProcessEnv,
+): SpawnOptions {
+  return {
+    cwd,
+    detached: process.platform !== "win32",
+    env: env ?? process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  };
+}
+
 function terminateProcessTree(pid: number) {
   if (process.platform === "win32") {
     const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], {
@@ -225,13 +238,7 @@ function createHiddenShellBashOperations(): BashOperations {
     exec: (command, cwd, { onData, signal, timeout, env }) =>
       new Promise((resolve, reject) => {
         const { shell, args } = resolveShellInvocation(command);
-        const child = spawn(shell, args, {
-          cwd,
-          detached: true,
-          env: env ?? process.env,
-          stdio: ["ignore", "pipe", "pipe"],
-          windowsHide: true,
-        });
+        const child = spawn(shell, args, buildHiddenShellSpawnOptions(cwd, env));
 
         let timeoutHandle: NodeJS.Timeout | undefined;
         let timedOut = false;

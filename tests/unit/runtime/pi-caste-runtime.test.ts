@@ -5,7 +5,10 @@ import { ORACLE_EMIT_ASSESSMENT_TOOL_NAME } from "../../../src/castes/oracle/ora
 import { SENTINEL_EMIT_VERDICT_TOOL_NAME } from "../../../src/castes/sentinel/sentinel-tool-contract.js";
 import { TITAN_EMIT_ARTIFACT_TOOL_NAME } from "../../../src/castes/titan/titan-tool-contract.js";
 import type { CasteName } from "../../../src/runtime/caste-runtime.js";
-import { PiCasteRuntime } from "../../../src/runtime/pi-caste-runtime.js";
+import {
+  buildHiddenShellSpawnOptions,
+  PiCasteRuntime,
+} from "../../../src/runtime/pi-caste-runtime.js";
 
 type MockListener = (event: any) => void;
 
@@ -430,6 +433,37 @@ describe("PiCasteRuntime", () => {
     expect(result.error).toBe("Pi sentinel session timed out after 5ms.");
   });
 
+  it("defaults oracle sessions to a five-minute timeout budget", async () => {
+    vi.useFakeTimers();
+    try {
+      mockedAgent.session.prompt.mockImplementation(async () => {
+        // Simulate provider/session hang: no events emitted.
+      });
+
+      const runtime = new PiCasteRuntime({
+        oracle: createModelConfig("oracle"),
+      }, {
+        timeoutRetryCount: 0,
+      });
+
+      const resultPromise = runtime.run({
+        caste: "oracle",
+        issueId: "aegis-default-oracle-timeout",
+        root: "repo",
+        workingDirectory: "repo",
+        prompt: "Scout default-timeout",
+      });
+
+      await vi.advanceTimersByTimeAsync(300_000);
+      const result = await resultPromise;
+
+      expect(result.status).toBe("failed");
+      expect(result.error).toBe("Pi oracle session timed out after 300000ms.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("retries timed-out sessions once and succeeds when second attempt returns", async () => {
     let attempt = 0;
     mockedAgent.session.prompt.mockImplementation(async () => {
@@ -617,5 +651,13 @@ describe("PiCasteRuntime", () => {
     expect(mockedAgent.createGrepTool).toHaveBeenCalledWith(
       "repo/janus",
     );
+  });
+
+  it("does not detach hidden shell commands on Windows", () => {
+    const options = buildHiddenShellSpawnOptions("repo", process.env);
+
+    expect(options.windowsHide).toBe(true);
+    expect(options.detached).toBe(process.platform !== "win32");
+    expect(options.stdio).toEqual(["ignore", "pipe", "pipe"]);
   });
 });
