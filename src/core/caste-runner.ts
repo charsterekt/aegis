@@ -116,6 +116,10 @@ function buildOraclePrompt(issue: AegisIssue) {
     `Status: ${issue.status}`,
     `Blockers: ${blockers}`,
     `Labels: ${labels}`,
+    "The tracker already contains the work breakdown for executable issues.",
+    "Do not decompose ordinary implementation breakdown into new sub-issues.",
+    "Set decompose=true only for missing prerequisite work that cannot be satisfied by implementing this issue as written.",
+    "If the issue is implementable as currently written, return decompose=false.",
     `Call tool '${ORACLE_EMIT_ASSESSMENT_TOOL_NAME}' exactly once as final step after analysis is complete.`,
     "Return only JSON. No markdown fences. No prose before or after JSON.",
     "JSON schema keys: files_affected, estimated_complexity, decompose, ready.",
@@ -531,6 +535,18 @@ async function runScout(
       session: createSessionMetadata(transcriptRef, runInput, session),
     },
   });
+  if (assessment.decompose) {
+    saveRecord(input.root, issue.id, {
+      ...clearDownstreamArtifactRefs(record),
+      stage: "failed",
+      oracleAssessmentRef: artifactRef,
+      oracleReady: assessment.ready,
+      oracleDecompose: assessment.decompose,
+      oracleBlockers: assessment.blockers ?? [],
+      updatedAt: now,
+    });
+    throw new Error("Oracle decomposition is not supported for executable issue progression.");
+  }
   saveRecord(input.root, issue.id, {
     ...clearDownstreamArtifactRefs(record),
     stage: "scouted",

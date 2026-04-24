@@ -241,6 +241,18 @@ function summarizeProofProgress(
   });
 }
 
+function getDeadlockReason(record: DispatchRecord | undefined) {
+  if (!record || record.stage !== "scouted") {
+    return null;
+  }
+
+  if (record.oracleDecompose === true) {
+    return `Oracle returned decompose=true for ${record.issueId}, but the executable proof flow has no decomposition completion path.`;
+  }
+
+  return null;
+}
+
 export async function waitForMockAcceptanceProgress(
   root: string,
   issueIds: { happyIssueId: string; janusIssueId: string },
@@ -270,6 +282,11 @@ export async function waitForMockAcceptanceProgress(
     const janusRecord = dispatchState.records[issueIds.janusIssueId];
     const happyQueueItem = mergeQueueState.items.find((item) => item.issueId === issueIds.happyIssueId);
     const janusQueueItem = mergeQueueState.items.find((item) => item.issueId === issueIds.janusIssueId);
+    const deadlockReason = getDeadlockReason(happyRecord) ?? getDeadlockReason(janusRecord);
+
+    if (deadlockReason) {
+      throw new Error(deadlockReason);
+    }
 
     if (
       isHappyProofComplete(happyRecord, happyQueueItem)

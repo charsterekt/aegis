@@ -78,6 +78,35 @@ function createTitanSessionResult(
 }
 
 describe("runCasteCommand", () => {
+  it("tells Oracle not to decompose tracker-defined executable work", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, emptyDispatchState());
+
+    await runCasteCommand({
+      root,
+      action: "scout",
+      issueId: "aegis-guard",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-guard")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        oracle: () => ({
+          output: JSON.stringify({
+            files_affected: [],
+            estimated_complexity: "moderate",
+            decompose: false,
+            ready: true,
+          }),
+        }),
+      }),
+    });
+
+    const transcriptPath = path.join(root, ".aegis", "transcripts", "aegis-guard--oracle.json");
+    expect(JSON.parse(readFileSync(transcriptPath, "utf8"))).toMatchObject({
+      prompt: expect.stringContaining("Do not decompose ordinary implementation breakdown"),
+    });
+  });
+
   it("writes an oracle artifact and advances the issue to scouted", async () => {
     const root = createTempRoot();
     saveDispatchState(root, emptyDispatchState());
@@ -999,6 +1028,49 @@ describe("runCasteCommand", () => {
     )).toMatchObject({
       verdict: "fail",
       followUpIssueIds: ["aegis-2002", "aegis-2001"],
+    });
+  });
+
+  it("fails fast when Oracle requests unsupported decomposition", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, emptyDispatchState());
+
+    await expect(runCasteCommand({
+      root,
+      action: "scout",
+      issueId: "aegis-decompose",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-decompose")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        oracle: () => ({
+          output: JSON.stringify({
+            files_affected: ["src/index.ts"],
+            estimated_complexity: "moderate",
+            decompose: true,
+            sub_issues: ["child-a", "child-b"],
+            ready: true,
+          }),
+        }),
+      }),
+    })).rejects.toThrow("Oracle decomposition is not supported for executable issue progression.");
+
+    const state = JSON.parse(
+      readFileSync(path.join(root, ".aegis", "dispatch-state.json"), "utf8"),
+    ) as {
+      records: Record<string, {
+        stage: string;
+        oracleAssessmentRef: string | null;
+        oracleReady: boolean | null;
+        oracleDecompose: boolean | null;
+      }>;
+    };
+
+    expect(state.records["aegis-decompose"]).toMatchObject({
+      stage: "failed",
+      oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-decompose.json"),
+      oracleReady: true,
+      oracleDecompose: true,
     });
   });
 

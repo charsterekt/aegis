@@ -377,6 +377,60 @@ describe("waitForMockAcceptanceProgress", () => {
       sleep: vi.fn(async () => undefined),
     })).resolves.toBeUndefined();
   });
+
+  it("fails fast when Oracle decomposition leaves the workflow with no completion path", async () => {
+    const runningState = {
+      schema_version: 1 as const,
+      pid: 4242,
+      server_state: "running" as const,
+      mode: "auto" as const,
+      started_at: "2026-04-16T00:00:00.000Z",
+    };
+    const sleep = vi.fn(async () => undefined);
+
+    await expect(waitForMockAcceptanceProgress("/repo", {
+      happyIssueId: "issue-happy",
+      janusIssueId: "issue-janus",
+    }, {
+      timeoutMs: 250,
+      pollMs: 10,
+      readRuntimeState: () => runningState,
+      isProcessRunning: () => true,
+      readDispatchState: () => ({
+        schemaVersion: 1,
+        records: {
+          "issue-happy": {
+            issueId: "issue-happy",
+            stage: "scouted",
+            runningAgent: null,
+            oracleAssessmentRef: ".aegis/oracle/issue-happy.json",
+            oracleReady: true,
+            oracleDecompose: true,
+            oracleBlockers: [],
+            titanHandoffRef: null,
+            titanClarificationRef: null,
+            sentinelVerdictRef: null,
+            janusArtifactRef: null,
+            failureTranscriptRef: null,
+            fileScope: null,
+            failureCount: 0,
+            consecutiveFailures: 0,
+            failureWindowStartMs: null,
+            cooldownUntil: null,
+            sessionProvenanceId: "test",
+            updatedAt: "2026-04-16T00:00:00.000Z",
+          },
+        },
+      }),
+      readMergeQueueState: () => ({
+        schemaVersion: 1,
+        items: [],
+      }),
+      sleep,
+    })).rejects.toThrow("Oracle returned decompose=true");
+
+    expect(sleep).not.toHaveBeenCalled();
+  });
 });
 
 describe("collectMockAcceptanceSurface", () => {

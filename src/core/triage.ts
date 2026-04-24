@@ -43,6 +43,31 @@ function isCoolingDown(record: DispatchRecord, nowMs: number) {
   return Number.isFinite(cooldownMs) && cooldownMs > nowMs;
 }
 
+function hasOracleBlockers(record: DispatchRecord) {
+  return (record.oracleBlockers?.length ?? 0) > 0;
+}
+
+function resolveFailedIssueSkipReason(record: DispatchRecord): TriageSkipReason | null {
+  if (record.stage !== "failed") {
+    return null;
+  }
+
+  if (
+    record.oracleReady === false
+    || record.oracleDecompose === true
+    || hasOracleBlockers(record)
+    || record.titanClarificationRef
+  ) {
+    return "blocked";
+  }
+
+  if (record.titanHandoffRef || record.sentinelVerdictRef || record.janusArtifactRef) {
+    return "already_progressed";
+  }
+
+  return null;
+}
+
 function needsFuturePhase(record: DispatchRecord) {
   return record.stage !== "failed" && record.stage !== "pending" && record.stage !== "scouted";
 }
@@ -100,6 +125,15 @@ export function triageReadyWork(input: TriageInput): TriageResult {
       skipped.push({
         issueId: issue.id,
         reason: "in_progress",
+      });
+      continue;
+    }
+
+    const failedIssueSkipReason = record ? resolveFailedIssueSkipReason(record) : null;
+    if (failedIssueSkipReason) {
+      skipped.push({
+        issueId: issue.id,
+        reason: failedIssueSkipReason,
       });
       continue;
     }
