@@ -12,6 +12,92 @@ function createDispatchState(overrides: DispatchState["records"]): DispatchState
 }
 
 describe("triageReadyWork", () => {
+  it("dispatches Titan from rework_required without rerunning Oracle", () => {
+    const result = triageReadyWork({
+      readyIssues: [{ id: "ISSUE-1", title: "Retry review feedback" }],
+      dispatchState: createDispatchState({
+        "ISSUE-1": {
+          issueId: "ISSUE-1",
+          stage: "rework_required",
+          runningAgent: null,
+          oracleAssessmentRef: ".aegis/oracle/ISSUE-1.json",
+          titanHandoffRef: ".aegis/titan/ISSUE-1.json",
+          sentinelVerdictRef: ".aegis/sentinel/ISSUE-1.json",
+          janusArtifactRef: null,
+          fileScope: null,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "daemon-1",
+          updatedAt: "2026-04-24T10:00:00.000Z",
+        } as any,
+      }),
+      config: DEFAULT_AEGIS_CONFIG,
+      now: "2026-04-24T10:01:00.000Z",
+    });
+
+    expect(result.dispatchable).toEqual([
+      { issueId: "ISSUE-1", title: "Retry review feedback", caste: "titan", stage: "implementing" },
+    ]);
+    expect(result.skipped).toEqual([]);
+  });
+
+  it("skips blocked_on_child issues even if the tracker still reports them ready", () => {
+    const result = triageReadyWork({
+      readyIssues: [{ id: "ISSUE-2", title: "Blocked parent" }],
+      dispatchState: createDispatchState({
+        "ISSUE-2": {
+          issueId: "ISSUE-2",
+          stage: "blocked_on_child",
+          runningAgent: null,
+          oracleAssessmentRef: ".aegis/oracle/ISSUE-2.json",
+          titanHandoffRef: null,
+          sentinelVerdictRef: null,
+          janusArtifactRef: null,
+          fileScope: null,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "daemon-1",
+          updatedAt: "2026-04-24T10:00:00.000Z",
+        } as any,
+      }),
+      config: DEFAULT_AEGIS_CONFIG,
+    });
+
+    expect(result.dispatchable).toEqual([]);
+    expect(result.skipped).toEqual([{ issueId: "ISSUE-2", reason: "blocked" }]);
+  });
+
+  it("retries failed_operational only after cooldown expires", () => {
+    const result = triageReadyWork({
+      readyIssues: [{ id: "ISSUE-3", title: "Retry runtime failure" }],
+      dispatchState: createDispatchState({
+        "ISSUE-3": {
+          issueId: "ISSUE-3",
+          stage: "failed_operational",
+          runningAgent: null,
+          oracleAssessmentRef: null,
+          sentinelVerdictRef: null,
+          fileScope: null,
+          failureCount: 1,
+          consecutiveFailures: 1,
+          failureWindowStartMs: null,
+          cooldownUntil: "2026-04-24T10:05:00.000Z",
+          sessionProvenanceId: "daemon-1",
+          updatedAt: "2026-04-24T10:00:00.000Z",
+        } as any,
+      }),
+      config: DEFAULT_AEGIS_CONFIG,
+      now: "2026-04-24T10:01:00.000Z",
+    });
+
+    expect(result.dispatchable).toEqual([]);
+    expect(result.skipped).toEqual([{ issueId: "ISSUE-3", reason: "cooldown" }]);
+  });
+
   it("dispatches pending work to oracle in tracker order", () => {
     const result = triageReadyWork({
       readyIssues: [

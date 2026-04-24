@@ -71,6 +71,36 @@ function createTitanRunningState(): DispatchState {
   };
 }
 
+function createSentinelRunningState(): DispatchState {
+  return {
+    schemaVersion: 1,
+    records: {
+      "ISSUE-9": {
+        issueId: "ISSUE-9",
+        stage: "reviewing",
+        runningAgent: {
+          caste: "sentinel",
+          sessionId: "session-9",
+          startedAt: "2026-04-24T09:55:00.000Z",
+        },
+        oracleAssessmentRef: ".aegis/oracle/ISSUE-9.json",
+        titanHandoffRef: ".aegis/titan/ISSUE-9.json",
+        titanClarificationRef: null,
+        sentinelVerdictRef: null,
+        janusArtifactRef: null,
+        failureTranscriptRef: null,
+        fileScope: null,
+        failureCount: 0,
+        consecutiveFailures: 0,
+        failureWindowStartMs: null,
+        cooldownUntil: null,
+        sessionProvenanceId: "daemon-1",
+        updatedAt: "2026-04-24T09:55:00.000Z",
+      },
+    },
+  };
+}
+
 function createParallelTitanRunningState(): DispatchState {
   return {
     schemaVersion: 1,
@@ -239,6 +269,111 @@ describe("reapFinishedWork", () => {
       consecutiveFailures: 1,
     });
     expect(result.state.records["ISSUE-1"]?.cooldownUntil).toBeTruthy();
+  });
+
+  it("marks failed sessions as failed_operational and increments counters", async () => {
+    const root = createTempRoot();
+    const runtime: AgentRuntime = {
+      async launch() {
+        throw new Error("unused");
+      },
+      async readSession() {
+        return {
+          sessionId: "session-1",
+          status: "failed",
+          finishedAt: "2026-04-24T10:00:00.000Z",
+          error: "runtime unavailable",
+        };
+      },
+      async terminate() {
+        return null;
+      },
+    };
+
+    const result = await reapFinishedWork({
+      dispatchState: createRunningState(),
+      runtime,
+      issueIds: ["ISSUE-1"],
+      root,
+      now: "2026-04-24T10:00:00.000Z",
+    });
+
+    expect(result.completed).toEqual([]);
+    expect(result.failed).toEqual(["ISSUE-1"]);
+    expect(result.state.records["ISSUE-1"]).toMatchObject({
+      issueId: "ISSUE-1",
+      stage: "failed_operational",
+      runningAgent: null,
+      failureCount: 1,
+      consecutiveFailures: 1,
+    });
+    expect(result.state.records["ISSUE-1"]?.cooldownUntil).toBeTruthy();
+  });
+
+  it("moves successful Sentinel sessions to queued_for_merge and keeps review feedback for rework loops", async () => {
+    const root = createTempRoot();
+    const runtime: AgentRuntime = {
+      async launch() {
+        throw new Error("unused");
+      },
+      async readSession() {
+        return {
+          sessionId: "session-9",
+          status: "succeeded",
+          finishedAt: "2026-04-24T10:00:00.000Z",
+        };
+      },
+      async terminate() {
+        return null;
+      },
+    };
+
+    mkdirSync(path.join(root, ".aegis"), { recursive: true });
+    writeFileSync(
+      path.join(root, ".aegis", "dispatch-state.json"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        records: {
+          "ISSUE-9": {
+            issueId: "ISSUE-9",
+            stage: "queued_for_merge",
+            runningAgent: {
+              caste: "sentinel",
+              sessionId: "session-9",
+              startedAt: "2026-04-24T09:55:00.000Z",
+            },
+            oracleAssessmentRef: ".aegis/oracle/ISSUE-9.json",
+            titanHandoffRef: ".aegis/titan/ISSUE-9.json",
+            sentinelVerdictRef: ".aegis/sentinel/ISSUE-9.json",
+            reviewFeedbackRef: ".aegis/sentinel/ISSUE-9.json",
+            janusArtifactRef: null,
+            fileScope: null,
+            failureCount: 0,
+            consecutiveFailures: 0,
+            failureWindowStartMs: null,
+            cooldownUntil: null,
+            sessionProvenanceId: "daemon-1",
+            updatedAt: "2026-04-24T10:00:00.000Z",
+          },
+        },
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const result = await reapFinishedWork({
+      dispatchState: createSentinelRunningState(),
+      runtime,
+      issueIds: ["ISSUE-9"],
+      root,
+      now: "2026-04-24T10:00:00.000Z",
+    });
+
+    expect(result.completed).toEqual(["ISSUE-9"]);
+    expect(result.state.records["ISSUE-9"]).toMatchObject({
+      stage: "queued_for_merge",
+      runningAgent: null,
+      reviewFeedbackRef: ".aegis/sentinel/ISSUE-9.json",
+    });
   });
 
   it("moves successful titan runs to implemented stage while clearing running assignment", async () => {

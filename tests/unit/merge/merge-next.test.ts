@@ -113,6 +113,43 @@ afterEach(() => {
 });
 
 describe("runMergeNext", () => {
+  it("runs Sentinel before merge admission and returns rework_required on blocking review", async () => {
+    const root = createTempRoot();
+    writeState(root, "aegis-777");
+
+    const result = await runMergeNext(root, {
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-777")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        sentinel: () => ({
+          output: JSON.stringify({
+            verdict: "fail_blocking",
+            reviewSummary: "contract regression",
+            blockingFindings: ["missing required acceptance check"],
+            advisories: ["tighten naming later"],
+            touchedFiles: ["src/core/example.ts"],
+            contractChecks: ["acceptance check present"],
+          }),
+        }),
+      }),
+      executor: {
+        execute: vi.fn(async () => ({
+          outcome: "merged" as const,
+          detail: "Merge should not run before Sentinel passes.",
+        })),
+      },
+      now: "2026-04-24T10:30:00.000Z",
+    });
+
+    expect(result).toMatchObject({
+      action: "merge_next",
+      issueId: "aegis-777",
+      status: "failed",
+      stage: "rework_required",
+    });
+  });
+
   it("uses real git merge execution when runtime is pi", async () => {
     const root = createTempRoot();
     writeFileSync(

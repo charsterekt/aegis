@@ -431,6 +431,73 @@ describe("waitForMockAcceptanceProgress", () => {
 
     expect(sleep).not.toHaveBeenCalled();
   });
+
+  it("fails proof when a parent creates extra work but remains runnable", async () => {
+    const runningState = {
+      schema_version: 1 as const,
+      pid: 4242,
+      server_state: "running" as const,
+      mode: "auto" as const,
+      started_at: "2026-04-24T10:00:00.000Z",
+    };
+    const sleep = vi.fn(async () => undefined);
+
+    await expect(waitForMockAcceptanceProgress("/repo", {
+      happyIssueId: "issue-parent",
+      janusIssueId: "issue-janus",
+    }, {
+      timeoutMs: 25,
+      pollMs: 10,
+      readRuntimeState: () => runningState,
+      isProcessRunning: () => true,
+      readDispatchState: () => ({
+        schemaVersion: 1,
+        records: {
+          "issue-parent": {
+            issueId: "issue-parent",
+            stage: "blocked_on_child",
+            runningAgent: null,
+            oracleAssessmentRef: ".aegis/oracle/issue-parent.json",
+            titanHandoffRef: ".aegis/titan/issue-parent.json",
+            titanClarificationRef: ".aegis/titan/issue-parent.json",
+            blockedByIssueId: "issue-child",
+            sentinelVerdictRef: null,
+            janusArtifactRef: null,
+            failureTranscriptRef: null,
+            fileScope: null,
+            failureCount: 0,
+            consecutiveFailures: 0,
+            failureWindowStartMs: null,
+            cooldownUntil: null,
+            sessionProvenanceId: "test",
+            updatedAt: "2026-04-24T10:00:00.000Z",
+          } as any,
+          "issue-janus": {
+            issueId: "issue-janus",
+            stage: "complete",
+            runningAgent: null,
+            oracleAssessmentRef: ".aegis/oracle/issue-janus.json",
+            titanHandoffRef: ".aegis/titan/issue-janus.json",
+            sentinelVerdictRef: ".aegis/sentinel/issue-janus.json",
+            janusArtifactRef: ".aegis/janus/issue-janus.json",
+            failureTranscriptRef: null,
+            fileScope: null,
+            failureCount: 0,
+            consecutiveFailures: 0,
+            failureWindowStartMs: null,
+            cooldownUntil: null,
+            sessionProvenanceId: "test",
+            updatedAt: "2026-04-24T10:00:00.000Z",
+          } as any,
+        },
+      }),
+      readMergeQueueState: () => ({
+        schemaVersion: 1,
+        items: [],
+      }),
+      sleep,
+    })).rejects.toThrow("created blocker without removing parent from readiness");
+  });
 });
 
 describe("collectMockAcceptanceSurface", () => {
