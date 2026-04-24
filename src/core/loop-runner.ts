@@ -8,8 +8,10 @@ import { triageReadyWork } from "./triage.js";
 import { BeadsTrackerClient } from "../tracker/beads-tracker.js";
 import type { AgentRuntime } from "../runtime/agent-runtime.js";
 import { createAgentRuntime } from "../runtime/scripted-agent-runtime.js";
+import { createCasteRuntime } from "../runtime/create-caste-runtime.js";
 import { writePhaseLog } from "./phase-log.js";
 import { autoEnqueueImplementedIssuesForMerge } from "../merge/auto-enqueue.js";
+import { runCasteCommand } from "./caste-runner.js";
 
 export type LoopPhase = "poll" | "dispatch" | "monitor" | "reap";
 
@@ -140,6 +142,27 @@ async function runReapPipeline(
   return reapResult;
 }
 
+async function runPreMergeReviews(root: string, timestamp: string) {
+  const config = loadConfig(root);
+  const tracker = new BeadsTrackerClient();
+  const implementedRecords = Object.values(loadDispatchState(root).records)
+    .filter((record) => record.stage === "implemented");
+
+  for (const record of implementedRecords) {
+    await runCasteCommand({
+      root,
+      action: "review",
+      issueId: record.issueId,
+      tracker,
+      runtime: createCasteRuntime(config.runtime, {}, {
+        root,
+        issueId: record.issueId,
+      }),
+      now: timestamp,
+    });
+  }
+}
+
 export async function runLoopPhase(
   root = process.cwd(),
   phase: LoopPhase,
@@ -241,5 +264,6 @@ export async function runDaemonCycle(
     dispatchResult.dispatchState,
   );
 
+  await runPreMergeReviews(root, timestamp);
   autoEnqueueImplementedIssuesForMerge(root, timestamp);
 }

@@ -154,7 +154,7 @@ describe("applyMutationProposal", () => {
 
     await expect(applyMutationProposal({
       root,
-      tracker: { listReadyIssues: vi.fn(async () => []) },
+      tracker: {},
       record: createRecord(),
       proposal: createProposal(),
       now: "2026-04-24T10:00:00.000Z",

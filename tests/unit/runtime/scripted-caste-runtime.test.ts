@@ -21,8 +21,9 @@ describe("ScriptedCasteRuntime", () => {
           output: JSON.stringify({
             files_affected: ["src/index.ts"],
             estimated_complexity: "moderate",
-            decompose: false,
-            ready: true,
+            risks: [],
+            suggested_checks: [],
+            scope_notes: [],
           }),
           toolsUsed: ["read_file"],
         }),
@@ -40,7 +41,7 @@ describe("ScriptedCasteRuntime", () => {
     expect(result.caste).toBe("oracle");
     expect(result.status).toBe("succeeded");
     expect(result.toolsUsed).toEqual(["read_file"]);
-    expect(result.outputText).toContain("\"ready\":true");
+    expect(result.outputText).toContain("\"scope_notes\":[]");
     expect(result).toMatchObject({
       modelRef: "openai-codex:gpt-5.4-mini",
       provider: "openai-codex",
@@ -53,7 +54,7 @@ describe("ScriptedCasteRuntime", () => {
         },
         {
           role: "assistant",
-          content: expect.stringContaining("\"ready\":true"),
+          content: expect.stringContaining("\"scope_notes\":[]"),
         },
       ],
     });
@@ -82,7 +83,8 @@ describe("ScriptedCasteRuntime", () => {
       });
 
       expect(result.status).toBe("succeeded");
-      expect(result.outputText).toContain("\"verdict\":\"fail\"");
+      expect(result.outputText).toContain("\"verdict\":\"fail_blocking\"");
+      expect(result.outputText).toContain("blockingFindings");
       expect(result.outputText).toContain("review-observability");
     } finally {
       if (previous === undefined) {
@@ -116,7 +118,7 @@ describe("ScriptedCasteRuntime", () => {
       });
 
       expect(result.status).toBe("succeeded");
-      expect(result.outputText).toContain("\"recommendedNextAction\":\"manual_decision\"");
+      expect(result.outputText).toContain("\"proposal_type\":\"create_integration_blocker\"");
     } finally {
       if (previous === undefined) {
         delete process.env.AEGIS_SCRIPTED_JANUS_NEXT_ACTION;

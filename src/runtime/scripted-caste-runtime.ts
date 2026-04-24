@@ -123,12 +123,18 @@ function parseForcedIssueSet(value: string | undefined) {
   );
 }
 
-function parseForcedJanusAction(value: string | undefined): "requeue" | "manual_decision" | "fail" {
-  if (value === "manual_decision" || value === "fail" || value === "requeue") {
-    return value;
+function parseForcedJanusAction(
+  value: string | undefined,
+): "requeue_parent" | "create_integration_blocker" {
+  if (value === "create_integration_blocker" || value === "manual_decision" || value === "fail") {
+    return "create_integration_blocker";
   }
 
-  return "requeue";
+  if (value === "requeue_parent" || value === "requeue") {
+    return "requeue_parent";
+  }
+
+  return "requeue_parent";
 }
 
 export function createScriptedModelConfigs(
@@ -156,8 +162,9 @@ export function createDefaultScriptedCasteRuntime(
       output: JSON.stringify({
         files_affected: [],
         estimated_complexity: "moderate",
-        decompose: false,
-        ready: true,
+        risks: [],
+        suggested_checks: [],
+        scope_notes: [],
       }),
       toolsUsed: ["read_file"],
     }),
@@ -177,13 +184,14 @@ export function createDefaultScriptedCasteRuntime(
       if (forcedSentinelFailures.has("*") || forcedSentinelFailures.has(input.issueId)) {
         return {
           output: JSON.stringify({
-            verdict: "fail",
+            verdict: "fail_blocking",
             reviewSummary: "deterministic scripted review failure",
-            issuesFound: [
+            blockingFindings: [
               "add missing sentinel regression coverage",
             ],
-            followUpIssueIds: [],
-            riskAreas: ["review-observability"],
+            advisories: ["review-observability"],
+            touchedFiles: [],
+            contractChecks: ["scripted contract check"],
           }),
           toolsUsed: ["read_file"],
         };
@@ -193,9 +201,10 @@ export function createDefaultScriptedCasteRuntime(
         output: JSON.stringify({
           verdict: "pass",
           reviewSummary: "deterministic scripted review",
-          issuesFound: [],
-          followUpIssueIds: [],
-          riskAreas: [],
+          blockingFindings: [],
+          advisories: [],
+          touchedFiles: [],
+          contractChecks: ["scripted contract check"],
         }),
         toolsUsed: ["read_file"],
       };
@@ -210,7 +219,19 @@ export function createDefaultScriptedCasteRuntime(
         filesTouched: [],
         validationsRun: [],
         residualRisks: [],
-        recommendedNextAction: forcedJanusAction,
+        mutation_proposal: forcedJanusAction === "requeue_parent"
+          ? {
+              proposal_type: "requeue_parent",
+              summary: "deterministic scripted requeue",
+              scope_evidence: ["scripted merge conflict remains in parent scope"],
+            }
+          : {
+              proposal_type: "create_integration_blocker",
+              summary: "deterministic scripted integration blocker",
+              suggested_title: `Resolve integration blocker for ${issueId}`,
+              suggested_description: "Scripted Janus found integration work outside parent scope.",
+              scope_evidence: ["scripted merge conflict outside parent scope"],
+            },
       }),
       toolsUsed: ["read_file"],
     }),

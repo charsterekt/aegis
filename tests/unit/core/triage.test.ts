@@ -222,13 +222,13 @@ describe("triageReadyWork", () => {
     expect(result.skipped).toEqual([]);
   });
 
-  it("respects cooldowns on failed issues", () => {
+  it("respects cooldowns on failed_operational issues", () => {
     const result = triageReadyWork({
       readyIssues: [{ id: "ISSUE-1", title: "Retry later" }],
       dispatchState: createDispatchState({
         "ISSUE-1": {
           issueId: "ISSUE-1",
-          stage: "failed",
+          stage: "failed_operational",
           runningAgent: null,
           oracleAssessmentRef: null,
           sentinelVerdictRef: null,
@@ -254,7 +254,7 @@ describe("triageReadyWork", () => {
     ]);
   });
 
-  it("does not auto-retry failed Sentinel reviews", () => {
+  it("does not auto-retry issues already queued for merge", () => {
     const result = triageReadyWork({
       readyIssues: [
         { id: "ISSUE-1", title: "Originating issue" },
@@ -263,7 +263,7 @@ describe("triageReadyWork", () => {
       dispatchState: createDispatchState({
         "ISSUE-1": {
           issueId: "ISSUE-1",
-          stage: "failed",
+          stage: "queued_for_merge",
           runningAgent: null,
           oracleAssessmentRef: ".aegis/oracle/ISSUE-1.json",
           titanHandoffRef: ".aegis/titan/ISSUE-1.json",

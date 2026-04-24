@@ -32,7 +32,7 @@ export interface ExistingBlocker {
 
 export interface ApplyMutationProposalInput {
   root: string;
-  tracker: TrackerClient;
+  tracker: Pick<TrackerClient, "createIssue" | "linkBlockingIssue">;
   record: DispatchRecord & {
     blockedByIssueId?: string | null;
     policyArtifactRef?: string | null;

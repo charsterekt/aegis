@@ -13,6 +13,7 @@ import { createCasteRuntime } from "../runtime/create-caste-runtime.js";
 import type { CasteRuntime } from "../runtime/caste-runtime.js";
 import { BeadsTrackerClient } from "../tracker/beads-tracker.js";
 import type { AegisIssue } from "../tracker/issue-model.js";
+import type { TrackerClient } from "../tracker/tracker.js";
 import {
   findNextQueuedItem,
   loadMergeQueueState,
@@ -25,7 +26,7 @@ import {
   type MergeExecutionOutcome,
 } from "./tier-policy.js";
 
-interface TrackerLike {
+interface TrackerLike extends Pick<TrackerClient, "closeIssue" | "createIssue" | "linkBlockingIssue"> {
   getIssue(id: string, root?: string): Promise<AegisIssue>;
 }
 
@@ -254,7 +255,7 @@ function updateDispatchStage(
   root: string,
   issueId: string,
   record: DispatchRecord,
-  stage: string,
+  stage: DispatchRecord["stage"],
   now: string,
 ) {
   const state = loadDispatchState(root);
@@ -313,6 +314,7 @@ export async function runMergeNext(
   });
 
   if (decision.action === "merge") {
+    await tracker.closeIssue?.(queueItem.issueId, root);
     const mergedQueueState = updateMergeQueueItem(mergingQueueState, queueItem.queueItemId, (item) => ({
       ...item,
       status: "merged",

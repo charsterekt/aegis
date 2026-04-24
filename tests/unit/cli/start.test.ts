@@ -262,7 +262,7 @@ describe("startAegis daemon loop", () => {
       }>;
     };
 
-    expect(recovered.records["ISSUE-1"]?.stage).toBe("failed");
+    expect(recovered.records["ISSUE-1"]?.stage).toBe("failed_operational");
     expect(recovered.records["ISSUE-1"]?.runningAgent).toBeNull();
     expect(recovered.records["ISSUE-1"]?.sessionProvenanceId).toBe(String(process.pid));
 

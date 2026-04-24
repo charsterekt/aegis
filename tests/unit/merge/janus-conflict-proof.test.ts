@@ -46,7 +46,7 @@ function seedState(root: string, issueId: string) {
         oracleAssessmentRef: path.join(".aegis", "oracle", `${issueId}.json`),
         titanHandoffRef: path.join(".aegis", "titan", `${issueId}.json`),
         titanClarificationRef: null,
-        sentinelVerdictRef: null,
+        sentinelVerdictRef: path.join(".aegis", "sentinel", `${issueId}.json`),
         janusArtifactRef: null,
         failureTranscriptRef: null,
         fileScope: null,
@@ -124,7 +124,19 @@ describe("Phase K Janus conflict proof seam", () => {
             filesTouched: ["src/todo.ts"],
             validationsRun: ["npm run test -- tests/unit/todo.test.ts"],
             residualRisks: janusRuns === 1 ? [] : ["manual merge policy decision pending"],
-            recommendedNextAction: janusRuns === 1 ? "requeue" : "manual_decision",
+            mutation_proposal: janusRuns === 1
+              ? {
+                proposal_type: "requeue_parent",
+                summary: "Refresh parent candidate.",
+                scope_evidence: ["Conflict remains in parent scope."],
+              }
+              : {
+                proposal_type: "create_integration_blocker",
+                summary: "Resolve ambiguous integration conflict.",
+                suggested_title: "Resolve ambiguous integration conflict",
+                suggested_description: "Janus found integration work outside parent scope.",
+                scope_evidence: ["Conflict remains ambiguous after retry."],
+              },
           }),
         };
       },
@@ -132,6 +144,8 @@ describe("Phase K Janus conflict proof seam", () => {
 
     const tracker = {
       getIssue: vi.fn(async () => createIssue(issueId)),
+      createIssue: vi.fn(async () => "aegis-integration-blocker"),
+      linkBlockingIssue: vi.fn(async () => undefined),
     };
     const executor = {
       execute: vi.fn(async () => ({
@@ -143,7 +157,6 @@ describe("Phase K Janus conflict proof seam", () => {
     const first = await runMergeNext(root, { tracker, runtime, executor });
     const second = await runMergeNext(root, { tracker, runtime, executor });
     const third = await runMergeNext(root, { tracker, runtime, executor });
-    const fourth = await runMergeNext(root, { tracker, runtime, executor });
 
     expect(first).toMatchObject({
       tier: "T2",
@@ -157,13 +170,34 @@ describe("Phase K Janus conflict proof seam", () => {
     });
     expect(third).toMatchObject({
       tier: "T3",
-      status: "janus_requeued",
-      stage: "queued_for_merge",
+      status: "failed",
+      stage: "rework_required",
     });
+    seedState(root, issueId);
+    saveMergeQueueState(root, {
+      schemaVersion: 1,
+      items: [
+        {
+          queueItemId: `queue-${issueId}`,
+          issueId,
+          candidateBranch: `aegis/${issueId}`,
+          targetBranch: "main",
+          laborPath: `.aegis/labors/labor-${issueId}`,
+          status: "queued",
+          attempts: 3,
+          janusInvocations: 1,
+          lastTier: "T3",
+          lastError: null,
+          enqueuedAt: "2026-04-19T15:00:00.000Z",
+          updatedAt: "2026-04-19T15:00:00.000Z",
+        },
+      ],
+    });
+    const fourth = await runMergeNext(root, { tracker, runtime, executor });
     expect(fourth).toMatchObject({
       tier: "T3",
       status: "failed",
-      stage: "failed",
+      stage: "blocked_on_child",
     });
 
     const queueItem = JSON.parse(
@@ -183,7 +217,7 @@ describe("Phase K Janus conflict proof seam", () => {
       lastTier: "T3",
     });
     expect(queueItem.lastError).toContain("Deterministic merge conflict in src/todo.ts.");
-    expect(queueItem.lastError).toContain("manual_decision");
+    expect(queueItem.lastError).toContain("create_integration_blocker");
     expect(janusRuns).toBe(2);
   });
 });

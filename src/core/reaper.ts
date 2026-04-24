@@ -1,4 +1,4 @@
-import { loadDispatchState, type DispatchRecord, type DispatchState } from "./dispatch-state.js";
+import { loadDispatchState, type DispatchRecord, type DispatchStage, type DispatchState } from "./dispatch-state.js";
 import type { AgentRuntime } from "../runtime/agent-runtime.js";
 import { writePhaseLog } from "./phase-log.js";
 import {
@@ -21,7 +21,7 @@ export interface ReapResult {
   failed: string[];
 }
 
-function resolveCompletedStage(record: DispatchRecord): string {
+function resolveCompletedStage(record: DispatchRecord): DispatchStage {
   if (record.stage === "scouting") {
     return "scouted";
   }

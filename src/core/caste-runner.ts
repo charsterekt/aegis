@@ -40,7 +40,7 @@ import {
 } from "./control-plane-policy.js";
 import type { TrackerClient } from "../tracker/tracker.js";
 
-interface TrackerLike extends TrackerClient {
+interface TrackerLike extends Pick<TrackerClient, "closeIssue" | "createIssue" | "linkBlockingIssue"> {
   getIssue(id: string, root?: string): Promise<AegisIssue>;
 }
 
@@ -377,7 +377,11 @@ async function runImplement(
   record: DispatchRecord,
   now: string,
 ): Promise<CasteCommandResult> {
-  assertTitanDispatchEligibility(record);
+  if (record.stage !== "implementing") {
+    assertTitanDispatchEligibility(record);
+  } else if (!record.oracleAssessmentRef) {
+    throw new Error(`Issue ${record.issueId} requires an Oracle assessment artifact.`);
+  }
 
   let configCache: ReturnType<typeof loadConfig> | null = null;
   const resolveConfig = () => {
