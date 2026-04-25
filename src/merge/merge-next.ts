@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 
 import { loadConfig } from "../config/load-config.js";
+import { captureGitProofPair, summarizeOperationalDirtyFiles } from "../core/git-proof.js";
 import {
   loadDispatchState,
   replaceDispatchRecord,
@@ -192,6 +193,15 @@ function runGit(root: string, args: string[]) {
 
 class GitMergeExecutor implements MergeExecutor {
   async execute(root: string, item: MergeQueueItem): Promise<MergeExecutorResult> {
+    const rootWorkspace = captureGitProofPair(root).before;
+    const dirtyWorkspaceDetail = summarizeOperationalDirtyFiles(rootWorkspace);
+    if (dirtyWorkspaceDetail) {
+      return {
+        outcome: "stale_branch",
+        detail: `Project root has non-Aegis working tree changes. Merge requires a clean root: ${dirtyWorkspaceDetail}.`,
+      };
+    }
+
     const targetProbe = runGit(root, ["rev-parse", "--verify", item.targetBranch]);
     if (targetProbe.status !== 0) {
       return {

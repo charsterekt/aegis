@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
 import type {
   CasteName,
@@ -23,6 +26,8 @@ type ScriptedModelConfig = {
 };
 type ScriptedModelConfigs = Partial<Record<CasteName, ScriptedModelConfig>>;
 
+const SCRIPTED_TITAN_PROOF_FILE = "aegis-scripted-proof.txt";
+
 function isScriptedHandlers(
   value: ScriptedModelConfigs | ScriptedHandlers,
 ): value is ScriptedHandlers {
@@ -37,13 +42,13 @@ export class ScriptedCasteRuntime implements CasteRuntime {
     modelConfigsOrHandlers: ScriptedModelConfigs | ScriptedHandlers = {},
     handlers: ScriptedHandlers = {},
   ) {
-    if (isScriptedHandlers(modelConfigsOrHandlers)) {
+    if (Object.keys(handlers).length === 0 && isScriptedHandlers(modelConfigsOrHandlers)) {
       this.modelConfigs = {};
       this.handlers = modelConfigsOrHandlers;
       return;
     }
 
-    this.modelConfigs = modelConfigsOrHandlers;
+    this.modelConfigs = modelConfigsOrHandlers as ScriptedModelConfigs;
     this.handlers = handlers;
   }
 
@@ -137,6 +142,85 @@ function parseForcedJanusAction(
   return "requeue_parent";
 }
 
+function runGit(workingDirectory: string, args: string[]) {
+  return spawnSync("git", args, {
+    cwd: workingDirectory,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+}
+
+function isGitWorkingTree(workingDirectory: string) {
+  const probe = runGit(workingDirectory, ["rev-parse", "--is-inside-work-tree"]);
+  return probe.status === 0 && probe.stdout.trim() === "true";
+}
+
+function formatGitFailure(result: ReturnType<typeof runGit>) {
+  return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+}
+
+function buildDeterministicTitanResponse(input: CasteRunInput): ScriptedResponse {
+  if (!isGitWorkingTree(input.workingDirectory)) {
+    return {
+      output: JSON.stringify({
+        outcome: "success",
+        summary: "deterministic scripted implementation",
+        files_changed: [],
+        tests_and_checks_run: [],
+        known_risks: [],
+        follow_up_work: [],
+        learnings_written_to_mnemosyne: [],
+      }),
+      toolsUsed: ["write_file"],
+    };
+  }
+
+  const proofPath = path.join(input.workingDirectory, SCRIPTED_TITAN_PROOF_FILE);
+  const existingProof = existsSync(proofPath)
+    ? readFileSync(proofPath, "utf8")
+    : "";
+  const nextSequence = (existingProof.match(/^sequence:/gm) ?? []).length + 1;
+  writeFileSync(
+    proofPath,
+    `scripted titan proof for ${input.issueId}\nsequence:${nextSequence}\n`,
+    "utf8",
+  );
+
+  const add = runGit(input.workingDirectory, ["add", SCRIPTED_TITAN_PROOF_FILE]);
+  if (add.status !== 0) {
+    return {
+      output: "{}",
+      error: `Failed to stage scripted Titan proof. ${formatGitFailure(add)}`,
+      toolsUsed: ["write_file"],
+    };
+  }
+
+  const commit = runGit(
+    input.workingDirectory,
+    ["commit", "-m", `chore(${input.issueId}): scripted titan proof`],
+  );
+  if (commit.status !== 0) {
+    return {
+      output: "{}",
+      error: `Failed to commit scripted Titan proof. ${formatGitFailure(commit)}`,
+      toolsUsed: ["write_file"],
+    };
+  }
+
+  return {
+    output: JSON.stringify({
+      outcome: "success",
+      summary: "deterministic scripted implementation",
+      files_changed: [SCRIPTED_TITAN_PROOF_FILE],
+      tests_and_checks_run: ["git rev-parse HEAD"],
+      known_risks: [],
+      follow_up_work: [],
+      learnings_written_to_mnemosyne: [],
+    }),
+    toolsUsed: ["write_file", "shell"],
+  };
+}
+
 export function createScriptedModelConfigs(
   configuredModels: Record<CasteName, string>,
   thinkingLevels: Record<CasteName, AegisThinkingLevel>,
@@ -168,18 +252,7 @@ export function createDefaultScriptedCasteRuntime(
       }),
       toolsUsed: ["read_file"],
     }),
-    titan: () => ({
-      output: JSON.stringify({
-        outcome: "success",
-        summary: "deterministic scripted implementation",
-        files_changed: [],
-        tests_and_checks_run: [],
-        known_risks: [],
-        follow_up_work: [],
-        learnings_written_to_mnemosyne: [],
-      }),
-      toolsUsed: ["write_file"],
-    }),
+    titan: (input) => buildDeterministicTitanResponse(input),
     sentinel: (input) => {
       if (forcedSentinelFailures.has("*") || forcedSentinelFailures.has(input.issueId)) {
         return {

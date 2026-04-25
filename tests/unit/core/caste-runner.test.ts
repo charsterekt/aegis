@@ -48,6 +48,16 @@ function runGit(root: string, args: string[]) {
   });
 }
 
+function initializeGitRepository(root: string) {
+  writeFileSync(path.join(root, "README.md"), "# baseline\n", "utf8");
+  runGit(root, ["init"]);
+  runGit(root, ["config", "user.email", "test@aegis.local"]);
+  runGit(root, ["config", "user.name", "Aegis Test"]);
+  runGit(root, ["add", "--all"]);
+  runGit(root, ["commit", "-m", "baseline"]);
+  runGit(root, ["branch", "-M", "main"]);
+}
+
 function createTitanSessionResult(
   outputText: string,
   sessionId: string,
@@ -108,6 +118,26 @@ function createSentinelFailOutput() {
     touchedFiles: ["src/index.ts"],
     contractChecks: ["issue contract"],
   });
+}
+
+function writeTitanArtifact(root: string, issueId: string, laborPath = `.aegis/labors/${issueId}`) {
+  mkdirSync(path.join(root, ".aegis", "titan"), { recursive: true });
+  writeFileSync(
+    path.join(root, ".aegis", "titan", `${issueId}.json`),
+    `${JSON.stringify({
+      outcome: "success",
+      summary: "done",
+      files_changed: ["src/index.ts"],
+      tests_and_checks_run: ["npm test"],
+      known_risks: [],
+      follow_up_work: [],
+      learnings_written_to_mnemosyne: [],
+      labor_path: laborPath,
+      candidate_branch: `aegis/${issueId}`,
+      base_branch: "main",
+    }, null, 2)}\n`,
+    "utf8",
+  );
 }
 
 describe("runCasteCommand", () => {
@@ -606,6 +636,8 @@ describe("runCasteCommand", () => {
       runtime: new ScriptedCasteRuntime({
         titan: (input) => {
           writeFileSync(path.join(input.workingDirectory, "phase-i-proof.txt"), "proof\n", "utf8");
+          runGit(input.workingDirectory, ["add", "phase-i-proof.txt"]);
+          runGit(input.workingDirectory, ["commit", "-m", "phase i"]);
           return {
             output: JSON.stringify({
               outcome: "success",
@@ -647,6 +679,191 @@ describe("runCasteCommand", () => {
     expect(artifact.git_proof.status_after_ref).toBeTruthy();
     expect(artifact.git_proof.changed_files_manifest_ref).toBeTruthy();
     expect(artifact.git_proof.diff_ref).toBeTruthy();
+  });
+
+  it("tells Titan to stage and commit labor changes before emitting the artifact", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-commit-contract": {
+          issueId: "aegis-commit-contract",
+          stage: "scouted",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-commit-contract.json"),
+          sentinelVerdictRef: null,
+          fileScope: null,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    initializeGitRepository(root);
+
+    let prompt = "";
+    await runCasteCommand({
+      root,
+      action: "implement",
+      issueId: "aegis-commit-contract",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-commit-contract")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        titan: (input) => {
+          prompt = input.prompt;
+          writeFileSync(path.join(input.workingDirectory, "phase-i-proof.txt"), "proof\n", "utf8");
+          runGit(input.workingDirectory, ["add", "phase-i-proof.txt"]);
+          runGit(input.workingDirectory, ["commit", "-m", "phase i"]);
+          return {
+            output: JSON.stringify({
+              outcome: "success",
+              summary: "implemented in worktree",
+              files_changed: ["phase-i-proof.txt"],
+              tests_and_checks_run: [],
+              known_risks: [],
+              follow_up_work: [],
+              learnings_written_to_mnemosyne: [],
+            }),
+            toolsUsed: ["write_file"],
+          };
+        },
+      }),
+      resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => "scratchpad",
+    });
+
+    expect(prompt).toContain("Stage and commit all intended changes in the labor worktree before you call");
+    expect(prompt).toContain("Do not leave required implementation changes uncommitted.");
+  });
+
+  it("rejects Titan success when the candidate branch head does not advance", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-235": {
+          issueId: "aegis-235",
+          stage: "scouted",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-235.json"),
+          sentinelVerdictRef: null,
+          fileScope: null,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    initializeGitRepository(root);
+
+    await expect(runCasteCommand({
+      root,
+      action: "implement",
+      issueId: "aegis-235",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-235")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        titan: (input) => {
+          writeFileSync(path.join(input.workingDirectory, "phase-i-proof.txt"), "proof\n", "utf8");
+          return {
+            output: JSON.stringify({
+              outcome: "success",
+              summary: "left changes uncommitted",
+              files_changed: ["phase-i-proof.txt"],
+              tests_and_checks_run: [],
+              known_risks: [],
+              follow_up_work: [],
+              learnings_written_to_mnemosyne: [],
+            }),
+            toolsUsed: ["write_file"],
+          };
+        },
+      }),
+      resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => "scratchpad",
+    })).rejects.toThrow("did not advance candidate branch");
+
+    const state = JSON.parse(
+      readFileSync(path.join(root, ".aegis", "dispatch-state.json"), "utf8"),
+    ) as {
+      records: Record<string, { stage: string }>;
+    };
+
+    expect(state.records["aegis-235"]?.stage).toBe("scouted");
+  });
+
+  it("rejects Titan success when implementation dirties the project root", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-236": {
+          issueId: "aegis-236",
+          stage: "scouted",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-236.json"),
+          sentinelVerdictRef: null,
+          fileScope: null,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    initializeGitRepository(root);
+
+    await expect(runCasteCommand({
+      root,
+      action: "implement",
+      issueId: "aegis-236",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-236")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        titan: (input) => {
+          writeFileSync(path.join(input.workingDirectory, "phase-i-proof.txt"), "proof\n", "utf8");
+          runGit(input.workingDirectory, ["add", "phase-i-proof.txt"]);
+          runGit(input.workingDirectory, ["commit", "-m", "phase i"]);
+          writeFileSync(path.join(root, "root-leak.txt"), "leak\n", "utf8");
+          return {
+            output: JSON.stringify({
+              outcome: "success",
+              summary: "committed work but leaked into root",
+              files_changed: ["phase-i-proof.txt"],
+              tests_and_checks_run: [],
+              known_risks: [],
+              follow_up_work: [],
+              learnings_written_to_mnemosyne: [],
+            }),
+            toolsUsed: ["write_file"],
+          };
+        },
+      }),
+      resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => "scratchpad",
+    })).rejects.toThrow("dirtied the project root");
+
+    const state = JSON.parse(
+      readFileSync(path.join(root, ".aegis", "dispatch-state.json"), "utf8"),
+    ) as {
+      records: Record<string, { stage: string }>;
+    };
+
+    expect(state.records["aegis-236"]?.stage).toBe("scouted");
   });
 
   it("clears review-stage refs when implement reruns from same-parent rework", async () => {
@@ -828,6 +1045,7 @@ describe("runCasteCommand", () => {
 
   it("queues the candidate after a successful pre-merge Sentinel review without closing the tracker issue", async () => {
     const root = createTempRoot();
+    writeTitanArtifact(root, "aegis-999");
     saveDispatchState(root, {
       schemaVersion: 1,
       records: {
@@ -876,6 +1094,7 @@ describe("runCasteCommand", () => {
 
   it("sends Sentinel blocking findings to same-parent rework without creating issues", async () => {
     const root = createTempRoot();
+    writeTitanArtifact(root, "aegis-1001");
     saveDispatchState(root, {
       schemaVersion: 1,
       records: {
@@ -951,6 +1170,7 @@ describe("runCasteCommand", () => {
 
   it("does not create Sentinel follow-up issues on review rerun", async () => {
     const root = createTempRoot();
+    writeTitanArtifact(root, "aegis-1002");
     mkdirSync(path.join(root, ".aegis", "sentinel"), { recursive: true });
     writeFileSync(
       path.join(root, ".aegis", "sentinel", "aegis-1002.json"),
@@ -1160,6 +1380,7 @@ describe("runCasteCommand", () => {
 
   it("does not close tracker issue during passing pre-merge review", async () => {
     const root = createTempRoot();
+    writeTitanArtifact(root, "aegis-1000");
     saveDispatchState(root, {
       schemaVersion: 1,
       records: {
@@ -1213,5 +1434,73 @@ describe("runCasteCommand", () => {
     expect(state.records["aegis-1000"]).toMatchObject({
       stage: "queued_for_merge",
     });
+  });
+
+  it("runs Sentinel review in the candidate labor path instead of the project root", async () => {
+    const root = createTempRoot();
+    const laborPath = path.join(root, "scratchpad", "aegis-1003");
+    mkdirSync(path.join(root, ".aegis", "titan"), { recursive: true });
+    mkdirSync(laborPath, { recursive: true });
+    writeFileSync(
+      path.join(root, ".aegis", "titan", "aegis-1003.json"),
+      `${JSON.stringify({
+        outcome: "success",
+        summary: "done",
+        files_changed: ["src/index.ts"],
+        tests_and_checks_run: ["npm test"],
+        known_risks: [],
+        follow_up_work: [],
+        learnings_written_to_mnemosyne: [],
+        labor_path: "scratchpad/aegis-1003",
+        candidate_branch: "aegis/aegis-1003",
+        base_branch: "main",
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-1003": {
+          issueId: "aegis-1003",
+          stage: "implemented",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-1003.json"),
+          titanHandoffRef: path.join(".aegis", "titan", "aegis-1003.json"),
+          sentinelVerdictRef: null,
+          fileScope: null,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    let reviewWorkingDirectory: string | undefined;
+    const result = await runCasteCommand({
+      root,
+      action: "review",
+      issueId: "aegis-1003",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-1003")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        sentinel: (input) => {
+          reviewWorkingDirectory = input.workingDirectory;
+          return {
+            output: createSentinelPassOutput(),
+          };
+        },
+      }),
+    });
+
+    expect(result).toMatchObject({
+      action: "review",
+      issueId: "aegis-1003",
+      stage: "queued_for_merge",
+    });
+    expect(reviewWorkingDirectory).toBe(laborPath);
   });
 });

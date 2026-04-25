@@ -6,6 +6,7 @@ type GitProofFamily = "titan" | "janus";
 
 interface GitSnapshot {
   branch: string | null;
+  headCommit: string | null;
   statusLines: string[];
   changedFiles: string[];
   diff: string;
@@ -31,6 +32,27 @@ function isGitWorkingTree(workingDirectory: string) {
   return probe.status === 0 && probe.stdout.trim() === "true";
 }
 
+function normalizeStatusPath(candidate: string) {
+  return candidate.replace(/\\/g, "/");
+}
+
+function extractStatusPath(line: string) {
+  const rawPath = line.length > 3 ? line.slice(3).trim() : "";
+  if (rawPath.length === 0) {
+    return null;
+  }
+
+  return normalizeStatusPath(
+    rawPath.includes(" -> ")
+      ? rawPath.split(" -> ").at(-1) ?? rawPath
+      : rawPath,
+  );
+}
+
+function isOperationalPath(candidate: string) {
+  return candidate !== ".aegis" && !candidate.startsWith(".aegis/");
+}
+
 function parseChangedFiles(statusLines: string[]) {
   const files = new Set<string>();
 
@@ -39,14 +61,10 @@ function parseChangedFiles(statusLines: string[]) {
       continue;
     }
 
-    const rawPath = line.length > 3 ? line.slice(3).trim() : "";
-    if (rawPath.length === 0) {
+    const normalizedPath = extractStatusPath(line);
+    if (!normalizedPath) {
       continue;
     }
-
-    const normalizedPath = rawPath.includes(" -> ")
-      ? rawPath.split(" -> ").at(-1) ?? rawPath
-      : rawPath;
     files.add(normalizedPath);
   }
 
@@ -58,6 +76,7 @@ function captureGitSnapshot(workingDirectory: string): GitSnapshot | null {
     return null;
   }
 
+  const headCommit = runGit(workingDirectory, ["rev-parse", "HEAD"]);
   const branch = runGit(workingDirectory, ["rev-parse", "--abbrev-ref", "HEAD"]);
   const status = runGit(workingDirectory, ["status", "--porcelain", "--branch", "--untracked-files=all"]);
   const diff = runGit(workingDirectory, ["diff", "--no-color"]);
@@ -77,6 +96,7 @@ function captureGitSnapshot(workingDirectory: string): GitSnapshot | null {
 
   return {
     branch: branch.status === 0 ? branch.stdout.trim() : null,
+    headCommit: headCommit.status === 0 ? headCommit.stdout.trim() : null,
     statusLines,
     changedFiles: parseChangedFiles(statusLines),
     diff: diffChunks.join("\n\n"),
@@ -103,6 +123,86 @@ export function completeGitProofPair(
   };
 }
 
+export function listOperationalDirtyFiles(snapshot: GitSnapshot | null) {
+  if (!snapshot) {
+    return [] as string[];
+  }
+
+  return snapshot.changedFiles.filter((candidate) => isOperationalPath(candidate));
+}
+
+function listOperationalStatusLines(snapshot: GitSnapshot | null) {
+  if (!snapshot) {
+    return [] as string[];
+  }
+
+  return snapshot.statusLines
+    .filter((line) => {
+      if (line.startsWith("##")) {
+        return false;
+      }
+
+      const statusPath = extractStatusPath(line);
+      return statusPath !== null && isOperationalPath(statusPath);
+    })
+    .sort();
+}
+
+function formatFileList(files: string[]) {
+  if (files.length <= 5) {
+    return files.join(", ");
+  }
+
+  return `${files.slice(0, 5).join(", ")} (+${files.length - 5} more)`;
+}
+
+export function summarizeOperationalDirtyFiles(snapshot: GitSnapshot | null) {
+  const files = listOperationalDirtyFiles(snapshot);
+  return files.length > 0 ? formatFileList(files) : null;
+}
+
+export function summarizeOperationalStatusDrift(
+  proofPair: { before: GitSnapshot | null; after: GitSnapshot | null },
+) {
+  const beforeLines = new Set(listOperationalStatusLines(proofPair.before));
+  const afterLines = new Set(listOperationalStatusLines(proofPair.after));
+  const added = [...afterLines].filter((line) => !beforeLines.has(line));
+  const removed = [...beforeLines].filter((line) => !afterLines.has(line));
+
+  if (added.length === 0 && removed.length === 0) {
+    return null;
+  }
+
+  const parts: string[] = [];
+  if (added.length > 0) {
+    parts.push(`added ${formatFileList(added)}`);
+  }
+  if (removed.length > 0) {
+    parts.push(`removed ${formatFileList(removed)}`);
+  }
+
+  return parts.join("; ");
+}
+
+export function hasAdvancedGitHead(
+  proofPair: { before: GitSnapshot | null; after: GitSnapshot | null },
+  expectedBranch?: string,
+) {
+  if (!proofPair.before || !proofPair.after) {
+    return false;
+  }
+
+  if (!proofPair.before.headCommit || !proofPair.after.headCommit) {
+    return false;
+  }
+
+  if (expectedBranch && proofPair.after.branch !== expectedBranch) {
+    return false;
+  }
+
+  return proofPair.before.headCommit !== proofPair.after.headCommit;
+}
+
 export function persistGitProofArtifacts(
   root: string,
   family: GitProofFamily,
@@ -122,6 +222,7 @@ export function persistGitProofArtifacts(
         issueId,
         workingDirectory,
         branch: before.branch,
+        headCommit: before.headCommit,
         statusLines: before.statusLines,
       },
     })
@@ -136,6 +237,7 @@ export function persistGitProofArtifacts(
         issueId,
         workingDirectory,
         branch: after.branch,
+        headCommit: after.headCommit,
         statusLines: after.statusLines,
       },
     })

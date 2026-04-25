@@ -1,9 +1,36 @@
-import { describe, expect, it } from "vitest";
+import path from "node:path";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   ScriptedCasteRuntime,
   createDefaultScriptedCasteRuntime,
 } from "../../../src/runtime/scripted-caste-runtime.js";
+
+const tempRoots: string[] = [];
+
+function createTempRoot() {
+  const root = mkdtempSync(path.join(tmpdir(), "aegis-scripted-runtime-"));
+  tempRoots.push(root);
+  return root;
+}
+
+function runGit(root: string, args: string[]) {
+  return execFileSync("git", args, {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+}
+
+afterEach(() => {
+  for (const root of tempRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 describe("ScriptedCasteRuntime", () => {
   it("returns deterministic output and tool usage for the requested caste", async () => {
@@ -126,5 +153,32 @@ describe("ScriptedCasteRuntime", () => {
         process.env.AEGIS_SCRIPTED_JANUS_NEXT_ACTION = previous;
       }
     }
+  });
+
+  it("creates a durable commit for default Titan runs inside git worktrees", async () => {
+    const root = createTempRoot();
+    writeFileSync(path.join(root, "README.md"), "baseline\n", "utf8");
+    runGit(root, ["init"]);
+    runGit(root, ["config", "user.email", "test@aegis.local"]);
+    runGit(root, ["config", "user.name", "Aegis Test"]);
+    runGit(root, ["add", "--all"]);
+    runGit(root, ["commit", "-m", "baseline"]);
+    runGit(root, ["branch", "-M", "main"]);
+    runGit(root, ["checkout", "-b", "aegis/aegis-123"]);
+    const baselineHead = runGit(root, ["rev-parse", "HEAD"]).trim();
+
+    const runtime = createDefaultScriptedCasteRuntime();
+    const result = await runtime.run({
+      caste: "titan",
+      issueId: "aegis-123",
+      root,
+      workingDirectory: root,
+      prompt: "implement prompt",
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.outputText).toContain("aegis-scripted-proof.txt");
+    expect(readFileSync(path.join(root, "aegis-scripted-proof.txt"), "utf8")).toContain("aegis-123");
+    expect(runGit(root, ["rev-parse", "HEAD"]).trim()).not.toBe(baselineHead);
   });
 });

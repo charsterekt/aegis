@@ -1,0 +1,127 @@
+import path from "node:path";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { initProject } from "../../../src/config/init-project.js";
+
+const tempRoots: string[] = [];
+
+function createTempRoot() {
+  const root = mkdtempSync(path.join(tmpdir(), "aegis-loop-runner-"));
+  tempRoots.push(root);
+  return root;
+}
+
+async function sleep(milliseconds: number) {
+  await new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+}
+
+afterEach(() => {
+  vi.resetModules();
+  vi.restoreAllMocks();
+
+  for (const root of tempRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+describe("runDaemonCycle", () => {
+  it("reaps a completed Oracle session into scouted with an artifact ref", async () => {
+    const root = createTempRoot();
+    initProject(root);
+    writeFileSync(
+      path.join(root, ".aegis", "config.json"),
+      `${JSON.stringify({
+        runtime: "scripted",
+        models: {
+          oracle: "openai-codex:gpt-5.4-mini",
+          titan: "openai-codex:gpt-5.4-mini",
+          sentinel: "openai-codex:gpt-5.4-mini",
+          janus: "openai-codex:gpt-5.4-mini",
+        },
+        thinking: {
+          oracle: "medium",
+          titan: "medium",
+          sentinel: "medium",
+          janus: "medium",
+        },
+        concurrency: {
+          max_agents: 1,
+          max_oracles: 1,
+          max_titans: 1,
+          max_sentinels: 1,
+          max_janus: 1,
+        },
+        thresholds: {
+          poll_interval_seconds: 5,
+          stuck_warning_seconds: 240,
+          stuck_kill_seconds: 600,
+          allow_complex_auto_dispatch: false,
+          scope_overlap_threshold: 0,
+          janus_retry_threshold: 2,
+        },
+        janus: {
+          enabled: true,
+          max_invocations_per_issue: 1,
+        },
+        labor: {
+          base_path: ".aegis/labors",
+        },
+        git: {
+          base_branch: "main",
+        },
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
+      BeadsTrackerClient: class {
+        async listReadyIssues() {
+          return [{ id: "ISSUE-1", title: "Example" }];
+        }
+
+        async getIssue() {
+          return {
+            id: "ISSUE-1",
+            title: "Example",
+            description: "Desc",
+            issueClass: "primary",
+            status: "open",
+            priority: 1,
+            blockers: [],
+            parentId: null,
+            childIds: [],
+            labels: [],
+          };
+        }
+      },
+    }));
+
+    const { runDaemonCycle } = await import("../../../src/core/loop-runner.js");
+
+    await runDaemonCycle(root);
+    await sleep(50);
+    await runDaemonCycle(root);
+
+    const state = JSON.parse(
+      readFileSync(path.join(root, ".aegis", "dispatch-state.json"), "utf8"),
+    ) as {
+      records: Record<string, { stage: string; oracleAssessmentRef: string | null; runningAgent: unknown }>;
+    };
+
+    expect(state.records["ISSUE-1"]).toMatchObject({
+      stage: "scouted",
+      runningAgent: null,
+    });
+    expect(state.records["ISSUE-1"]?.oracleAssessmentRef).toBeTruthy();
+  });
+});

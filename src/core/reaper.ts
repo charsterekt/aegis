@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
+
 import { loadDispatchState, type DispatchRecord, type DispatchStage, type DispatchState } from "./dispatch-state.js";
 import type { AgentRuntime } from "../runtime/agent-runtime.js";
 import { writePhaseLog } from "./phase-log.js";
@@ -74,6 +77,32 @@ function resolveLatestRecord(root: string, record: DispatchRecord): DispatchReco
   return latestRecord;
 }
 
+function resolveDurableArtifactRef(
+  root: string,
+  family: "oracle" | "titan" | "sentinel" | "janus",
+  issueId: string,
+) {
+  const relativePath = path.join(".aegis", family, `${issueId}.json`);
+  return existsSync(path.join(root, relativePath)) ? relativePath : null;
+}
+
+function hydrateDurableArtifactRefs(root: string, record: DispatchRecord): DispatchRecord {
+  const oracleAssessmentRef = record.oracleAssessmentRef
+    ?? resolveDurableArtifactRef(root, "oracle", record.issueId);
+  const titanArtifactRef = resolveDurableArtifactRef(root, "titan", record.issueId);
+  const sentinelArtifactRef = resolveDurableArtifactRef(root, "sentinel", record.issueId);
+
+  return {
+    ...record,
+    oracleAssessmentRef,
+    titanHandoffRef: record.titanHandoffRef ?? titanArtifactRef,
+    sentinelVerdictRef: record.sentinelVerdictRef ?? sentinelArtifactRef,
+    reviewFeedbackRef: record.reviewFeedbackRef ?? sentinelArtifactRef,
+    janusArtifactRef: record.janusArtifactRef
+      ?? resolveDurableArtifactRef(root, "janus", record.issueId),
+  };
+}
+
 export async function reapFinishedWork(input: ReapInput): Promise<ReapResult> {
   const timestamp = input.now ?? new Date().toISOString();
   const latestState = loadDispatchState(input.root);
@@ -99,7 +128,10 @@ export async function reapFinishedWork(input: ReapInput): Promise<ReapResult> {
     }
 
     if (snapshot.status === "succeeded") {
-      const completedRecord = toCompletedRecord(resolveLatestRecord(input.root, record), timestamp);
+      const completedRecord = hydrateDurableArtifactRefs(
+        input.root,
+        toCompletedRecord(resolveLatestRecord(input.root, record), timestamp),
+      );
       const invariantError = validateDispatchRecordStage(completedRecord);
       if (invariantError) {
         records[issueId] = toFailedRecord(completedRecord, timestamp);

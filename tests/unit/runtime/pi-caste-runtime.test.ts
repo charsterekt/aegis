@@ -100,6 +100,18 @@ const CONTRACT_FIXTURES: ContractFixture[] = [
 
 const mockedAgent = vi.hoisted(() => {
   const listeners: MockListener[] = [];
+  const createResourceLoader = (options: Record<string, unknown>) => ({
+    options,
+    reload: vi.fn(async () => undefined),
+    getExtensions: vi.fn(() => ({ extensions: [], errors: [], runtime: {} })),
+    getSkills: vi.fn(() => ({ skills: [], diagnostics: [] })),
+    getPrompts: vi.fn(() => ({ prompts: [], diagnostics: [] })),
+    getThemes: vi.fn(() => ({ themes: [], diagnostics: [] })),
+    getAgentsFiles: vi.fn(() => ({ agentsFiles: [] })),
+    getSystemPrompt: vi.fn(() => undefined),
+    getAppendSystemPrompt: vi.fn(() => []),
+    extendResources: vi.fn(),
+  });
   const session = {
     sessionId: "pi-session-1",
     agent: {
@@ -145,6 +157,9 @@ const mockedAgent = vi.hoisted(() => {
     createFindTool: vi.fn(() => ({ name: "find" })),
     createLsTool: vi.fn(() => ({ name: "ls" })),
     createGrepTool: vi.fn(() => ({ name: "grep" })),
+    DefaultResourceLoader: vi.fn(function DefaultResourceLoader(options: Record<string, unknown>) {
+      return createResourceLoader(options);
+    }),
   };
 });
 
@@ -155,6 +170,7 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   createFindTool: mockedAgent.createFindTool,
   createLsTool: mockedAgent.createLsTool,
   createGrepTool: mockedAgent.createGrepTool,
+  DefaultResourceLoader: mockedAgent.DefaultResourceLoader,
 }));
 
 function configureToolSuccess(fixture: ContractFixture) {
@@ -259,6 +275,7 @@ describe("PiCasteRuntime", () => {
     mockedAgent.createFindTool.mockClear();
     mockedAgent.createLsTool.mockClear();
     mockedAgent.createGrepTool.mockClear();
+    mockedAgent.DefaultResourceLoader.mockClear();
     mockedAgent.session.subscribe.mockClear();
     mockedAgent.session.prompt.mockReset();
     mockedAgent.session.setActiveToolsByName.mockClear();
@@ -661,6 +678,41 @@ describe("PiCasteRuntime", () => {
     expect(mockedAgent.createGrepTool).toHaveBeenCalledWith(
       "repo/janus",
     );
+  });
+
+  it("isolates Pi sessions from discovered extensions", async () => {
+    const fixture = CONTRACT_FIXTURES.find((candidate) => candidate.caste === "titan");
+    if (!fixture) {
+      throw new Error("Missing titan fixture.");
+    }
+
+    configureToolSuccess(fixture);
+    const runtime = createSingleCasteRuntime("titan");
+
+    await runtime.run({
+      caste: "titan",
+      issueId: "aegis-isolated-loader",
+      root: "repo",
+      workingDirectory: "repo/titan",
+      prompt: "Titan isolated loader",
+    });
+
+    expect(mockedAgent.DefaultResourceLoader).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: "repo/titan",
+        noExtensions: true,
+      }),
+    );
+
+    const resourceLoader = mockedAgent.DefaultResourceLoader.mock.results.at(-1)?.value as {
+      reload: ReturnType<typeof vi.fn>;
+    } | undefined;
+    expect(resourceLoader?.reload).toHaveBeenCalledTimes(1);
+
+    const createSessionCall = mockedAgent.createAgentSession.mock.calls.at(-1) as [
+      { resourceLoader?: unknown },
+    ] | undefined;
+    expect(createSessionCall?.[0].resourceLoader).toBe(resourceLoader);
   });
 
   it("does not detach hidden shell commands on Windows", () => {

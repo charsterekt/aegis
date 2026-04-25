@@ -12,6 +12,10 @@ import { createCasteRuntime } from "../runtime/create-caste-runtime.js";
 import { writePhaseLog } from "./phase-log.js";
 import { autoEnqueueImplementedIssuesForMerge } from "../merge/auto-enqueue.js";
 import { runCasteCommand } from "./caste-runner.js";
+import {
+  calculateFailureCooldown,
+  resolveFailureWindowStartMs,
+} from "./failure-policy.js";
 
 export type LoopPhase = "poll" | "dispatch" | "monitor" | "reap";
 
@@ -30,7 +34,14 @@ export interface LoopPhaseResult {
 export interface RunLoopPhaseOptions {
   runtime?: AgentRuntime;
   sessionProvenanceId?: string;
+  launchPreMergeReview?: (input: {
+    root: string;
+    issueId: string;
+    timestamp: string;
+  }) => Promise<void>;
 }
+
+const ACTIVE_PRE_MERGE_REVIEWS = new Set<string>();
 
 function createDefaultRuntime(root: string) {
   const config = loadConfig(root);
@@ -142,24 +153,123 @@ async function runReapPipeline(
   return reapResult;
 }
 
-async function runPreMergeReviews(root: string, timestamp: string) {
-  const config = loadConfig(root);
-  const tracker = new BeadsTrackerClient();
-  const implementedRecords = Object.values(loadDispatchState(root).records)
-    .filter((record) => record.stage === "implemented");
+function markRecordReviewing(root: string, issueId: string, timestamp: string) {
+  const dispatchState = loadDispatchState(root);
+  const record = dispatchState.records[issueId];
+  if (!record || record.stage !== "implemented") {
+    return false;
+  }
 
-  for (const record of implementedRecords) {
+  saveDispatchState(root, {
+    schemaVersion: dispatchState.schemaVersion,
+    records: {
+      ...dispatchState.records,
+      [issueId]: {
+        ...record,
+        stage: "reviewing",
+        updatedAt: timestamp,
+      },
+    },
+  });
+
+  return true;
+}
+
+function markReviewFailedOperational(root: string, issueId: string, timestamp: string, detail: string) {
+  const dispatchState = loadDispatchState(root);
+  const record = dispatchState.records[issueId];
+  if (!record) {
+    return;
+  }
+
+  saveDispatchState(root, {
+    schemaVersion: dispatchState.schemaVersion,
+    records: {
+      ...dispatchState.records,
+      [issueId]: {
+        ...record,
+        stage: "failed_operational",
+        runningAgent: null,
+        failureCount: record.failureCount + 1,
+        consecutiveFailures: record.consecutiveFailures + 1,
+        failureWindowStartMs: record.failureWindowStartMs
+          ?? resolveFailureWindowStartMs(timestamp),
+        cooldownUntil: calculateFailureCooldown(timestamp),
+        updatedAt: timestamp,
+      },
+    },
+  });
+
+  writePhaseLog(root, {
+    timestamp,
+    phase: "dispatch",
+    issueId,
+    action: "sentinel_review_completed",
+    outcome: "failed",
+    detail,
+  });
+}
+
+function createPreMergeReviewLauncher(
+  root: string,
+  launchPreMergeReview?: RunLoopPhaseOptions["launchPreMergeReview"],
+) {
+  if (launchPreMergeReview) {
+    return launchPreMergeReview;
+  }
+
+  return async ({ issueId, timestamp }: {
+    root: string;
+    issueId: string;
+    timestamp: string;
+  }) => {
+    const config = loadConfig(root);
+    const tracker = new BeadsTrackerClient();
     await runCasteCommand({
       root,
       action: "review",
-      issueId: record.issueId,
+      issueId,
       tracker,
       runtime: createCasteRuntime(config.runtime, {}, {
         root,
-        issueId: record.issueId,
+        issueId,
       }),
       now: timestamp,
     });
+  };
+}
+
+function runPreMergeReviews(
+  root: string,
+  timestamp: string,
+  launchPreMergeReview?: RunLoopPhaseOptions["launchPreMergeReview"],
+) {
+  const implementedRecords = Object.values(loadDispatchState(root).records)
+    .filter((record) => record.stage === "implemented");
+  const launchReview = createPreMergeReviewLauncher(root, launchPreMergeReview);
+
+  for (const record of implementedRecords) {
+    if (ACTIVE_PRE_MERGE_REVIEWS.has(record.issueId)) {
+      continue;
+    }
+    if (!markRecordReviewing(root, record.issueId, timestamp)) {
+      continue;
+    }
+
+    ACTIVE_PRE_MERGE_REVIEWS.add(record.issueId);
+    void Promise.resolve()
+      .then(() => launchReview({
+        root,
+        issueId: record.issueId,
+        timestamp,
+      }))
+      .catch((error) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        markReviewFailedOperational(root, record.issueId, timestamp, detail);
+      })
+      .finally(() => {
+        ACTIVE_PRE_MERGE_REVIEWS.delete(record.issueId);
+      });
   }
 }
 
@@ -264,6 +374,6 @@ export async function runDaemonCycle(
     dispatchResult.dispatchState,
   );
 
-  await runPreMergeReviews(root, timestamp);
+  runPreMergeReviews(root, timestamp, options.launchPreMergeReview);
   autoEnqueueImplementedIssuesForMerge(root, timestamp);
 }

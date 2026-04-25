@@ -21,7 +21,9 @@ import { loadConfig } from "../config/load-config.js";
 import {
   captureGitProofPair,
   completeGitProofPair,
+  hasAdvancedGitHead,
   persistGitProofArtifacts,
+  summarizeOperationalStatusDrift,
 } from "./git-proof.js";
 import {
   enqueueMergeCandidate,
@@ -136,6 +138,9 @@ function buildTitanPrompt(issue: AegisIssue, laborPath: string) {
     `Blockers: ${blockers}`,
     `Labels: ${labels}`,
     `Working directory: ${laborPath}`,
+    "Stage and commit all intended changes in the labor worktree before you call the final artifact tool so the candidate branch head advances.",
+    "Use git add/git commit explicitly when you make required implementation changes.",
+    "Do not leave required implementation changes uncommitted.",
     `Call tool '${TITAN_EMIT_ARTIFACT_TOOL_NAME}' exactly once as final step after all file edits and checks complete.`,
     "If required project files do not exist, create minimal versions that satisfy the issue contract.",
     "Treat ordinary naming/tooling ambiguity as solvable: choose reasonable defaults and proceed.",
@@ -259,6 +264,36 @@ function clearDownstreamArtifactRefs(record: DispatchRecord) {
 function saveRecord(root: string, issueId: string, record: DispatchRecord) {
   const state = loadDispatchState(root);
   saveDispatchState(root, replaceDispatchRecord(state, issueId, record));
+}
+
+function resolveCandidateWorkingDirectory(root: string, laborPath: string) {
+  return path.isAbsolute(laborPath)
+    ? laborPath
+    : path.join(path.resolve(root), laborPath);
+}
+
+function validateTitanSessionOutcome(input: {
+  issueId: string;
+  artifact: ReturnType<typeof parseTitanArtifact>;
+  candidateBranch: string;
+  laborProofPair: { before: ReturnType<typeof captureGitProofPair>["before"]; after: ReturnType<typeof captureGitProofPair>["after"] };
+  rootProofPair: { before: ReturnType<typeof captureGitProofPair>["before"]; after: ReturnType<typeof captureGitProofPair>["after"] };
+}) {
+  const rootDrift = summarizeOperationalStatusDrift(input.rootProofPair);
+  if (rootDrift) {
+    return `Titan implementation for ${input.issueId} dirtied the project root outside .aegis: ${rootDrift}.`;
+  }
+
+  const hasDurableGitProof = input.laborProofPair.before !== null && input.laborProofPair.after !== null;
+  if (
+    input.artifact.outcome === "success"
+    && hasDurableGitProof
+    && !hasAdvancedGitHead(input.laborProofPair, input.candidateBranch)
+  ) {
+    return `Titan implementation for ${input.issueId} did not advance candidate branch ${input.candidateBranch}.`;
+  }
+
+  return null;
 }
 
 function persistSessionArtifact(
@@ -413,6 +448,7 @@ async function runImplement(
     prompt: buildTitanPrompt(issue, labor.laborPath),
   } satisfies CasteRunInput;
   const gitProofPair = captureGitProofPair(labor.laborPath);
+  const rootGitProofPair = captureGitProofPair(input.root);
   const transcriptRefs: string[] = [];
 
   const runTitanSession = async (candidateInput: CasteRunInput) => {
@@ -439,6 +475,7 @@ async function runImplement(
   const finalAttempt = await runTitanSession(runInput);
 
   const completedGitProof = completeGitProofPair(labor.laborPath, gitProofPair);
+  const completedRootGitProof = completeGitProofPair(input.root, rootGitProofPair);
   const gitProofRefs = persistGitProofArtifacts(
     input.root,
     "titan",
@@ -468,6 +505,16 @@ async function runImplement(
       ),
     },
   });
+  const validationError = validateTitanSessionOutcome({
+    issueId: issue.id,
+    artifact,
+    candidateBranch: labor.branchName,
+    laborProofPair: completedGitProof,
+    rootProofPair: completedRootGitProof,
+  });
+  if (validationError) {
+    throw new Error(validationError);
+  }
   if (artifact.mutation_proposal) {
     const policyResult = await applyMutationProposal({
       root: input.root,
@@ -535,7 +582,10 @@ async function runReview(
     caste: "sentinel",
     issueId: issue.id,
     root: input.root,
-    workingDirectory: input.root,
+    workingDirectory: resolveCandidateWorkingDirectory(
+      input.root,
+      readTitanMergeCandidate(input.root, record.titanHandoffRef!).labor_path,
+    ),
     prompt: buildSentinelPrompt(issue),
   } satisfies CasteRunInput;
   const session = await input.runtime.run(runInput);

@@ -444,6 +444,18 @@ function createContractRepairPrompt(contract: CasteToolContract) {
   ].join("\n");
 }
 
+async function createIsolatedResourceLoader(
+  piCodingAgent: PiCodingAgentModule,
+  workingDirectory: string,
+) {
+  const resourceLoader = new piCodingAgent.DefaultResourceLoader({
+    cwd: workingDirectory,
+    noExtensions: true,
+  });
+  await resourceLoader.reload();
+  return resourceLoader;
+}
+
 export class PiCasteRuntime implements CasteRuntime {
   private readonly sessionTimeoutMs: number;
   private readonly sessionTimeoutMsByCaste: Record<CasteName, number>;
@@ -565,12 +577,14 @@ export class PiCasteRuntime implements CasteRuntime {
       ...baseTools.map((tool) => tool.name),
       ...customTools.map((tool) => tool.name),
     ])];
+    const resourceLoader = await createIsolatedResourceLoader(piCodingAgent, input.workingDirectory);
     const { session } = await piCodingAgent.createAgentSession({
       cwd: input.workingDirectory,
       model: modelConfig.model,
       thinkingLevel: modelConfig.thinkingLevel,
       tools: baseTools,
       customTools,
+      resourceLoader,
     });
     session.setActiveToolsByName(activeToolNames);
     let enforceContractPayload = false;

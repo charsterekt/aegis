@@ -25,6 +25,16 @@ function runGit(root: string, args: string[]) {
   });
 }
 
+function initializeGitRepository(root: string) {
+  runGit(root, ["init"]);
+  runGit(root, ["config", "user.email", "test@aegis.local"]);
+  runGit(root, ["config", "user.name", "Aegis Test"]);
+  writeFileSync(path.join(root, "README.md"), "baseline\n", "utf8");
+  runGit(root, ["add", "--all"]);
+  runGit(root, ["commit", "-m", "baseline"]);
+  runGit(root, ["branch", "-M", "main"]);
+}
+
 function createTempRoot() {
   const root = mkdtempSync(path.join(tmpdir(), "aegis-merge-next-"));
   tempRoots.push(root);
@@ -108,6 +118,19 @@ function createQueueItem(issueId: string, attempts = 0): MergeQueueItem {
   };
 }
 
+function writeTitanArtifact(root: string, issueId: string) {
+  mkdirSync(path.join(root, ".aegis", "titan"), { recursive: true });
+  writeFileSync(
+    path.join(root, ".aegis", "titan", `${issueId}.json`),
+    `${JSON.stringify({
+      labor_path: `labors/${issueId}`,
+      candidate_branch: `aegis/${issueId}`,
+      base_branch: "main",
+    }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
 function writeState(root: string, issueId: string, attempts = 0) {
   const dispatchState: DispatchState = {
     schemaVersion: 1,
@@ -179,13 +202,7 @@ describe("runMergeNext", () => {
       "utf8",
     );
 
-    runGit(root, ["init"]);
-    runGit(root, ["config", "user.email", "test@aegis.local"]);
-    runGit(root, ["config", "user.name", "Aegis Test"]);
-    writeFileSync(path.join(root, "README.md"), "baseline\n", "utf8");
-    runGit(root, ["add", "--all"]);
-    runGit(root, ["commit", "-m", "baseline"]);
-    runGit(root, ["branch", "-M", "main"]);
+    initializeGitRepository(root);
 
     runGit(root, ["checkout", "-b", "aegis/aegis-900"]);
     writeFileSync(path.join(root, "README.md"), "phase-i merge change\n", "utf8");
@@ -215,6 +232,46 @@ describe("runMergeNext", () => {
       stage: "complete",
     });
     expect(readFileSync(path.join(root, "README.md"), "utf8")).toContain("phase-i merge change");
+  });
+
+  it("fail-closes merge execution when the repo root has non-Aegis dirty files", async () => {
+    const root = createTempRoot();
+    writeFileSync(
+      path.join(root, ".aegis", "config.json"),
+      `${JSON.stringify({
+        ...DEFAULT_AEGIS_CONFIG,
+        runtime: "pi",
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    initializeGitRepository(root);
+
+    runGit(root, ["checkout", "-b", "aegis/aegis-902"]);
+    writeFileSync(path.join(root, "README.md"), "phase-i merge change\n", "utf8");
+    runGit(root, ["add", "README.md"]);
+    runGit(root, ["commit", "-m", "candidate change"]);
+    runGit(root, ["checkout", "main"]);
+
+    writeState(root, "aegis-902");
+    writeFileSync(path.join(root, "root-leak.txt"), "dirty\n", "utf8");
+
+    const result = await runMergeNext(root, {
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-902")),
+      },
+      now: "2026-04-14T12:30:00.000Z",
+    });
+
+    expect(result).toMatchObject({
+      action: "merge_next",
+      status: "requeued",
+      issueId: "aegis-902",
+      tier: "T2",
+      stage: "queued_for_merge",
+    });
+    expect(result.detail).toContain("non-Aegis working tree changes");
+    expect(result.detail).toContain("root-leak.txt");
   });
 
   it("uses scripted merge outcomes when a scripted merge plan override is provided under pi runtime", async () => {
@@ -615,5 +672,51 @@ describe("runMergeNext", () => {
       issueId: "aegis-444",
       stage: "complete",
     });
+  });
+
+  it("does not block the daemon cycle on slow pre-merge reviews", async () => {
+    const root = createTempRoot();
+    writeTitanArtifact(root, "aegis-555");
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-555": createRecord("aegis-555", "implemented"),
+      },
+    });
+    saveMergeQueueState(root, {
+      schemaVersion: 1,
+      items: [],
+    });
+
+    vi.spyOn(BeadsTrackerClient.prototype, "listReadyIssues").mockImplementation(async () => []);
+
+    const runtime: AgentRuntime = {
+      launch: vi.fn(async (input) => ({
+        sessionId: `session-${input.issueId}`,
+        startedAt: "2026-04-14T12:00:00.000Z",
+      })),
+      readSession: vi.fn(async () => null),
+      terminate: vi.fn(async () => null),
+    };
+    const launchPreMergeReview = vi.fn(async () => new Promise<void>(() => {}));
+
+    const cycleResult = await Promise.race([
+      runDaemonCycle(root, {
+        runtime,
+        sessionProvenanceId: "daemon-test",
+        launchPreMergeReview,
+      }).then(() => "completed"),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve("timed-out"), 50);
+      }),
+    ]);
+
+    expect(cycleResult).toBe("completed");
+    expect(launchPreMergeReview).toHaveBeenCalledWith({
+      issueId: "aegis-555",
+      root,
+      timestamp: expect.any(String),
+    });
+    expect(loadDispatchState(root).records["aegis-555"]?.stage).toBe("reviewing");
   });
 });
