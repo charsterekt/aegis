@@ -14,6 +14,7 @@ const titanStructuredContract = createStructuredToolContract<TitanArtifact>({
     {
       outcome: Type.Union([
         Type.Literal("success"),
+        Type.Literal("already_satisfied"),
         Type.Literal("clarification"),
         Type.Literal("failure"),
       ]),

@@ -1,4 +1,4 @@
-export type TitanRunOutcome = "success" | "clarification" | "failure";
+export type TitanRunOutcome = "success" | "already_satisfied" | "clarification" | "failure";
 
 export type TitanMutationProposalType =
   | "create_clarification_blocker"
@@ -105,8 +105,13 @@ export function parseTitanArtifact(raw: string): TitanArtifact {
   }
 
   const outcome = candidate["outcome"];
-  if (outcome !== "success" && outcome !== "clarification" && outcome !== "failure") {
-    throw new Error("Titan output must include outcome=success|clarification|failure");
+  if (
+    outcome !== "success"
+    && outcome !== "already_satisfied"
+    && outcome !== "clarification"
+    && outcome !== "failure"
+  ) {
+    throw new Error("Titan output must include outcome=success|already_satisfied|clarification|failure");
   }
   if (typeof candidate["summary"] !== "string") {
     throw new Error("Titan output must include summary");

@@ -223,6 +223,7 @@ function buildTitanPrompt(
     "Stage and commit all intended changes in the labor worktree before you call the final artifact tool so the candidate branch head advances.",
     "Use git add/git commit explicitly when you make required implementation changes.",
     "Do not leave required implementation changes uncommitted.",
+    "If the issue contract is already satisfied by prior merged work, make no edits and emit outcome 'already_satisfied' with files_changed=[] and the checks you ran.",
     `Call tool '${TITAN_EMIT_ARTIFACT_TOOL_NAME}' exactly once as final step after all file edits and checks complete.`,
     "If required project files do not exist, create minimal versions that satisfy the issue contract.",
     "Treat ordinary naming/tooling ambiguity as solvable: choose reasonable defaults and proceed.",
@@ -230,6 +231,7 @@ function buildTitanPrompt(
     "Do not create non-blocking follow-up work.",
     "Return only JSON. No markdown fences. No prose before or after JSON.",
     "JSON schema keys: outcome, summary, files_changed, tests_and_checks_run, known_risks, follow_up_work, learnings_written_to_mnemosyne, optional mutation_proposal.",
+    "Allowed outcome values: success, already_satisfied, clarification, failure.",
     "mutation_proposal keys: proposal_type, summary, suggested_title, suggested_description, scope_evidence.",
   ].join("\n");
 }
@@ -373,6 +375,16 @@ function validateTitanSessionOutcome(input: {
     && !hasAdvancedGitHead(input.laborProofPair, input.candidateBranch)
   ) {
     return `Titan implementation for ${input.issueId} did not advance candidate branch ${input.candidateBranch}.`;
+  }
+
+  if (input.artifact.outcome === "already_satisfied") {
+    if (input.artifact.files_changed.length > 0) {
+      return `Titan already_satisfied handoff for ${input.issueId} must not report changed files.`;
+    }
+
+    if (input.artifact.tests_and_checks_run.length === 0) {
+      return `Titan already_satisfied handoff for ${input.issueId} must include verification checks.`;
+    }
   }
 
   return null;
@@ -629,7 +641,8 @@ async function runImplement(
     };
   }
 
-  const implementationSucceeded = artifact.outcome === "success";
+  const implementationSucceeded = artifact.outcome === "success"
+    || artifact.outcome === "already_satisfied";
   saveRecord(input.root, issue.id, {
     ...clearDownstreamArtifactRefs(record),
     stage: implementationSucceeded ? "implemented" : "failed_operational",

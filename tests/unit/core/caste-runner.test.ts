@@ -827,6 +827,71 @@ describe("runCasteCommand", () => {
     expect(state.records["aegis-235"]?.stage).toBe("scouted");
   });
 
+  it("accepts Titan already-satisfied handoff without branch advancement", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-237": {
+          issueId: "aegis-237",
+          stage: "scouted",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-237.json"),
+          sentinelVerdictRef: null,
+          fileScope: null,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    initializeGitRepository(root);
+
+    const result = await runCasteCommand({
+      root,
+      action: "implement",
+      issueId: "aegis-237",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-237")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        titan: () => ({
+          output: JSON.stringify({
+            outcome: "already_satisfied",
+            summary: "Issue contract already satisfied by prior merged work.",
+            files_changed: [],
+            tests_and_checks_run: ["npm run build"],
+            known_risks: [],
+            follow_up_work: [],
+            learnings_written_to_mnemosyne: [],
+          }),
+        }),
+      }),
+      resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => "scratchpad",
+    });
+
+    const state = JSON.parse(
+      readFileSync(path.join(root, ".aegis", "dispatch-state.json"), "utf8"),
+    ) as {
+      records: Record<string, { stage: string; titanHandoffRef: string | null }>;
+    };
+
+    expect(result).toMatchObject({
+      action: "implement",
+      issueId: "aegis-237",
+      stage: "implemented",
+    });
+    expect(state.records["aegis-237"]).toMatchObject({
+      stage: "implemented",
+      titanHandoffRef: expect.stringContaining(path.join(".aegis", "titan")),
+    });
+  });
+
   it("rejects Titan success when implementation dirties the project root", async () => {
     const root = createTempRoot();
     saveDispatchState(root, {

@@ -64,6 +64,32 @@ describe("structured tool contracts", () => {
     });
   });
 
+  it("extracts Titan already-satisfied artifact from matching tool event", () => {
+    expect(extractTitanArtifactFromToolEvent({
+      type: "tool_execution_end",
+      toolCallId: "call-1b",
+      toolName: TITAN_EMIT_ARTIFACT_TOOL_NAME,
+      isError: false,
+      result: {
+        content: [],
+        details: {
+          artifact: {
+            outcome: "already_satisfied",
+            summary: "already done",
+            files_changed: [],
+            tests_and_checks_run: ["npm run build"],
+            known_risks: [],
+            follow_up_work: [],
+            learnings_written_to_mnemosyne: [],
+          },
+        },
+      },
+    })).toMatchObject({
+      outcome: "already_satisfied",
+      summary: "already done",
+    });
+  });
+
   it("extracts Sentinel verdict from matching tool event", () => {
     expect(extractSentinelVerdictFromToolEvent({
       type: "tool_execution_end",

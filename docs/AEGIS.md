@@ -255,6 +255,7 @@ Titan may:
 
 - edit within assigned labor and allowed file scope.
 - produce implementation artifact.
+- produce `already_satisfied` when prior merged work already fulfills the issue contract.
 - propose blocking child work only through Aegis mutation policy.
 
 Titan may not:
@@ -263,6 +264,7 @@ Titan may not:
 - mutate root directly.
 - create non-blocking follow-up issues in auto mode.
 - broaden scope into repo cleanup.
+- claim ordinary `success` without advancing its candidate branch.
 
 ### Sentinel
 
@@ -350,6 +352,28 @@ Accepted blocker requirements:
 - policy artifact is persisted.
 
 Rejected proposals fail closed as policy failures.
+
+## Already-Satisfied Work
+
+Real repositories contain overlapping or stale issues. Aegis must handle this without pretending a no-op edit is a real implementation.
+
+Titan may emit `outcome: "already_satisfied"` when all are true:
+
+- current repository state already satisfies the issue contract
+- Titan made no edits
+- `files_changed` is empty
+- `tests_and_checks_run` records at least one relevant verification
+- artifact explains what prior state satisfies the issue
+
+Control behavior:
+
+- `already_satisfied` is a valid Titan handoff
+- candidate branch does not need to advance
+- Sentinel still reviews the handoff before merge/complete
+- ordinary `success` still requires candidate branch advancement
+- root mutation still fails closed
+
+This is not a loophole for skipped work. It is the deterministic way to close real-world duplicate or overlapped work.
 
 ## Seeded React Todo Proof
 

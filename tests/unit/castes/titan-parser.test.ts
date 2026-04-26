@@ -21,6 +21,24 @@ describe("parseTitanArtifact", () => {
     });
   });
 
+  it("parses a valid already-satisfied artifact", () => {
+    expect(
+      parseTitanArtifact(JSON.stringify({
+        outcome: "already_satisfied",
+        summary: "Issue contract already satisfied by prior merged work.",
+        files_changed: [],
+        tests_and_checks_run: ["npm run build"],
+        known_risks: [],
+        follow_up_work: [],
+        learnings_written_to_mnemosyne: [],
+      })),
+    ).toMatchObject({
+      outcome: "already_satisfied",
+      files_changed: [],
+      tests_and_checks_run: ["npm run build"],
+    });
+  });
+
   it("parses a blocking mutation proposal", () => {
     expect(
       parseTitanArtifact(JSON.stringify({
