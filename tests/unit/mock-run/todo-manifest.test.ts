@@ -49,4 +49,24 @@ describe("TODO_MOCK_RUN_ISSUES", () => {
       "Aegis file ownership: docs/setup-contract.md",
     );
   });
+
+  it("orders setup prerequisites before scaffold work", () => {
+    const byKey = new Map(TODO_MOCK_RUN_ISSUES.map((issue) => [issue.key, issue]));
+
+    expect(byKey.get("setup.dependencies")?.blocks).toEqual(["setup.contract"]);
+    expect(byKey.get("setup.tooling")?.blocks).toEqual(["setup.dependencies"]);
+    expect(byKey.get("setup.scaffold")?.blocks).toEqual(["setup.tooling"]);
+    expect(byKey.get("setup.gate")?.blocks).toContain("setup.scaffold");
+  });
+
+  it("lists blockers before dependents for deterministic seeding", () => {
+    const seen = new Set<string>();
+
+    for (const issue of TODO_MOCK_RUN_ISSUES) {
+      for (const blocker of issue.blocks) {
+        expect(seen.has(blocker), `${issue.key} references later blocker ${blocker}`).toBe(true);
+      }
+      seen.add(issue.key);
+    }
+  });
 });
