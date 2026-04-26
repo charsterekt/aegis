@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { loadDispatchState, type DispatchRecord, type DispatchStage, type DispatchState } from "./dispatch-state.js";
@@ -86,6 +86,41 @@ function resolveDurableArtifactRef(
   return existsSync(path.join(root, relativePath)) ? relativePath : null;
 }
 
+function normalizeArtifactFileScope(filesAffected: unknown) {
+  if (!Array.isArray(filesAffected)) {
+    return null;
+  }
+
+  const files = [...new Set(
+    filesAffected
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => entry.replace(/\\/g, "/").replace(/^\.\//, "").trim())
+      .filter((entry) => entry.length > 0),
+  )].sort();
+
+  return files.length > 0 ? { files } : null;
+}
+
+function readOracleFileScope(root: string, artifactRef: string | null) {
+  if (!artifactRef) {
+    return null;
+  }
+
+  const artifactPath = path.join(root, artifactRef);
+  if (!existsSync(artifactPath)) {
+    return null;
+  }
+
+  try {
+    const artifact = JSON.parse(readFileSync(artifactPath, "utf8")) as {
+      files_affected?: unknown;
+    };
+    return normalizeArtifactFileScope(artifact.files_affected);
+  } catch {
+    return null;
+  }
+}
+
 function hydrateDurableArtifactRefs(root: string, record: DispatchRecord): DispatchRecord {
   const oracleAssessmentRef = record.oracleAssessmentRef
     ?? resolveDurableArtifactRef(root, "oracle", record.issueId);
@@ -98,6 +133,7 @@ function hydrateDurableArtifactRefs(root: string, record: DispatchRecord): Dispa
     titanHandoffRef: record.titanHandoffRef ?? titanArtifactRef,
     sentinelVerdictRef: record.sentinelVerdictRef ?? sentinelArtifactRef,
     reviewFeedbackRef: record.reviewFeedbackRef ?? sentinelArtifactRef,
+    fileScope: record.fileScope ?? readOracleFileScope(root, oracleAssessmentRef),
     janusArtifactRef: record.janusArtifactRef
       ?? resolveDurableArtifactRef(root, "janus", record.issueId),
   };

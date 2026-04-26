@@ -302,6 +302,71 @@ describe("reapFinishedWork", () => {
     });
   });
 
+  it("hydrates missing file scope from durable Oracle artifact before Titan dispatch", async () => {
+    const root = createTempRoot();
+    const runtime: AgentRuntime = {
+      async launch() {
+        throw new Error("unused");
+      },
+      async readSession() {
+        return {
+          sessionId: "session-1",
+          status: "succeeded",
+          finishedAt: "2026-04-14T11:56:00.000Z",
+        };
+      },
+      async terminate() {
+        return null;
+      },
+    };
+
+    mkdirSync(path.join(root, ".aegis", "oracle"), { recursive: true });
+    writeFileSync(
+      path.join(root, ".aegis", "dispatch-state.json"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        records: {
+          "ISSUE-1": {
+            issueId: "ISSUE-1",
+            stage: "scouting",
+            runningAgent: {
+              caste: "oracle",
+              sessionId: "session-1",
+              startedAt: "2026-04-14T11:55:00.000Z",
+            },
+            oracleAssessmentRef: ".aegis/oracle/ISSUE-1.json",
+            sentinelVerdictRef: null,
+            fileScope: null,
+            failureCount: 0,
+            consecutiveFailures: 0,
+            failureWindowStartMs: null,
+            cooldownUntil: null,
+            sessionProvenanceId: "daemon-1",
+            updatedAt: "2026-04-14T11:56:00.000Z",
+          },
+        },
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    writeFileSync(
+      path.join(root, ".aegis", "oracle", "ISSUE-1.json"),
+      `${JSON.stringify({ files_affected: ["docs/setup-contract.md"] }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const result = await reapFinishedWork({
+      dispatchState: createRunningState(),
+      runtime,
+      issueIds: ["ISSUE-1"],
+      root,
+      now: "2026-04-14T12:00:00.000Z",
+    });
+
+    expect(result.state.records["ISSUE-1"]?.fileScope).toEqual({
+      files: ["docs/setup-contract.md"],
+    });
+  });
+
   it("marks failed sessions as failed_operational and increments counters", async () => {
     const root = createTempRoot();
     const runtime: AgentRuntime = {
