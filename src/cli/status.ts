@@ -1,6 +1,7 @@
 import { isProcessRunning, readRuntimeState } from "./runtime-state.js";
 import { loadDispatchState } from "../core/dispatch-state.js";
 import { BeadsTrackerClient } from "../tracker/beads-tracker.js";
+import { recoverStaleRuntimeState } from "./runtime-recovery.js";
 
 export const STATUS_COMMAND_NAME = "status";
 
@@ -19,6 +20,9 @@ export interface StatusCommandContract {
 
 export interface GetAegisStatusOptions {
   tracker?: Pick<BeadsTrackerClient, "listReadyIssues">;
+  isProcessRunning?: (pid: number) => boolean;
+  recoveryProvenanceId?: string;
+  now?: string;
 }
 
 const DEFAULT_SNAPSHOT: StatusSnapshot = {
@@ -63,10 +67,16 @@ export async function getAegisStatus(
   root = process.cwd(),
   options: GetAegisStatusOptions = {},
 ): Promise<StatusSnapshot> {
+  recoverStaleRuntimeState(root, {
+    isProcessRunning: options.isProcessRunning,
+    recoveryProvenanceId: options.recoveryProvenanceId ?? "status-recovery",
+    now: options.now,
+  });
   const recoveredRuntime = readRuntimeState(root);
   const dispatchState = loadDispatchState(root);
   const isLiveDaemon = recoveredRuntime
-    ? recoveredRuntime.server_state !== "stopped" && isProcessRunning(recoveredRuntime.pid)
+    ? recoveredRuntime.server_state !== "stopped"
+      && (options.isProcessRunning ?? isProcessRunning)(recoveredRuntime.pid)
     : false;
   const activeAgentCount = isLiveDaemon
     ? Object.values(dispatchState.records).filter(

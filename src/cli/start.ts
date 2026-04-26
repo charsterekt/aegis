@@ -42,10 +42,10 @@ import {
   clearStopRequest,
   isProcessRunning,
   readStopRequest,
-  readRuntimeState,
   writeRuntimeState,
   type RuntimeStateRecord,
 } from "./runtime-state.js";
+import { recoverStaleRuntimeState } from "./runtime-recovery.js";
 
 export const START_COMMAND_NAME = "start";
 
@@ -487,7 +487,9 @@ export async function startAegis(
     throw new StartupPreflightBlockedError(preflight);
   }
 
-  const recoveredRuntime = readRuntimeState(repoRoot);
+  const recoveredRuntime = recoverStaleRuntimeState(repoRoot, {
+    recoveryProvenanceId: String(process.pid),
+  }).runtimeState;
   const isAlreadyRunning = recoveredRuntime
     && recoveredRuntime.server_state !== "stopped"
     && isProcessRunning(recoveredRuntime.pid);

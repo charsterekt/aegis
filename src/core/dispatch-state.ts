@@ -135,9 +135,9 @@ const IN_PROGRESS_STAGES = new Set<DispatchStage>([
 export function reconcileDispatchState(
   state: DispatchState,
   liveSessionId: string,
+  timestamp = new Date().toISOString(),
 ): DispatchState {
   const reconciledRecords: Record<string, DispatchRecord> = {};
-  const timestamp = new Date().toISOString();
 
   for (const [issueId, record] of Object.entries(state.records)) {
     if (

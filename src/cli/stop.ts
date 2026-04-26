@@ -5,6 +5,7 @@ import {
   writeStopRequest,
   writeRuntimeState,
 } from "./runtime-state.js";
+import { recoverStaleRuntimeState } from "./runtime-recovery.js";
 
 export const STOP_COMMAND_NAME = "stop";
 export const STOP_COMMAND_REASONS = [
@@ -78,15 +79,11 @@ export async function stopAegis(
 
   if (!owned) {
     clearStopRequest(root);
-    writeRuntimeState(
-      {
-        ...recoveredRuntime,
-        server_state: "stopped",
-        stopped_at: new Date().toISOString(),
-        last_stop_reason: reason,
-      },
-      root,
-    );
+    recoverStaleRuntimeState(root, {
+      isProcessRunning: () => false,
+      recoveryProvenanceId: `stop-${reason}`,
+      stopReason: reason,
+    });
 
     return {
       stopped: true,
