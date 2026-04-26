@@ -10,7 +10,7 @@ import { runCasteCommand } from "../core/caste-runner.js";
 import { createCasteRuntime } from "./create-caste-runtime.js";
 import { BeadsTrackerClient } from "../tracker/beads-tracker.js";
 
-type DispatchRuntimeMode = "scripted" | "pi";
+type DispatchRuntimeMode = "scripted" | "pi" | "codex";
 type DispatchAction = "scout" | "implement";
 
 const TERMINATED_SESSIONS = new Set<string>();
@@ -143,6 +143,22 @@ class PiAgentRuntime implements AgentRuntime {
   }
 }
 
+class CodexAgentRuntime implements AgentRuntime {
+  private readonly runtime = new CasteDispatchRuntime("codex");
+
+  async launch(input: RuntimeLaunchInput) {
+    return this.runtime.launch(input);
+  }
+
+  async readSession(root: string, sessionId: string) {
+    return this.runtime.readSession(root, sessionId);
+  }
+
+  async terminate(root: string, sessionId: string, reason: string) {
+    return this.runtime.terminate(root, sessionId, reason);
+  }
+}
+
 export function createAgentRuntime(runtime: string): AgentRuntime {
   if (runtime === "scripted") {
     return new ScriptedAgentRuntime();
@@ -150,6 +166,10 @@ export function createAgentRuntime(runtime: string): AgentRuntime {
 
   if (runtime === "pi") {
     return new PiAgentRuntime();
+  }
+
+  if (runtime === "codex") {
+    return new CodexAgentRuntime();
   }
 
   throw new Error(`Unsupported runtime adapter: ${runtime}`);

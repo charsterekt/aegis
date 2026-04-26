@@ -1,6 +1,7 @@
 import type { CasteRuntime } from "./caste-runtime.js";
 import type { CasteName } from "./caste-runtime.js";
 import { PiCasteRuntime } from "./pi-caste-runtime.js";
+import { CodexCasteRuntime, createCodexModelConfigs } from "./codex-caste-runtime.js";
 import {
   createDefaultScriptedCasteRuntime,
   createScriptedModelConfigs,
@@ -12,6 +13,7 @@ import { resolveConfiguredCasteModel } from "./pi-model-config.js";
 export interface CreateCasteRuntimeOptions {
   createPiRuntime?: () => CasteRuntime;
   createScriptedRuntime?: () => CasteRuntime;
+  createCodexRuntime?: () => CasteRuntime;
 }
 
 export interface CreateCasteRuntimeContext {
@@ -82,9 +84,17 @@ export function createCasteRuntime(
       context.root,
       context.issueId,
     ));
+  const createCodexRuntime = options.createCodexRuntime
+    ?? (() => new CodexCasteRuntime(
+      config ? createCodexModelConfigs(config.models, config.thinking) : {},
+    ));
 
   if (runtime === "pi") {
     return createPiRuntime();
+  }
+
+  if (runtime === "codex") {
+    return createCodexRuntime();
   }
 
   return createScriptedRuntime();

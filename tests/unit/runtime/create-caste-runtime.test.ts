@@ -111,6 +111,24 @@ describe("createCasteRuntime", () => {
     expect(createScriptedRuntime).not.toHaveBeenCalled();
   });
 
+  it("uses the codex runtime when configured", () => {
+    const codexRuntime = { kind: "codex", run: vi.fn() };
+    const createCodexRuntime = vi.fn(() => codexRuntime);
+    const createPiRuntime = vi.fn();
+    const createScriptedRuntime = vi.fn();
+
+    const runtime = createCasteRuntime("codex", {
+      createCodexRuntime,
+      createPiRuntime,
+      createScriptedRuntime,
+    });
+
+    expect(runtime).toBe(codexRuntime);
+    expect(createCodexRuntime).toHaveBeenCalledOnce();
+    expect(createPiRuntime).not.toHaveBeenCalled();
+    expect(createScriptedRuntime).not.toHaveBeenCalled();
+  });
+
   it("threads configured model and thinking metadata into the default scripted runtime", async () => {
     const root = createTempRoot();
     writeConfig(root);

@@ -256,7 +256,7 @@ function verifyGitRepository(root: string) {
 }
 
 function verifyRuntimeAdapter(config: AegisConfig): StartupPreflightProbeResult {
-  if (config.runtime !== "pi" && config.runtime !== "scripted") {
+  if (config.runtime !== "pi" && config.runtime !== "scripted" && config.runtime !== "codex") {
     return {
       ok: false,
       detail: `Unsupported runtime adapter: ${config.runtime}`,
