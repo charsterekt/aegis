@@ -34,13 +34,18 @@ CLAUDE.md
 !AGENTS.md
 .agents/
 skills-lock.json
-AGENTS.md
 
 # Planning artifacts
 
 temp/
 *.log
 .planning/
+
+# Superseded docs. Canonical source: docs/AEGIS.md
+docs/SPECv2.md
+docs/enhancement-spec-2026.md
+docs/superpowers/specs/
+docs/superpowers/plans/
 
 # Beads / Dolt files (added by bd init)
 .beads-credential-key

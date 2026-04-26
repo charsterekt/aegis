@@ -7,7 +7,6 @@
     "tests/fixtures",
     "tsconfig.tests.json",
     "docs",
-    "docs/SPECv2.md",
-    "docs/superpowers/specs/2026-04-13-aegis-emergency-mvp-triage-design.md"
+    "docs/AEGIS.md"
   ]
 }

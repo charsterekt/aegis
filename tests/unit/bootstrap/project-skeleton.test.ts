@@ -200,28 +200,9 @@ describe("S00 project skeleton contract", () => {
     expect(existsSync(path.join(repoRoot, "src", "shared", "steer-command-reference.ts"))).toBe(false);
   });
 
-  it("pins the seam-only CI and Phase G completion docs", () => {
+  it("pins the seam-only CI and canonical source-of-truth doc", () => {
     const ciWorkflow = readFileSync(path.join(repoRoot, ".github", "workflows", "ci.yml"), "utf8");
-    const triageDesign = readFileSync(
-      path.join(
-        repoRoot,
-        "docs",
-        "superpowers",
-        "specs",
-        "2026-04-13-aegis-emergency-mvp-triage-design.md",
-      ),
-      "utf8",
-    );
-    const handoffPrompt = readFileSync(
-      path.join(
-        repoRoot,
-        "docs",
-        "superpowers",
-        "plans",
-        "2026-04-14-phase-g-proof-reset-handoff-prompt.md",
-      ),
-      "utf8",
-    );
+    const canonicalSpec = readFileSync(path.join(repoRoot, "docs", "AEGIS.md"), "utf8");
 
     expect(ciWorkflow).toContain("name: Seam-only CI");
     expect(ciWorkflow).toContain("npm run lint");
@@ -230,15 +211,10 @@ describe("S00 project skeleton contract", () => {
     expect(ciWorkflow).not.toContain("npm pack");
     expect(ciWorkflow).not.toContain("npm run test:acceptance");
 
-    expect(triageDesign).toContain("Phase G complete on 2026-04-16.");
-    expect(triageDesign).toContain("CI should run deterministic tests only.");
-    expect(triageDesign).toContain("Seeded mock-run acceptance");
-    expect(triageDesign).not.toContain("Phase G remains open.");
-
-    expect(handoffPrompt).toContain("Emergency rewrite phases are complete.");
-    expect(handoffPrompt).toContain("Fresh follow-up work belongs in new addenda and Beads issues");
-    expect(handoffPrompt).not.toContain("implement Phase G only");
-    expect(handoffPrompt).not.toContain("Phase G remains open");
+    expect(canonicalSpec).toContain("This document is the only active product and architecture spec for Aegis.");
+    expect(canonicalSpec).toContain("Step 1 is not complete until Aegis has at least one real adapter");
+    expect(canonicalSpec).toContain("Codex adapter is the approved fallback");
+    expect(canonicalSpec).toContain("Do not read old docs for current requirements.");
   });
 
   it("creates the workspace skeleton required by the workspace contract", () => {
