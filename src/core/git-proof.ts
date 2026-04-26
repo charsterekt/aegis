@@ -71,6 +71,14 @@ function parseChangedFiles(statusLines: string[]) {
   return [...files].sort();
 }
 
+function parseChangedFileOutput(raw: string) {
+  return raw
+    .split(/\r?\n/)
+    .map((line) => normalizeStatusPath(line.trim()))
+    .filter((line) => line.length > 0)
+    .sort();
+}
+
 function captureGitSnapshot(workingDirectory: string): GitSnapshot | null {
   if (!isGitWorkingTree(workingDirectory)) {
     return null;
@@ -203,6 +211,65 @@ export function hasAdvancedGitHead(
   return proofPair.before.headCommit !== proofPair.after.headCommit;
 }
 
+function resolveCommittedChangedFiles(
+  workingDirectory: string,
+  proofPair: { before: GitSnapshot | null; after: GitSnapshot | null },
+) {
+  if (!proofPair.before || !proofPair.after) {
+    return proofPair.after?.changedFiles ?? [];
+  }
+
+  if (!proofPair.before.headCommit || !proofPair.after.headCommit) {
+    return proofPair.after.changedFiles;
+  }
+
+  if (proofPair.before.headCommit === proofPair.after.headCommit) {
+    return proofPair.after.changedFiles;
+  }
+
+  const result = runGit(workingDirectory, [
+    "diff",
+    "--name-only",
+    "--no-renames",
+    `${proofPair.before.headCommit}..${proofPair.after.headCommit}`,
+  ]);
+
+  if (result.status !== 0) {
+    return proofPair.after.changedFiles;
+  }
+
+  return parseChangedFileOutput(result.stdout);
+}
+
+function resolveCommittedDiff(
+  workingDirectory: string,
+  proofPair: { before: GitSnapshot | null; after: GitSnapshot | null },
+) {
+  if (!proofPair.before || !proofPair.after) {
+    return proofPair.after?.diff ?? "";
+  }
+
+  if (!proofPair.before.headCommit || !proofPair.after.headCommit) {
+    return proofPair.after.diff;
+  }
+
+  if (proofPair.before.headCommit === proofPair.after.headCommit) {
+    return proofPair.after.diff;
+  }
+
+  const result = runGit(workingDirectory, [
+    "diff",
+    "--no-color",
+    `${proofPair.before.headCommit}..${proofPair.after.headCommit}`,
+  ]);
+
+  if (result.status !== 0) {
+    return proofPair.after.diff;
+  }
+
+  return result.stdout.trimEnd();
+}
+
 export function persistGitProofArtifacts(
   root: string,
   family: GitProofFamily,
@@ -212,6 +279,8 @@ export function persistGitProofArtifacts(
 ): GitProofRefs {
   const before = proofPair.before;
   const after = proofPair.after;
+  const changedFiles = resolveCommittedChangedFiles(workingDirectory, proofPair);
+  const committedDiff = resolveCommittedDiff(workingDirectory, proofPair);
 
   const statusBeforeRef = before
     ? persistArtifact(root, {
@@ -251,7 +320,7 @@ export function persistGitProofArtifacts(
       artifact: {
         issueId,
         workingDirectory,
-        files: after.changedFiles,
+        files: changedFiles,
       },
     })
     : null;
@@ -264,7 +333,7 @@ export function persistGitProofArtifacts(
       artifact: {
         issueId,
         workingDirectory,
-        diff: after.diff,
+        diff: committedDiff,
       },
     })
     : null;

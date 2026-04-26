@@ -252,6 +252,16 @@ describe("runCasteCommand", () => {
       startedAt: expect.any(String),
       finishedAt: expect.any(String),
     });
+
+    const state = JSON.parse(
+      readFileSync(path.join(root, ".aegis", "dispatch-state.json"), "utf8"),
+    ) as {
+      records: Record<string, { fileScope: { files: string[] } | null }>;
+    };
+
+    expect(state.records["aegis-123"]?.fileScope).toEqual({
+      files: ["src/index.ts"],
+    });
   });
 
   it("clears downstream artifact refs when scout rewinds an issue", async () => {
@@ -679,6 +689,16 @@ describe("runCasteCommand", () => {
     expect(artifact.git_proof.status_after_ref).toBeTruthy();
     expect(artifact.git_proof.changed_files_manifest_ref).toBeTruthy();
     expect(artifact.git_proof.diff_ref).toBeTruthy();
+
+    const changedFiles = JSON.parse(
+      readFileSync(path.join(root, artifact.git_proof.changed_files_manifest_ref!), "utf8"),
+    ) as { files: string[] };
+    const gitDiff = JSON.parse(
+      readFileSync(path.join(root, artifact.git_proof.diff_ref!), "utf8"),
+    ) as { diff: string };
+
+    expect(changedFiles.files).toEqual(["phase-i-proof.txt"]);
+    expect(gitDiff.diff).toContain("phase-i-proof.txt");
   });
 
   it("tells Titan to stage and commit labor changes before emitting the artifact", async () => {
@@ -692,7 +712,9 @@ describe("runCasteCommand", () => {
           runningAgent: null,
           oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-commit-contract.json"),
           sentinelVerdictRef: null,
-          fileScope: null,
+          fileScope: {
+            files: ["src/App.jsx", "src/index.css"],
+          },
           failureCount: 0,
           consecutiveFailures: 0,
           failureWindowStartMs: null,
@@ -739,6 +761,9 @@ describe("runCasteCommand", () => {
 
     expect(prompt).toContain("Stage and commit all intended changes in the labor worktree before you call");
     expect(prompt).toContain("Do not leave required implementation changes uncommitted.");
+    expect(prompt).toContain("Allowed file scope: src/App.jsx, src/index.css");
+    expect(prompt).toContain("Stay within the allowed file scope.");
+    expect(prompt).toContain("Preserve existing Aegis/Beads operational files and ignore rules.");
   });
 
   it("rejects Titan success when the candidate branch head does not advance", async () => {

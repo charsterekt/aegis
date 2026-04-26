@@ -125,10 +125,73 @@ function buildOraclePrompt(issue: AegisIssue) {
   ].join("\n");
 }
 
-function buildTitanPrompt(issue: AegisIssue, laborPath: string) {
+function normalizeScopeFile(candidate: string) {
+  return candidate.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+}
+
+function normalizeFileScope(files: string[]) {
+  const normalized = [...new Set(
+    files
+      .map((entry) => normalizeScopeFile(entry))
+      .filter((entry) => entry.length > 0),
+  )].sort();
+
+  return normalized.length > 0 ? { files: normalized } : null;
+}
+
+function readOracleImplementationContext(root: string, artifactRef: string | null) {
+  if (!artifactRef) {
+    return null;
+  }
+
+  const artifactPath = path.join(root, artifactRef);
+  if (!existsSync(artifactPath)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(artifactPath, "utf8")) as {
+      suggested_checks?: unknown;
+      scope_notes?: unknown;
+    };
+
+    const suggestedChecks = Array.isArray(parsed.suggested_checks)
+      ? parsed.suggested_checks.filter((entry): entry is string => typeof entry === "string")
+      : [];
+    const scopeNotes = Array.isArray(parsed.scope_notes)
+      ? parsed.scope_notes.filter((entry): entry is string => typeof entry === "string")
+      : [];
+
+    return {
+      suggestedChecks,
+      scopeNotes,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildTitanPrompt(
+  issue: AegisIssue,
+  laborPath: string,
+  options?: {
+    fileScope?: { files: string[] } | null;
+    suggestedChecks?: string[];
+    scopeNotes?: string[];
+  },
+) {
   const description = issue.description?.trim() || "No description provided.";
   const blockers = issue.blockers.length > 0 ? issue.blockers.join(", ") : "none";
   const labels = issue.labels.length > 0 ? issue.labels.join(", ") : "none";
+  const fileScope = options?.fileScope?.files.length
+    ? options.fileScope.files.join(", ")
+    : null;
+  const scopeNotes = options?.scopeNotes?.length
+    ? options.scopeNotes.map((entry) => `- ${entry}`).join("\n")
+    : null;
+  const suggestedChecks = options?.suggestedChecks?.length
+    ? options.suggestedChecks.map((entry) => `- ${entry}`).join("\n")
+    : null;
 
   return [
     `Implement issue ${issue.id}.`,
@@ -138,6 +201,25 @@ function buildTitanPrompt(issue: AegisIssue, laborPath: string) {
     `Blockers: ${blockers}`,
     `Labels: ${labels}`,
     `Working directory: ${laborPath}`,
+    ...(fileScope
+      ? [
+        `Allowed file scope: ${fileScope}`,
+        "Stay within the allowed file scope. If required work is truly outside that scope, emit a blocking mutation_proposal instead of editing unrelated files.",
+      ]
+      : []),
+    ...(scopeNotes
+      ? [
+        "Oracle scope notes:",
+        scopeNotes,
+      ]
+      : []),
+    ...(suggestedChecks
+      ? [
+        "Oracle suggested checks:",
+        suggestedChecks,
+      ]
+      : []),
+    "Preserve existing Aegis/Beads operational files and ignore rules. Do not modify .aegis/, .beads/, or remove their existing .gitignore coverage.",
     "Stage and commit all intended changes in the labor worktree before you call the final artifact tool so the candidate branch head advances.",
     "Use git add/git commit explicitly when you make required implementation changes.",
     "Do not leave required implementation changes uncommitted.",
@@ -392,6 +474,7 @@ async function runScout(
     ...clearDownstreamArtifactRefs(record),
     stage: "scouted",
     oracleAssessmentRef: artifactRef,
+    fileScope: normalizeFileScope(assessment.files_affected),
     oracleReady: null,
     oracleDecompose: null,
     oracleBlockers: null,
@@ -440,12 +523,17 @@ async function runImplement(
     prepareLaborWorktree(labor);
   }
 
+  const oracleContext = readOracleImplementationContext(input.root, record.oracleAssessmentRef);
   const runInput = {
     caste: "titan",
     issueId: issue.id,
     root: input.root,
     workingDirectory: labor.laborPath,
-    prompt: buildTitanPrompt(issue, labor.laborPath),
+    prompt: buildTitanPrompt(issue, labor.laborPath, {
+      fileScope: record.fileScope,
+      suggestedChecks: oracleContext?.suggestedChecks,
+      scopeNotes: oracleContext?.scopeNotes,
+    }),
   } satisfies CasteRunInput;
   const gitProofPair = captureGitProofPair(labor.laborPath);
   const rootGitProofPair = captureGitProofPair(input.root);

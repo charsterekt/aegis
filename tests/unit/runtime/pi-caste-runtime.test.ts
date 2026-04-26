@@ -100,6 +100,14 @@ const CONTRACT_FIXTURES: ContractFixture[] = [
 
 const mockedAgent = vi.hoisted(() => {
   const listeners: MockListener[] = [];
+  const createTool = (name: string) => ({
+    name,
+    parameters: {},
+    execute: vi.fn(async () => ({
+      content: [],
+      isError: false,
+    })),
+  });
   const createResourceLoader = (options: Record<string, unknown>) => ({
     options,
     reload: vi.fn(async () => undefined),
@@ -153,7 +161,10 @@ const mockedAgent = vi.hoisted(() => {
       { name: "edit" },
       { name: "write" },
     ]),
-    createReadTool: vi.fn(() => ({ name: "read" })),
+    createReadTool: vi.fn(() => createTool("read")),
+    createBashTool: vi.fn(() => createTool("bash")),
+    createEditTool: vi.fn(() => createTool("edit")),
+    createWriteTool: vi.fn(() => createTool("write")),
     createFindTool: vi.fn(() => ({ name: "find" })),
     createLsTool: vi.fn(() => ({ name: "ls" })),
     createGrepTool: vi.fn(() => ({ name: "grep" })),
@@ -167,6 +178,9 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   createAgentSession: mockedAgent.createAgentSession,
   createCodingTools: mockedAgent.createCodingTools,
   createReadTool: mockedAgent.createReadTool,
+  createBashTool: mockedAgent.createBashTool,
+  createEditTool: mockedAgent.createEditTool,
+  createWriteTool: mockedAgent.createWriteTool,
   createFindTool: mockedAgent.createFindTool,
   createLsTool: mockedAgent.createLsTool,
   createGrepTool: mockedAgent.createGrepTool,
@@ -272,6 +286,9 @@ describe("PiCasteRuntime", () => {
     mockedAgent.createAgentSession.mockClear();
     mockedAgent.createCodingTools.mockClear();
     mockedAgent.createReadTool.mockClear();
+    mockedAgent.createBashTool.mockClear();
+    mockedAgent.createEditTool.mockClear();
+    mockedAgent.createWriteTool.mockClear();
     mockedAgent.createFindTool.mockClear();
     mockedAgent.createLsTool.mockClear();
     mockedAgent.createGrepTool.mockClear();
@@ -616,13 +633,20 @@ describe("PiCasteRuntime", () => {
       });
     }
 
-    expect(mockedAgent.createCodingTools).toHaveBeenCalledWith(
+    expect(mockedAgent.createReadTool).toHaveBeenCalledWith(
+      "repo/titan",
+    );
+    expect(mockedAgent.createBashTool).toHaveBeenCalledWith(
       "repo/titan",
       expect.objectContaining({
-        bash: expect.objectContaining({
-          operations: expect.any(Object),
-        }),
+        operations: expect.any(Object),
       }),
+    );
+    expect(mockedAgent.createEditTool).toHaveBeenCalledWith(
+      "repo/titan",
+    );
+    expect(mockedAgent.createWriteTool).toHaveBeenCalledWith(
+      "repo/titan",
     );
     expect(mockedAgent.createReadTool).toHaveBeenCalledWith(
       "repo/oracle",
@@ -678,6 +702,49 @@ describe("PiCasteRuntime", () => {
     expect(mockedAgent.createGrepTool).toHaveBeenCalledWith(
       "repo/janus",
     );
+  });
+
+  it("blocks titan tool paths and shell escapes outside the working directory", async () => {
+    const fixture = CONTRACT_FIXTURES.find((candidate) => candidate.caste === "titan");
+    if (!fixture) {
+      throw new Error("Missing titan fixture.");
+    }
+
+    configureToolSuccess(fixture);
+    const runtime = createSingleCasteRuntime("titan");
+
+    await runtime.run({
+      caste: "titan",
+      issueId: "aegis-tool-guard",
+      root: "repo",
+      workingDirectory: "repo/titan",
+      prompt: "Titan tool guard",
+    });
+
+    const createSessionCall = mockedAgent.createAgentSession.mock.calls.at(-1) as [
+      { tools?: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }> },
+    ] | undefined;
+    const tools = createSessionCall?.[0].tools ?? [];
+    const writeTool = tools.find((tool) => tool.name === "write");
+    const bashTool = tools.find((tool) => tool.name === "bash");
+
+    await expect(writeTool?.execute("call-1", {
+      path: "../escape.txt",
+      content: "escape\n",
+    }, undefined, undefined)).rejects.toThrow("write path escapes working directory");
+    await expect(bashTool?.execute("call-2", {
+      command: "cd ../../.. && pwd",
+    }, undefined, undefined)).rejects.toThrow("bash path escapes working directory");
+
+    const originalWriteTool = mockedAgent.createWriteTool.mock.results.at(-1)?.value as
+      | { execute: ReturnType<typeof vi.fn> }
+      | undefined;
+    const originalBashTool = mockedAgent.createBashTool.mock.results.at(-1)?.value as
+      | { execute: ReturnType<typeof vi.fn> }
+      | undefined;
+
+    expect(originalWriteTool?.execute).not.toHaveBeenCalled();
+    expect(originalBashTool?.execute).not.toHaveBeenCalled();
   });
 
   it("isolates Pi sessions from discovered extensions", async () => {

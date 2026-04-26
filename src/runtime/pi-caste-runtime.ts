@@ -7,6 +7,7 @@ import {
 import { spawn, type SpawnOptions } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
+import path from "node:path";
 import { globSync } from "glob";
 
 import {
@@ -313,10 +314,12 @@ function createHiddenShellBashOperations(): BashOperations {
   };
 }
 
+const HIDDEN_BASH_TOOL_OPTIONS = {
+  operations: createHiddenShellBashOperations(),
+};
+
 const HIDDEN_SHELL_TOOL_OPTIONS = {
-  bash: {
-    operations: createHiddenShellBashOperations(),
-  },
+  bash: HIDDEN_BASH_TOOL_OPTIONS,
 };
 
 const HIDDEN_FIND_OPERATIONS: FindOperations = {
@@ -330,13 +333,136 @@ const HIDDEN_FIND_OPERATIONS: FindOperations = {
     }).slice(0, options.limit),
 };
 
+function stripShellQuotes(candidate: string) {
+  return candidate.replace(/^['"]|['"]$/g, "");
+}
+
+function normalizePathCandidate(candidate: string) {
+  const stripped = stripShellQuotes(candidate.trim());
+  if (
+    process.platform === "win32"
+    && /^\/[a-zA-Z]\//.test(stripped)
+  ) {
+    const driveLetter = stripped[1]!.toUpperCase();
+    const remainder = stripped.slice(3).replace(/\//g, "\\");
+    return `${driveLetter}:\\${remainder}`;
+  }
+
+  return stripped;
+}
+
+function resolvePathWithinWorkingDirectory(candidate: string, workingDirectory: string) {
+  const normalized = normalizePathCandidate(candidate);
+  return path.isAbsolute(normalized)
+    ? path.resolve(normalized)
+    : path.resolve(workingDirectory, normalized);
+}
+
+function isWithinWorkingDirectory(candidate: string, workingDirectory: string) {
+  const resolvedWorkingDirectory = path.resolve(workingDirectory);
+  const resolvedCandidate = resolvePathWithinWorkingDirectory(candidate, workingDirectory);
+  return resolvedCandidate === resolvedWorkingDirectory
+    || resolvedCandidate.startsWith(`${resolvedWorkingDirectory}${path.sep}`);
+}
+
+function assertPathWithinWorkingDirectory(
+  candidate: string,
+  workingDirectory: string,
+  toolName: string,
+) {
+  if (!isWithinWorkingDirectory(candidate, workingDirectory)) {
+    throw new Error(
+      `${toolName} path escapes working directory: ${candidate}`,
+    );
+  }
+}
+
+function tokenizeShellCommand(command: string) {
+  return command.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+}
+
+function looksLikePathToken(token: string) {
+  const normalized = normalizePathCandidate(token);
+  return normalized.startsWith("..")
+    || normalized.startsWith("~/")
+    || normalized === "~"
+    || path.isAbsolute(normalized);
+}
+
+function assertCommandWithinWorkingDirectory(command: string, workingDirectory: string) {
+  const tokens = tokenizeShellCommand(command).map((token) => stripShellQuotes(token));
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
+
+    if (token === "cd" && index + 1 < tokens.length) {
+      assertPathWithinWorkingDirectory(tokens[index + 1]!, workingDirectory, "bash");
+      continue;
+    }
+
+    if (token === "git" && tokens[index + 1] === "-C" && index + 2 < tokens.length) {
+      assertPathWithinWorkingDirectory(tokens[index + 2]!, workingDirectory, "bash");
+      continue;
+    }
+
+    if (looksLikePathToken(token)) {
+      assertPathWithinWorkingDirectory(token, workingDirectory, "bash");
+    }
+  }
+}
+
+function wrapTitanFileTool<TTool extends { name: string; execute: (...args: any[]) => any }>(
+  tool: TTool,
+  workingDirectory: string,
+) {
+  return {
+    ...tool,
+    async execute(toolCallId: string, params: { path?: string }, signal: AbortSignal | undefined, onUpdate: unknown) {
+      if (typeof params?.path === "string") {
+        assertPathWithinWorkingDirectory(params.path, workingDirectory, tool.name);
+      }
+
+      return tool.execute(toolCallId, params, signal, onUpdate);
+    },
+  };
+}
+
+function wrapTitanBashTool<TTool extends { execute: (...args: any[]) => any }>(
+  tool: TTool,
+  workingDirectory: string,
+) {
+  return {
+    ...tool,
+    async execute(
+      toolCallId: string,
+      params: { command?: string },
+      signal: AbortSignal | undefined,
+      onUpdate: unknown,
+    ) {
+      if (typeof params?.command === "string") {
+        assertCommandWithinWorkingDirectory(params.command, workingDirectory);
+      }
+
+      return tool.execute(toolCallId, params, signal, onUpdate);
+    },
+  };
+}
+
 function resolveTools(
   piCodingAgent: PiCodingAgentModule,
   caste: CasteName,
   workingDirectory: string,
 ) {
   if (caste === "titan") {
-    return piCodingAgent.createCodingTools(workingDirectory, HIDDEN_SHELL_TOOL_OPTIONS);
+    return [
+      wrapTitanFileTool(piCodingAgent.createReadTool(workingDirectory), workingDirectory),
+      wrapTitanBashTool(
+        piCodingAgent.createBashTool(workingDirectory, HIDDEN_BASH_TOOL_OPTIONS),
+        workingDirectory,
+      ),
+      wrapTitanFileTool(piCodingAgent.createEditTool(workingDirectory), workingDirectory),
+      wrapTitanFileTool(piCodingAgent.createWriteTool(workingDirectory), workingDirectory),
+    ];
   }
 
   return [
