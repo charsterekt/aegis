@@ -6,6 +6,7 @@ export interface MockRunIssueDefinition {
   key: string;
   title: string;
   description: string;
+  fileScope?: string[];
   issueType: MockRunIssueType;
   priority: MockRunPriority;
   queueRole: MockRunQueueRole;

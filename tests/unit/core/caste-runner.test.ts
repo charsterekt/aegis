@@ -264,6 +264,49 @@ describe("runCasteCommand", () => {
     });
   });
 
+  it("uses explicit issue file ownership as the enforced Titan scope", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, emptyDispatchState());
+
+    const issue = {
+      ...createIssue("aegis-owned"),
+      description: [
+        "Create setup contract only.",
+        "Aegis file ownership: docs/setup-contract.md, docs/setup-gate.md",
+      ].join("\n"),
+    };
+
+    await runCasteCommand({
+      root,
+      action: "scout",
+      issueId: "aegis-owned",
+      tracker: {
+        getIssue: vi.fn(async () => issue),
+      },
+      runtime: new ScriptedCasteRuntime({
+        oracle: () => ({
+          output: createOracleOutput({
+            files_affected: ["package.json", "src/App.tsx"],
+          }),
+        }),
+      }),
+    });
+
+    const state = JSON.parse(
+      readFileSync(path.join(root, ".aegis", "dispatch-state.json"), "utf8"),
+    ) as {
+      records: Record<string, { fileScope: { files: string[] } | null }>;
+    };
+    const transcript = JSON.parse(
+      readFileSync(path.join(root, ".aegis", "transcripts", "aegis-owned--oracle.json"), "utf8"),
+    ) as { prompt: string };
+
+    expect(state.records["aegis-owned"]?.fileScope).toEqual({
+      files: ["docs/setup-contract.md", "docs/setup-gate.md"],
+    });
+    expect(transcript.prompt).toContain("Declared file ownership: docs/setup-contract.md, docs/setup-gate.md");
+  });
+
   it("clears downstream artifact refs when scout rewinds an issue", async () => {
     const root = createTempRoot();
     saveDispatchState(root, {

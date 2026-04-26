@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import type {
@@ -27,6 +27,26 @@ type ScriptedModelConfig = {
 type ScriptedModelConfigs = Partial<Record<CasteName, ScriptedModelConfig>>;
 
 const SCRIPTED_TITAN_PROOF_FILE = "aegis-scripted-proof.txt";
+
+function normalizeScriptedScopeFile(candidate: string) {
+  return candidate.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+}
+
+function extractAllowedFileScope(prompt: string): string[] {
+  const match = prompt.match(/^Allowed file scope:\s*(.+)$/im);
+  if (!match) {
+    return [];
+  }
+
+  return match[1]!
+    .split(",")
+    .map((entry) => normalizeScriptedScopeFile(entry))
+    .filter((entry) => entry.length > 0);
+}
+
+function selectScriptedTitanProofFile(input: CasteRunInput) {
+  return extractAllowedFileScope(input.prompt)[0] ?? SCRIPTED_TITAN_PROOF_FILE;
+}
 
 function isScriptedHandlers(
   value: ScriptedModelConfigs | ScriptedHandlers,
@@ -175,7 +195,9 @@ function buildDeterministicTitanResponse(input: CasteRunInput): ScriptedResponse
     };
   }
 
-  const proofPath = path.join(input.workingDirectory, SCRIPTED_TITAN_PROOF_FILE);
+  const proofFile = selectScriptedTitanProofFile(input);
+  const proofPath = path.join(input.workingDirectory, ...proofFile.split("/"));
+  mkdirSync(path.dirname(proofPath), { recursive: true });
   const existingProof = existsSync(proofPath)
     ? readFileSync(proofPath, "utf8")
     : "";
@@ -186,7 +208,7 @@ function buildDeterministicTitanResponse(input: CasteRunInput): ScriptedResponse
     "utf8",
   );
 
-  const add = runGit(input.workingDirectory, ["add", SCRIPTED_TITAN_PROOF_FILE]);
+  const add = runGit(input.workingDirectory, ["add", proofFile]);
   if (add.status !== 0) {
     return {
       output: "{}",
@@ -211,7 +233,7 @@ function buildDeterministicTitanResponse(input: CasteRunInput): ScriptedResponse
     output: JSON.stringify({
       outcome: "success",
       summary: "deterministic scripted implementation",
-      files_changed: [SCRIPTED_TITAN_PROOF_FILE],
+      files_changed: [proofFile],
       tests_and_checks_run: ["git rev-parse HEAD"],
       known_risks: [],
       follow_up_work: [],

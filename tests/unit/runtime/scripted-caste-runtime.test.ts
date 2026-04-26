@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 
@@ -180,5 +180,35 @@ describe("ScriptedCasteRuntime", () => {
     expect(result.outputText).toContain("aegis-scripted-proof.txt");
     expect(readFileSync(path.join(root, "aegis-scripted-proof.txt"), "utf8")).toContain("aegis-123");
     expect(runGit(root, ["rev-parse", "HEAD"]).trim()).not.toBe(baselineHead);
+  });
+
+  it("writes the default Titan proof inside the allowed file scope", async () => {
+    const root = createTempRoot();
+    writeFileSync(path.join(root, "README.md"), "baseline\n", "utf8");
+    runGit(root, ["init"]);
+    runGit(root, ["config", "user.email", "test@aegis.local"]);
+    runGit(root, ["config", "user.name", "Aegis Test"]);
+    runGit(root, ["add", "--all"]);
+    runGit(root, ["commit", "-m", "baseline"]);
+    runGit(root, ["branch", "-M", "main"]);
+    runGit(root, ["checkout", "-b", "aegis/aegis-scoped"]);
+
+    const runtime = createDefaultScriptedCasteRuntime();
+    const result = await runtime.run({
+      caste: "titan",
+      issueId: "aegis-scoped",
+      root,
+      workingDirectory: root,
+      prompt: [
+        "Implement issue aegis-scoped.",
+        "Allowed file scope: docs/setup-contract.md, docs/setup-gate.md",
+      ].join("\n"),
+    });
+
+    const parsed = JSON.parse(result.outputText) as { files_changed: string[] };
+    expect(result.status).toBe("succeeded");
+    expect(parsed.files_changed).toEqual(["docs/setup-contract.md"]);
+    expect(readFileSync(path.join(root, "docs", "setup-contract.md"), "utf8")).toContain("aegis-scoped");
+    expect(existsSync(path.join(root, "aegis-scripted-proof.txt"))).toBe(false);
   });
 });

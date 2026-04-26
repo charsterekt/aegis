@@ -111,6 +111,7 @@ function buildOraclePrompt(issue: AegisIssue) {
   const description = issue.description?.trim() || "No description provided.";
   const blockers = issue.blockers.length > 0 ? issue.blockers.join(", ") : "none";
   const labels = issue.labels.length > 0 ? issue.labels.join(", ") : "none";
+  const declaredScope = extractDeclaredFileScope(issue.description ?? "");
 
   return [
     `Scout ${issue.id}: ${issue.title}`,
@@ -118,12 +119,27 @@ function buildOraclePrompt(issue: AegisIssue) {
     `Status: ${issue.status}`,
     `Blockers: ${blockers}`,
     `Labels: ${labels}`,
+    ...(declaredScope.length > 0
+      ? [`Declared file ownership: ${declaredScope.join(", ")}`]
+      : []),
     "Produce only scout context: files, risks, suggested checks, and scope notes.",
     "Do not decide readiness, do not decompose, and do not propose new issues.",
     `Call tool '${ORACLE_EMIT_ASSESSMENT_TOOL_NAME}' exactly once as final step after analysis is complete.`,
     "Return only JSON. No markdown fences. No prose before or after JSON.",
     "JSON schema keys: files_affected, estimated_complexity, risks, suggested_checks, scope_notes.",
   ].join("\n");
+}
+
+function extractDeclaredFileScope(description: string): string[] {
+  const match = description.match(/^Aegis file ownership:\s*(.+)$/im);
+  if (!match) {
+    return [];
+  }
+
+  return match[1]!
+    .split(",")
+    .map((entry) => normalizeScopeFile(entry))
+    .filter((entry) => entry.length > 0);
 }
 
 function normalizeScopeFile(candidate: string) {
@@ -569,7 +585,8 @@ async function runScout(
     ...clearDownstreamArtifactRefs(record),
     stage: "scouted",
     oracleAssessmentRef: artifactRef,
-    fileScope: normalizeFileScope(assessment.files_affected),
+    fileScope: normalizeFileScope(extractDeclaredFileScope(issue.description ?? ""))
+      ?? normalizeFileScope(assessment.files_affected),
     oracleReady: null,
     oracleDecompose: null,
     oracleBlockers: null,

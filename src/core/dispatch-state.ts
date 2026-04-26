@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveFailureWindowStartMs } from "./failure-policy.js";
+import { renameWithRetries } from "../shared/atomic-write.js";
 
 export type AgentCaste = "oracle" | "titan" | "sentinel" | "janus";
 
@@ -121,7 +122,7 @@ export function saveDispatchState(projectRoot: string, state: DispatchState): vo
   const tmpPath = dispatchStateTmpPath(projectRoot);
   const finalPath = dispatchStatePath(projectRoot);
   writeFileSync(tmpPath, JSON.stringify(state, null, 2), "utf-8");
-  renameSync(tmpPath, finalPath);
+  renameWithRetries(tmpPath, finalPath);
 }
 
 const IN_PROGRESS_STAGES = new Set<DispatchStage>([
