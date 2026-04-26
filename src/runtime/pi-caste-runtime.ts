@@ -4,7 +4,7 @@ import {
   type FindOperations,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
-import { spawn, type SpawnOptions } from "node:child_process";
+import { spawn, spawnSync, type SpawnOptions } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -397,18 +397,25 @@ function assertPathWithinAllowedFileScope(
   }
 
   const normalizedCandidate = normalizeScopedPath(candidate, workingDirectory);
-  const allowed = allowedFileScope.some((entry) => {
-    const normalizedEntry = entry.replace(/\\/g, "/").replace(/^\.\//, "").trim();
-    return normalizedCandidate === normalizedEntry
-      || (normalizedEntry.endsWith("/") && normalizedCandidate.startsWith(normalizedEntry));
-  });
-  if (allowed) {
+  if (isPathAllowedByScope(normalizedCandidate, allowedFileScope)) {
     return;
   }
 
   throw new Error(
     `${toolName} path is outside allowed file scope: ${normalizedCandidate}`,
   );
+}
+
+function isPathAllowedByScope(normalizedCandidate: string, allowedFileScope: string[]) {
+  if (allowedFileScope.length === 0) {
+    return true;
+  }
+
+  return allowedFileScope.some((entry) => {
+    const normalizedEntry = entry.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+    return normalizedCandidate === normalizedEntry
+      || (normalizedEntry.endsWith("/") && normalizedCandidate.startsWith(normalizedEntry));
+  });
 }
 
 function tokenizeShellCommand(command: string) {
@@ -476,6 +483,10 @@ function isPackageInstallCommand(tokens: string[]) {
       || subcommand === "i"
       || subcommand === "add"
       || subcommand === "ci"
+      || subcommand === "create"
+      || subcommand === "init"
+      || subcommand === "exec"
+      || subcommand === "x"
       || subcommand === "update"
       || subcommand === "remove"
       || subcommand === "uninstall"
@@ -486,6 +497,10 @@ function isPackageInstallCommand(tokens: string[]) {
     if ((executable === "pnpm" || executable === "yarn" || executable === "bun") && (
       subcommand === "install"
       || subcommand === "add"
+      || subcommand === "create"
+      || subcommand === "init"
+      || subcommand === "exec"
+      || subcommand === "x"
       || subcommand === "update"
       || subcommand === "remove"
       || subcommand === "uninstall"
@@ -523,6 +538,40 @@ function assertPackageCommandAllowed(command: string, allowedFileScope: string[]
 
   throw new Error(
     "Titan package install requires package files in allowed scope.",
+  );
+}
+
+function readGitChangedFiles(workingDirectory: string) {
+  const probe = spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
+    cwd: workingDirectory,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (probe.status !== 0) {
+    return [];
+  }
+
+  return probe.stdout
+    .split(/\r?\n/)
+    .map((line) => line.slice(3).trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.includes(" -> ") ? line.split(" -> ").at(-1)! : line)
+    .map((line) => line.replace(/\\/g, "/").replace(/^\.\//, ""));
+}
+
+function assertBashDidNotDirtyOutOfScope(workingDirectory: string, allowedFileScope: string[]) {
+  if (allowedFileScope.length === 0) {
+    return;
+  }
+
+  const outOfScope = readGitChangedFiles(workingDirectory)
+    .filter((file) => !isPathAllowedByScope(file, allowedFileScope));
+  if (outOfScope.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    `Titan bash command changed files outside allowed scope: ${outOfScope.join(", ")}`,
   );
 }
 
@@ -598,7 +647,11 @@ function wrapTitanBashTool<TTool extends { execute: (...args: any[]) => any }>(
         assertPackageCommandAllowed(params.command, allowedFileScope);
       }
 
-      return tool.execute(toolCallId, params, signal, onUpdate);
+      const result = await tool.execute(toolCallId, params, signal, onUpdate);
+      if (typeof params?.command === "string") {
+        assertBashDidNotDirtyOutOfScope(workingDirectory, allowedFileScope);
+      }
+      return result;
     },
   };
 }

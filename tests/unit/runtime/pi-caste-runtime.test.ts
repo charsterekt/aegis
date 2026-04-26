@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { JANUS_EMIT_RESOLUTION_TOOL_NAME } from "../../../src/castes/janus/janus-tool-contract.js";
 import { ORACLE_EMIT_ASSESSMENT_TOOL_NAME } from "../../../src/castes/oracle/oracle-tool-contract.js";
@@ -813,6 +817,77 @@ describe("PiCasteRuntime", () => {
       path: "docs/setup-contract.md",
       content: "contract\n",
     }, undefined, undefined)).resolves.toEqual({ content: [], isError: false });
+  });
+
+  it("blocks Titan package scaffolds outside declared package file scope", async () => {
+    const fixture = CONTRACT_FIXTURES.find((candidate) => candidate.caste === "titan");
+    if (!fixture) {
+      throw new Error("Missing titan fixture.");
+    }
+
+    configureToolSuccess(fixture);
+    const runtime = createSingleCasteRuntime("titan");
+
+    await runtime.run({
+      caste: "titan",
+      issueId: "aegis-bash-scope",
+      root: "repo",
+      workingDirectory: "repo/titan",
+      prompt: "Allowed file scope: docs/setup-contract.md",
+    });
+
+    const createSessionCall = mockedAgent.createAgentSession.mock.calls.at(-1) as [
+      { tools?: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }> },
+    ] | undefined;
+    const bashTool = createSessionCall?.[0].tools?.find((tool) => tool.name === "bash");
+
+    await expect(bashTool?.execute("call-1", {
+      command: "npm create vite@latest .",
+    }, undefined, undefined)).rejects.toThrow("Titan package install requires package files in allowed scope");
+  });
+
+  it("rejects Titan bash commands that dirty files outside declared file scope", async () => {
+    const fixture = CONTRACT_FIXTURES.find((candidate) => candidate.caste === "titan");
+    if (!fixture) {
+      throw new Error("Missing titan fixture.");
+    }
+
+    const workingDirectory = mkdtempSync(path.join(tmpdir(), "aegis-pi-scope-"));
+    try {
+      execFileSync("git", ["init"], { cwd: workingDirectory, stdio: "ignore" });
+      mkdirSync(path.join(workingDirectory, "docs"));
+      mockedAgent.createBashTool.mockReturnValueOnce({
+        name: "bash",
+        parameters: {},
+        execute: vi.fn(async () => {
+          writeFileSync(path.join(workingDirectory, "package.json"), "{}\n");
+          return { content: [], isError: false };
+        }),
+      });
+      configureToolSuccess(fixture);
+      const runtime = createSingleCasteRuntime("titan");
+
+      await runtime.run({
+        caste: "titan",
+        issueId: "aegis-bash-drift",
+        root: workingDirectory,
+        workingDirectory,
+        prompt: "Allowed file scope: docs/setup-contract.md",
+      });
+
+      const createSessionCall = mockedAgent.createAgentSession.mock.calls.at(-1) as [
+        { tools?: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }> },
+      ] | undefined;
+      const bashTool = createSessionCall?.[0].tools?.find((tool) => tool.name === "bash");
+
+      await expect(bashTool?.execute("call-1", {
+        command: "node scripts/scaffold.js",
+      }, undefined, undefined)).rejects.toThrow(
+        "Titan bash command changed files outside allowed scope: package.json",
+      );
+    } finally {
+      rmSync(workingDirectory, { recursive: true, force: true });
+    }
   });
 
   it("isolates Pi sessions from discovered extensions", async () => {
