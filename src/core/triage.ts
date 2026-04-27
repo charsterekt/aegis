@@ -44,10 +44,6 @@ function isCoolingDown(record: DispatchRecord, nowMs: number) {
 }
 
 function resolveFailedIssueSkipReason(record: DispatchRecord): TriageSkipReason | null {
-  if (record.stage === "blocked_on_child") {
-    return "blocked";
-  }
-
   if (
     record.stage === "complete"
     || record.stage === "implemented"
@@ -70,6 +66,7 @@ function needsFuturePhase(record: DispatchRecord) {
   return record.stage !== "pending"
     && record.stage !== "scouted"
     && record.stage !== "rework_required"
+    && record.stage !== "blocked_on_child"
     && record.stage !== "failed_operational";
 }
 
@@ -89,7 +86,11 @@ function resolveDecision(
   issue: TrackerReadyIssue,
   record: DispatchRecord | undefined,
 ): DispatchDecision {
-  if (record?.stage === "scouted" || record?.stage === "rework_required") {
+  if (
+    record?.stage === "scouted"
+    || record?.stage === "rework_required"
+    || record?.stage === "blocked_on_child"
+  ) {
     return {
       issueId: issue.id,
       title: issue.title,

@@ -290,7 +290,7 @@ export class BeadsTrackerClient implements TrackerClient {
     return new Promise((resolve, reject) => {
       this.execFileImpl(
         "bd",
-        ["link", input.blockingIssueId, input.blockedIssueId, "--type", "blocks"],
+        ["link", input.blockedIssueId, input.blockingIssueId, "--type", "blocks"],
         {
           cwd: root,
           encoding: "utf8",

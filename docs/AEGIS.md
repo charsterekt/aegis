@@ -45,7 +45,7 @@ Required proof:
 - Oracle, Titan, Sentinel, Janus, merge, and dispatch artifacts explain the path.
 - No ready-graph amplification occurs.
 - No agent writes outside its labor or permitted merge/integration scope.
-- No hidden root mutation occurs.
+- No hidden root mutation is accepted. Clean, in-scope root commits made by a live agent may be adopted as explicit candidates when Aegis can prove the diff, scope, and artifact match.
 - Merge queue lands work deterministically.
 - Human or QA agent can verify outcome through terminal output and `.aegis` files.
 
@@ -104,6 +104,8 @@ Exit gate:
 - `bd ready --json` returns `[]` in seeded mock repo.
 - The React todo app runs.
 - All artifacts and logs support the claim.
+
+Valid direct root adoption is allowed only when Aegis proves the root was clean before and after, the root head advanced linearly, the committed diff exactly matches the Titan artifact and file scope, and Sentinel still gates the adopted candidate.
 
 ### Step 2: Per-Agent Session Terminals
 
@@ -185,6 +187,7 @@ Every real adapter must enforce or allow Aegis to enforce:
 - artifact emission before success is accepted.
 - transcript persistence on failure and enough metadata on success.
 - deterministic post-session validation by Aegis.
+- clean, in-scope root commits can be adopted only when Aegis records them as candidate artifacts; dirty, unexplained, or out-of-scope root mutation still fails closed.
 
 If an adapter cannot enforce a rule internally, Aegis must wrap or validate it externally. If wrapping/validation is insufficient, the adapter fails contract.
 
@@ -261,7 +264,7 @@ Titan may:
 Titan may not:
 
 - merge.
-- mutate root directly.
+- leave hidden, dirty, or out-of-scope root mutation.
 - create non-blocking follow-up issues in auto mode.
 - broaden scope into repo cleanup.
 - claim ordinary `success` without advancing its candidate branch.

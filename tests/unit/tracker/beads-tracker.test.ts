@@ -106,7 +106,7 @@ describe("BeadsTrackerClient", () => {
     );
   });
 
-  it("links a blocking issue through bd link with blocks relationship", async () => {
+  it("links a blocking issue through bd link with Beads dependency direction", async () => {
     const execFile = vi.fn(
       (
         _command: string,
@@ -126,7 +126,7 @@ describe("BeadsTrackerClient", () => {
 
     expect(execFile).toHaveBeenCalledWith(
       "bd",
-      ["link", "aegis-child-1", "aegis-parent-1", "--type", "blocks"],
+      ["link", "aegis-parent-1", "aegis-child-1", "--type", "blocks"],
       expect.objectContaining({
         cwd: "repo",
         encoding: "utf8",

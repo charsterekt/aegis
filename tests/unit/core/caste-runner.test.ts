@@ -5,8 +5,9 @@ import { execFileSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { emptyDispatchState, saveDispatchState } from "../../../src/core/dispatch-state.js";
+import { emptyDispatchState, loadDispatchState, saveDispatchState } from "../../../src/core/dispatch-state.js";
 import { runCasteCommand } from "../../../src/core/caste-runner.js";
+import { persistArtifact } from "../../../src/core/artifact-store.js";
 import { ScriptedCasteRuntime } from "../../../src/runtime/scripted-caste-runtime.js";
 import type { CasteSessionResult } from "../../../src/runtime/caste-runtime.js";
 import type { AegisIssue } from "../../../src/tracker/issue-model.js";
@@ -1120,6 +1121,164 @@ describe("runCasteCommand", () => {
       resolveBaseBranch: () => "main",
       resolveLaborBasePath: () => "scratchpad",
     })).rejects.toThrow("changed the project root HEAD");
+  });
+
+  it("adopts a clean in-scope root commit when Titan commits the root instead of labor", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-root-adopt": {
+          issueId: "aegis-root-adopt",
+          stage: "scouted",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-root-adopt.json"),
+          sentinelVerdictRef: null,
+          fileScope: {
+            files: ["package-lock.json", "package.json"],
+          },
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    initializeGitRepository(root);
+
+    const result = await runCasteCommand({
+      root,
+      action: "implement",
+      issueId: "aegis-root-adopt",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-root-adopt")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        titan: (input) => {
+          writeFileSync(path.join(input.workingDirectory, "package.json"), "{\"private\":true}\n", "utf8");
+          writeFileSync(path.join(root, "package.json"), "{\"private\":true}\n", "utf8");
+          writeFileSync(path.join(root, "package-lock.json"), "{\"lockfileVersion\":3}\n", "utf8");
+          runGit(root, ["add", "package.json", "package-lock.json"]);
+          runGit(root, ["commit", "-m", "install core dependencies"]);
+          return {
+            output: JSON.stringify({
+              outcome: "success",
+              summary: "committed root manifests",
+              files_changed: ["package-lock.json", "package.json"],
+              tests_and_checks_run: ["npm install"],
+              known_risks: [],
+              follow_up_work: [],
+            }),
+            toolsUsed: ["bash"],
+          };
+        },
+      }),
+      resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => "scratchpad",
+    });
+
+    const artifact = JSON.parse(
+      readFileSync(path.join(root, ".aegis", "titan", "aegis-root-adopt.json"), "utf8"),
+    ) as {
+      candidate_branch: string;
+      base_branch: string;
+      labor_path: string;
+      adoption?: { mode: string };
+    };
+
+    expect(result).toMatchObject({
+      action: "implement",
+      issueId: "aegis-root-adopt",
+      stage: "implemented",
+    });
+    expect(artifact).toMatchObject({
+      candidate_branch: "main",
+      base_branch: "main",
+      labor_path: root,
+      adoption: {
+        mode: "root_commit",
+      },
+    });
+  });
+
+  it("tells resumed Titan work that the blocking child already closed", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-resume-parent": {
+          issueId: "aegis-resume-parent",
+          stage: "implementing",
+          runningAgent: null,
+          lastCompletedCaste: "titan",
+          blockedByIssueId: "aegis-child-done",
+          reviewFeedbackRef: null,
+          policyArtifactRef: path.join(".aegis", "policy", "aegis-resume-parent.json"),
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-resume-parent.json"),
+          titanHandoffRef: path.join(".aegis", "titan", "aegis-resume-parent.json"),
+          titanClarificationRef: path.join(".aegis", "titan", "aegis-resume-parent.json"),
+          sentinelVerdictRef: null,
+          janusArtifactRef: null,
+          failureTranscriptRef: null,
+          fileScope: {
+            files: ["vite.config.ts"],
+          },
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+    persistArtifact(root, {
+      family: "oracle",
+      issueId: "aegis-resume-parent",
+      artifact: {
+        files_affected: ["vite.config.ts"],
+        estimated_complexity: "moderate",
+        risks: [],
+        suggested_checks: [],
+        scope_notes: [],
+      },
+    });
+    initializeGitRepository(root);
+
+    let titanPrompt = "";
+    const result = await runCasteCommand({
+      root,
+      action: "implement",
+      issueId: "aegis-resume-parent",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-resume-parent")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        titan: (input) => {
+          titanPrompt = input.prompt;
+          return {
+            output: JSON.stringify({
+              outcome: "already_satisfied",
+              summary: "Closed child already handled the package work.",
+              files_changed: [],
+              tests_and_checks_run: ["git status --short"],
+              known_risks: [],
+              follow_up_work: [],
+            }),
+            toolsUsed: ["bash"],
+          };
+        },
+      }),
+      resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => "scratchpad",
+    });
+
+    expect(titanPrompt).toContain("Previously blocked by child issue aegis-child-done");
+    expect(result.stage).toBe("implemented");
+    expect(loadDispatchState(root).records["aegis-resume-parent"]?.blockedByIssueId).toBeNull();
   });
 
   it("rejects Titan artifact file links instead of treating them as changed paths", async () => {

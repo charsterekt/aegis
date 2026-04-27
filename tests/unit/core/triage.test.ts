@@ -43,7 +43,7 @@ describe("triageReadyWork", () => {
     expect(result.skipped).toEqual([]);
   });
 
-  it("skips blocked_on_child issues even if the tracker still reports them ready", () => {
+  it("resumes blocked_on_child issues when the tracker reports them ready", () => {
     const result = triageReadyWork({
       readyIssues: [{ id: "ISSUE-2", title: "Blocked parent" }],
       dispatchState: createDispatchState({
@@ -52,6 +52,8 @@ describe("triageReadyWork", () => {
           stage: "blocked_on_child",
           runningAgent: null,
           oracleAssessmentRef: ".aegis/oracle/ISSUE-2.json",
+          titanClarificationRef: ".aegis/titan/ISSUE-2.json",
+          blockedByIssueId: "ISSUE-child-1",
           titanHandoffRef: null,
           sentinelVerdictRef: null,
           janusArtifactRef: null,
@@ -67,8 +69,10 @@ describe("triageReadyWork", () => {
       config: DEFAULT_AEGIS_CONFIG,
     });
 
-    expect(result.dispatchable).toEqual([]);
-    expect(result.skipped).toEqual([{ issueId: "ISSUE-2", reason: "blocked" }]);
+    expect(result.dispatchable).toEqual([
+      { issueId: "ISSUE-2", title: "Blocked parent", caste: "titan", stage: "implementing" },
+    ]);
+    expect(result.skipped).toEqual([]);
   });
 
   it("retries failed_operational only after cooldown expires", () => {
@@ -300,7 +304,7 @@ describe("triageReadyWork", () => {
     ]);
   });
 
-  it("does not auto-retry parents blocked on Titan clarification issues", () => {
+  it("trusts tracker readiness for parents blocked on Titan clarification issues", () => {
     const result = triageReadyWork({
       readyIssues: [{ id: "ISSUE-1", title: "Clarify first" }],
       dispatchState: createDispatchState({
@@ -328,13 +332,10 @@ describe("triageReadyWork", () => {
       now: "2026-04-14T12:01:00.000Z",
     });
 
-    expect(result.dispatchable).toEqual([]);
-    expect(result.skipped).toEqual([
-      {
-        issueId: "ISSUE-1",
-        reason: "blocked",
-      },
+    expect(result.dispatchable).toEqual([
+      { issueId: "ISSUE-1", title: "Clarify first", caste: "titan", stage: "implementing" },
     ]);
+    expect(result.skipped).toEqual([]);
   });
 
   it("does not auto-retry failed Oracle not-ready assessments", () => {

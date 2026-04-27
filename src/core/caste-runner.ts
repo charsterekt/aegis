@@ -197,6 +197,7 @@ function buildTitanPrompt(
     fileScope?: { files: string[] } | null;
     suggestedChecks?: string[];
     scopeNotes?: string[];
+    resolvedBlockerIssueId?: string | null;
   },
 ) {
   const description = issue.description?.trim() || "No description provided.";
@@ -211,6 +212,7 @@ function buildTitanPrompt(
   const suggestedChecks = options?.suggestedChecks?.length
     ? options.suggestedChecks.map((entry) => `- ${entry}`).join("\n")
     : null;
+  const resolvedBlockerIssueId = options?.resolvedBlockerIssueId ?? null;
 
   return [
     `Implement issue ${issue.id}.`,
@@ -236,6 +238,12 @@ function buildTitanPrompt(
       ? [
         "Oracle suggested checks:",
         suggestedChecks,
+      ]
+      : []),
+    ...(resolvedBlockerIssueId
+      ? [
+        `Previously blocked by child issue ${resolvedBlockerIssueId}. Tracker now reports this parent ready, so the child is closed.`,
+        "Do not create another blocker for the same out-of-scope need; inspect the current workspace and continue remaining owned-scope work. If the issue contract is already satisfied, return already_satisfied.",
       ]
       : []),
     "Preserve existing Aegis/Beads operational files and ignore rules. Do not modify .aegis/, .beads/, or remove their existing .gitignore coverage.",
@@ -383,9 +391,10 @@ function validateTitanSessionOutcome(input: {
   artifact: ReturnType<typeof parseTitanArtifact>;
   candidateBranch: string;
   fileScope: { files: string[] } | null;
-  laborWorkingDirectory: string;
-  laborProofPair: { before: ReturnType<typeof captureGitProofPair>["before"]; after: ReturnType<typeof captureGitProofPair>["after"] };
+  candidateWorkingDirectory: string;
+  candidateProofPair: { before: ReturnType<typeof captureGitProofPair>["before"]; after: ReturnType<typeof captureGitProofPair>["after"] };
   rootProofPair: { before: ReturnType<typeof captureGitProofPair>["before"]; after: ReturnType<typeof captureGitProofPair>["after"] };
+  adoptedRootCommit: boolean;
 }) {
   const rootDrift = summarizeOperationalStatusDrift(input.rootProofPair);
   if (rootDrift) {
@@ -396,6 +405,7 @@ function validateTitanSessionOutcome(input: {
     input.rootProofPair.before?.headCommit
     && input.rootProofPair.after?.headCommit
     && input.rootProofPair.before.headCommit !== input.rootProofPair.after.headCommit
+    && !input.adoptedRootCommit
   ) {
     return `Titan implementation for ${input.issueId} changed the project root HEAD from ${input.rootProofPair.before.headCommit} to ${input.rootProofPair.after.headCommit}.`;
   }
@@ -403,11 +413,11 @@ function validateTitanSessionOutcome(input: {
   const normalizedArtifactFiles = normalizeTitanArtifactChangedFiles(
     input.issueId,
     input.artifact.files_changed,
-    input.laborWorkingDirectory,
+    input.candidateWorkingDirectory,
   );
   const committedFiles = resolveCommittedChangedFiles(
-    input.laborWorkingDirectory,
-    input.laborProofPair,
+    input.candidateWorkingDirectory,
+    input.candidateProofPair,
   ).map((entry) => normalizeScopeFile(entry));
   const scopeError = validateTitanChangedFilesScope(
     input.issueId,
@@ -418,11 +428,11 @@ function validateTitanSessionOutcome(input: {
     return scopeError;
   }
 
-  const hasDurableGitProof = input.laborProofPair.before !== null && input.laborProofPair.after !== null;
+  const hasDurableGitProof = input.candidateProofPair.before !== null && input.candidateProofPair.after !== null;
   if (
     input.artifact.outcome === "success"
     && hasDurableGitProof
-    && !hasAdvancedGitHead(input.laborProofPair, input.candidateBranch)
+    && !hasAdvancedGitHead(input.candidateProofPair, input.candidateBranch)
   ) {
     return `Titan implementation for ${input.issueId} did not advance candidate branch ${input.candidateBranch}.`;
   }
@@ -446,6 +456,69 @@ function validateTitanSessionOutcome(input: {
   }
 
   return null;
+}
+
+function hasChangedHead(proofPair: {
+  before: ReturnType<typeof captureGitProofPair>["before"];
+  after: ReturnType<typeof captureGitProofPair>["after"];
+}) {
+  return Boolean(
+    proofPair.before?.headCommit
+    && proofPair.after?.headCommit
+    && proofPair.before.headCommit !== proofPair.after.headCommit,
+  );
+}
+
+function arraysEqual(left: string[], right: string[]) {
+  return left.length === right.length && left.every((entry, index) => entry === right[index]);
+}
+
+function resolveRootCommitAdoption(input: {
+  issueId: string;
+  root: string;
+  artifact: ReturnType<typeof parseTitanArtifact>;
+  fileScope: { files: string[] } | null;
+  rootProofPair: { before: ReturnType<typeof captureGitProofPair>["before"]; after: ReturnType<typeof captureGitProofPair>["after"] };
+}) {
+  if (input.artifact.outcome !== "success" || !hasChangedHead(input.rootProofPair)) {
+    return null;
+  }
+
+  if (summarizeOperationalStatusDrift(input.rootProofPair)) {
+    return null;
+  }
+
+  const rootCommittedFiles = resolveCommittedChangedFiles(
+    input.root,
+    input.rootProofPair,
+  ).map((entry) => normalizeScopeFile(entry));
+  if (rootCommittedFiles.length === 0) {
+    return null;
+  }
+
+  const artifactFiles = normalizeTitanArtifactChangedFiles(
+    input.issueId,
+    input.artifact.files_changed,
+    input.root,
+  );
+  if (!arraysEqual(artifactFiles, rootCommittedFiles)) {
+    return null;
+  }
+
+  if (validateTitanChangedFilesScope(input.issueId, input.fileScope, rootCommittedFiles)) {
+    return null;
+  }
+
+  const candidateBranch = input.rootProofPair.after?.branch;
+  const baseBranch = input.rootProofPair.before?.branch;
+  if (!candidateBranch || !baseBranch) {
+    return null;
+  }
+
+  return {
+    candidateBranch,
+    baseBranch,
+  };
 }
 
 function isPathInside(basePath: string, candidatePath: string) {
@@ -684,6 +757,7 @@ async function runImplement(
       fileScope: record.fileScope,
       suggestedChecks: oracleContext?.suggestedChecks,
       scopeNotes: oracleContext?.scopeNotes,
+      resolvedBlockerIssueId: record.blockedByIssueId ?? null,
     }),
   } satisfies CasteRunInput;
   const gitProofPair = captureGitProofPair(labor.laborPath);
@@ -715,29 +789,49 @@ async function runImplement(
 
   const completedGitProof = completeGitProofPair(labor.laborPath, gitProofPair);
   const completedRootGitProof = completeGitProofPair(input.root, rootGitProofPair);
+  const baseArtifact = finalAttempt.artifact;
+  const rootAdoption = resolveRootCommitAdoption({
+    issueId: issue.id,
+    root: input.root,
+    artifact: baseArtifact,
+    fileScope: record.fileScope,
+    rootProofPair: completedRootGitProof,
+  });
+  const candidateWorkingDirectory = rootAdoption ? input.root : labor.laborPath;
+  const candidateProofPair = rootAdoption ? completedRootGitProof : completedGitProof;
+  const candidateBranch = rootAdoption?.candidateBranch ?? labor.branchName;
+  const candidateBaseBranch = rootAdoption?.baseBranch ?? labor.baseBranch;
+  const artifact = {
+    ...baseArtifact,
+    files_changed: normalizeTitanArtifactChangedFiles(
+      issue.id,
+      baseArtifact.files_changed,
+      candidateWorkingDirectory,
+    ),
+  };
   const gitProofRefs = persistGitProofArtifacts(
     input.root,
     "titan",
     issue.id,
-    labor.laborPath,
-    completedGitProof,
+    candidateWorkingDirectory,
+    candidateProofPair,
   );
-  const artifact = {
-    ...finalAttempt.artifact,
-    files_changed: normalizeTitanArtifactChangedFiles(
-      issue.id,
-      finalAttempt.artifact.files_changed,
-      labor.laborPath,
-    ),
-  };
   const artifactRef = persistArtifact(input.root, {
     family: "titan",
     issueId: issue.id,
     artifact: {
       ...artifact,
-      labor_path: labor.laborPath,
-      candidate_branch: labor.branchName,
-      base_branch: labor.baseBranch,
+      labor_path: candidateWorkingDirectory,
+      candidate_branch: candidateBranch,
+      base_branch: candidateBaseBranch,
+      ...(rootAdoption
+        ? {
+          adoption: {
+            mode: "root_commit",
+            original_labor_path: labor.laborPath,
+          },
+        }
+        : {}),
       git_proof: {
         status_before_ref: gitProofRefs.statusBeforeRef,
         status_after_ref: gitProofRefs.statusAfterRef,
@@ -754,11 +848,12 @@ async function runImplement(
   const validationError = validateTitanSessionOutcome({
     issueId: issue.id,
     artifact,
-    candidateBranch: labor.branchName,
+    candidateBranch,
     fileScope: record.fileScope,
-    laborWorkingDirectory: labor.laborPath,
-    laborProofPair: completedGitProof,
+    candidateWorkingDirectory,
+    candidateProofPair,
     rootProofPair: completedRootGitProof,
+    adoptedRootCommit: rootAdoption !== null,
   });
   if (validationError) {
     throw new Error(validationError);
@@ -794,6 +889,7 @@ async function runImplement(
   saveRecord(input.root, issue.id, {
     ...clearDownstreamArtifactRefs(record),
     stage: implementationSucceeded ? "implemented" : "failed_operational",
+    blockedByIssueId: null,
     oracleAssessmentRef: record.oracleAssessmentRef,
     titanHandoffRef: implementationSucceeded ? artifactRef : null,
     titanClarificationRef: artifact.outcome === "clarification" ? artifactRef : null,
