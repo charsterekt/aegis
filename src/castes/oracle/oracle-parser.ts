@@ -32,6 +32,29 @@ function assertStringArray(value: unknown, key: string): string[] {
   return value.slice();
 }
 
+function normalizeFilesAffected(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error("Oracle assessment field 'files_affected' must be an array of strings.");
+  }
+
+  return value.map((item) => {
+    if (typeof item === "string") {
+      return item;
+    }
+
+    if (
+      typeof item === "object"
+      && item !== null
+      && !Array.isArray(item)
+      && typeof (item as { path?: unknown }).path === "string"
+    ) {
+      return (item as { path: string }).path;
+    }
+
+    throw new Error("Oracle assessment field 'files_affected' must be an array of strings.");
+  });
+}
+
 function assertComplexity(value: unknown): OracleComplexity {
   if (value === "trivial" || value === "moderate" || value === "complex") {
     return value;
@@ -69,7 +92,7 @@ export function parseOracleAssessment(raw: string): OracleAssessment {
   }
 
   const assessment: OracleAssessment = {
-    files_affected: assertStringArray(obj["files_affected"], "files_affected"),
+    files_affected: normalizeFilesAffected(obj["files_affected"]),
     estimated_complexity: assertComplexity(obj["estimated_complexity"]),
     risks: assertStringArray(obj["risks"], "risks"),
     suggested_checks: assertStringArray(obj["suggested_checks"], "suggested_checks"),

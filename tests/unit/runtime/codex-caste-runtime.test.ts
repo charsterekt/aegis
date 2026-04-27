@@ -127,7 +127,7 @@ describe("CodexCasteRuntime", () => {
       prompt: "Run.",
       outputPath: "C:\\tmp\\out.txt",
       timeoutMs: 1000,
-    });
+    }, "linux");
 
     expect(args).toEqual([
       "-C",
@@ -148,10 +148,31 @@ describe("CodexCasteRuntime", () => {
     ]);
   });
 
-  it("wraps codex command with cmd.exe on Windows", () => {
+  it("uses full-access Codex sandbox on Windows because workspace-write shell execution is broken", () => {
+    const args = buildCodexExecArgs({
+      cwd: "C:\\repo\\labor",
+      modelId: "gpt-5.4-mini",
+      thinkingLevel: "medium",
+      prompt: "Run.",
+      outputPath: "C:\\tmp\\out.txt",
+      timeoutMs: 1000,
+    }, "win32");
+
+    expect(args).toContain("danger-full-access");
+    expect(args).not.toContain("workspace-write");
+  });
+
+  it("wraps codex command with PowerShell on Windows", () => {
     expect(buildCodexSpawnInvocation(["--version"], "win32")).toEqual({
-      command: "cmd.exe",
-      args: ["/d", "/s", "/c", "codex.cmd", "--version"],
+      command: "powershell.exe",
+      args: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "& 'codex.cmd' '--version'; exit $LASTEXITCODE",
+      ],
     });
   });
 });

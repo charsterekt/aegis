@@ -165,6 +165,9 @@ describe("runCasteCommand", () => {
     expect(JSON.parse(readFileSync(transcriptPath, "utf8")).prompt).toContain(
       "estimated_complexity allowed values: trivial, moderate, complex.",
     );
+    expect(JSON.parse(readFileSync(transcriptPath, "utf8")).prompt).toContain(
+      "files_affected must be an array of path strings, not objects.",
+    );
   });
 
   it("writes an oracle artifact and advances the issue to scouted", async () => {
@@ -804,6 +807,75 @@ describe("runCasteCommand", () => {
     expect(prompt).toContain("Allowed file scope: src/App.jsx, src/index.css");
     expect(prompt).toContain("Stay within the allowed file scope.");
     expect(prompt).toContain("Preserve existing Aegis/Beads operational files and ignore rules.");
+    expect(prompt).toContain("Report files_changed as paths relative to the working directory, never as absolute paths.");
+    expect(prompt).toContain("Allowed mutation_proposal.proposal_type values: create_clarification_blocker, create_prerequisite_blocker, create_out_of_scope_blocker.");
+  });
+
+  it("normalizes absolute Titan files_changed paths inside the labor worktree", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-absolute-paths": {
+          issueId: "aegis-absolute-paths",
+          stage: "scouted",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-absolute-paths.json"),
+          sentinelVerdictRef: null,
+          fileScope: {
+            files: ["docs/setup-contract.md"],
+          },
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    initializeGitRepository(root);
+
+    await runCasteCommand({
+      root,
+      action: "implement",
+      issueId: "aegis-absolute-paths",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-absolute-paths")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        titan: (input) => {
+          const changedPath = path.join(input.workingDirectory, "docs", "setup-contract.md");
+          mkdirSync(path.dirname(changedPath), { recursive: true });
+          writeFileSync(changedPath, "contract\n", "utf8");
+          runGit(input.workingDirectory, ["add", "docs/setup-contract.md"]);
+          runGit(input.workingDirectory, ["commit", "-m", "contract"]);
+          return {
+            output: JSON.stringify({
+              outcome: "success",
+              summary: "implemented in worktree",
+              files_changed: [changedPath],
+              tests_and_checks_run: [],
+              known_risks: [],
+              follow_up_work: [],
+            }),
+            toolsUsed: ["write_file"],
+          };
+        },
+      }),
+      resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => "scratchpad",
+    });
+
+    const artifact = JSON.parse(
+      readFileSync(
+        path.join(root, ".aegis", "titan", "aegis-absolute-paths.json"),
+        "utf8",
+      ),
+    ) as { files_changed: string[] };
+
+    expect(artifact.files_changed).toEqual(["docs/setup-contract.md"]);
   });
 
   it("rejects Titan success when the candidate branch head does not advance", async () => {

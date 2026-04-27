@@ -29,8 +29,38 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+function normalizeStringArray(value: unknown, field: string): string[] {
+  if (isStringArray(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return [value];
+  }
+
+  throw new Error(`Titan mutation_proposal field '${field}' must be an array of strings.`);
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeTitanProposalType(value: unknown): TitanMutationProposalType {
+  if (
+    value === "create_clarification_blocker"
+    || value === "create_prerequisite_blocker"
+    || value === "create_out_of_scope_blocker"
+  ) {
+    return value;
+  }
+
+  if (value === "blocking_dependency" || value === "out_of_scope_blocker") {
+    return "create_out_of_scope_blocker";
+  }
+
+  throw new Error(
+    "Titan mutation_proposal field 'proposal_type' must be one of create_clarification_blocker, create_prerequisite_blocker, create_out_of_scope_blocker",
+  );
 }
 
 function assertTitanMutationProposal(value: unknown): TitanMutationProposal {
@@ -50,31 +80,22 @@ function assertTitanMutationProposal(value: unknown): TitanMutationProposal {
     throw new Error(`Titan mutation_proposal contains unexpected keys: ${unexpectedKeys.join(", ")}`);
   }
 
-  const proposalType = value["proposal_type"];
-  if (
-    proposalType !== "create_clarification_blocker"
-    && proposalType !== "create_prerequisite_blocker"
-    && proposalType !== "create_out_of_scope_blocker"
-  ) {
-    throw new Error(
-      "Titan mutation_proposal field 'proposal_type' must be one of create_clarification_blocker, create_prerequisite_blocker, create_out_of_scope_blocker",
-    );
-  }
+  const proposalType = normalizeTitanProposalType(value["proposal_type"]);
   if (
     typeof value["summary"] !== "string"
     || typeof value["suggested_title"] !== "string"
     || typeof value["suggested_description"] !== "string"
-    || !isStringArray(value["scope_evidence"])
   ) {
     throw new Error("Titan mutation_proposal must include summary, suggested_title, suggested_description, and scope_evidence");
   }
+  const scopeEvidence = normalizeStringArray(value["scope_evidence"], "scope_evidence");
 
   return {
     proposal_type: proposalType,
     summary: value["summary"],
     suggested_title: value["suggested_title"],
     suggested_description: value["suggested_description"],
-    scope_evidence: value["scope_evidence"],
+    scope_evidence: scopeEvidence,
   };
 }
 

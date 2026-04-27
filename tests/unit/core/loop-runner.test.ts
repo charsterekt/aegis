@@ -226,4 +226,80 @@ describe("runDaemonCycle", () => {
       },
     ]);
   });
+
+  it("keeps implemented work in cooldown when pre-merge review crashes", async () => {
+    const root = createTempRoot();
+    initProject(root);
+    mkdirSync(path.join(root, ".aegis", "titan"), { recursive: true });
+    writeFileSync(
+      path.join(root, ".aegis", "titan", "ISSUE-REVIEW.json"),
+      `${JSON.stringify({
+        labor_path: ".aegis/labors/ISSUE-REVIEW",
+        candidate_branch: "aegis/ISSUE-REVIEW",
+        base_branch: "main",
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "ISSUE-REVIEW": {
+          issueId: "ISSUE-REVIEW",
+          stage: "implemented",
+          runningAgent: null,
+          oracleAssessmentRef: ".aegis/oracle/ISSUE-REVIEW.json",
+          titanHandoffRef: ".aegis/titan/ISSUE-REVIEW.json",
+          titanClarificationRef: null,
+          sentinelVerdictRef: null,
+          janusArtifactRef: null,
+          failureTranscriptRef: null,
+          fileScope: null,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "daemon",
+          updatedAt: "2026-04-26T20:00:00.000Z",
+        },
+      },
+    });
+
+    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
+      BeadsTrackerClient: class {
+        async listReadyIssues() {
+          return [{ id: "ISSUE-REVIEW", title: "Review me" }];
+        }
+      },
+    }));
+
+    const { runDaemonCycle } = await import("../../../src/core/loop-runner.js");
+    const launchPreMergeReview = vi.fn(async () => {
+      throw new Error("Sentinel verdict field 'contractChecks' must be an array of strings.");
+    });
+    const runtime = {
+      async launch() {
+        throw new Error("unexpected dispatch launch");
+      },
+      async readSession() {
+        return null;
+      },
+      async terminate() {
+        return null;
+      },
+    };
+
+    await runDaemonCycle(root, { runtime, launchPreMergeReview });
+    await runDaemonCycle(root, { runtime, launchPreMergeReview });
+
+    const state = loadDispatchState(root);
+    expect(state.records["ISSUE-REVIEW"]).toMatchObject({
+      stage: "implemented",
+      runningAgent: null,
+      failureCount: 1,
+      consecutiveFailures: 1,
+    });
+    expect(state.records["ISSUE-REVIEW"]?.cooldownUntil).toBeTruthy();
+    expect(launchPreMergeReview).toHaveBeenCalledTimes(1);
+    expect(loadMergeQueueState(root).items).toEqual([]);
+  });
 });

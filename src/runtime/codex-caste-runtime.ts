@@ -70,12 +70,23 @@ function defaultModelConfigs() {
   }));
 }
 
-export function buildCodexExecArgs(request: CodexRunRequest): string[] {
+function quotePowerShellString(value: string) {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function resolveCodexSandboxMode(platform: NodeJS.Platform) {
+  return platform === "win32" ? "danger-full-access" : "workspace-write";
+}
+
+export function buildCodexExecArgs(
+  request: CodexRunRequest,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
   return [
     "-C",
     request.cwd,
     "-s",
-    "workspace-write",
+    resolveCodexSandboxMode(platform),
     "-a",
     "never",
     "-m",
@@ -96,8 +107,15 @@ export function buildCodexSpawnInvocation(
 ) {
   if (platform === "win32") {
     return {
-      command: "cmd.exe",
-      args: ["/d", "/s", "/c", "codex.cmd", ...codexArgs],
+      command: "powershell.exe",
+      args: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        `& 'codex.cmd' ${codexArgs.map(quotePowerShellString).join(" ")}; exit $LASTEXITCODE`,
+      ],
     };
   }
 

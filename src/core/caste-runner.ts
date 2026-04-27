@@ -127,6 +127,7 @@ function buildOraclePrompt(issue: AegisIssue) {
     `Call tool '${ORACLE_EMIT_ASSESSMENT_TOOL_NAME}' exactly once as final step after analysis is complete.`,
     "Return only JSON. No markdown fences. No prose before or after JSON.",
     "JSON schema keys: files_affected, estimated_complexity, risks, suggested_checks, scope_notes.",
+    "files_affected must be an array of path strings, not objects.",
     "estimated_complexity allowed values: trivial, moderate, complex.",
   ].join("\n");
 }
@@ -242,6 +243,7 @@ function buildTitanPrompt(
     "Use git add/git commit explicitly when you make required implementation changes.",
     "Do not leave required implementation changes uncommitted.",
     "If the issue contract is already satisfied by prior merged work, make no edits and emit outcome 'already_satisfied' with files_changed=[] and the checks you ran.",
+    "Report files_changed as paths relative to the working directory, never as absolute paths.",
     `Call tool '${TITAN_EMIT_ARTIFACT_TOOL_NAME}' exactly once as final step after all file edits and checks complete.`,
     "If required project files do not exist, create minimal versions that satisfy the issue contract.",
     "Treat ordinary naming/tooling ambiguity as solvable: choose reasonable defaults and proceed.",
@@ -251,6 +253,7 @@ function buildTitanPrompt(
     "JSON schema keys: outcome, summary, files_changed, tests_and_checks_run, known_risks, follow_up_work, optional mutation_proposal.",
     "Allowed outcome values: success, already_satisfied, clarification, failure.",
     "mutation_proposal keys: proposal_type, summary, suggested_title, suggested_description, scope_evidence.",
+    "Allowed mutation_proposal.proposal_type values: create_clarification_blocker, create_prerequisite_blocker, create_out_of_scope_blocker.",
   ].join("\n");
 }
 
@@ -266,6 +269,7 @@ function buildSentinelPrompt(issue: AegisIssue) {
     `Call tool '${SENTINEL_EMIT_VERDICT_TOOL_NAME}' exactly once as final step after review is complete.`,
     "Return only JSON. No markdown fences. No prose before or after JSON.",
     "JSON schema keys: verdict, reviewSummary, blockingFindings, advisories, touchedFiles, contractChecks.",
+    "touchedFiles and contractChecks must be arrays of strings, not objects.",
   ].join("\n");
 }
 
@@ -399,6 +403,7 @@ function validateTitanSessionOutcome(input: {
   const normalizedArtifactFiles = normalizeTitanArtifactChangedFiles(
     input.issueId,
     input.artifact.files_changed,
+    input.laborWorkingDirectory,
   );
   const committedFiles = resolveCommittedChangedFiles(
     input.laborWorkingDirectory,
@@ -443,14 +448,47 @@ function validateTitanSessionOutcome(input: {
   return null;
 }
 
-function normalizeTitanArtifactChangedFiles(issueId: string, filesChanged: string[]) {
+function isPathInside(basePath: string, candidatePath: string) {
+  const relativePath = path.relative(basePath, candidatePath);
+  return relativePath.length > 0
+    && !relativePath.startsWith("..")
+    && !path.isAbsolute(relativePath);
+}
+
+function normalizeAbsoluteTitanFilePath(
+  issueId: string,
+  candidate: string,
+  laborWorkingDirectory: string,
+) {
+  const normalizedLabor = path.resolve(laborWorkingDirectory);
+  const normalizedCandidate = path.resolve(candidate);
+
+  if (!isPathInside(normalizedLabor, normalizedCandidate)) {
+    throw new Error(`Titan artifact for ${issueId} contains invalid files_changed path: ${candidate}`);
+  }
+
+  return normalizeScopeFile(path.relative(normalizedLabor, normalizedCandidate));
+}
+
+function normalizeTitanArtifactChangedFiles(
+  issueId: string,
+  filesChanged: string[],
+  laborWorkingDirectory: string,
+) {
   return filesChanged.map((entry) => {
     const trimmed = entry.trim();
     if (
       trimmed.length === 0
       || /\[[^\]]+\]\([^)]+\)/.test(trimmed)
-      || /^[a-z][a-z0-9+.-]*:/i.test(trimmed)
     ) {
+      throw new Error(`Titan artifact for ${issueId} contains invalid files_changed path: ${entry}`);
+    }
+
+    if (path.isAbsolute(trimmed)) {
+      return normalizeAbsoluteTitanFilePath(issueId, trimmed, laborWorkingDirectory);
+    }
+
+    if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
       throw new Error(`Titan artifact for ${issueId} contains invalid files_changed path: ${entry}`);
     }
 
@@ -684,7 +722,14 @@ async function runImplement(
     labor.laborPath,
     completedGitProof,
   );
-  const artifact = finalAttempt.artifact;
+  const artifact = {
+    ...finalAttempt.artifact,
+    files_changed: normalizeTitanArtifactChangedFiles(
+      issue.id,
+      finalAttempt.artifact.files_changed,
+      labor.laborPath,
+    ),
+  };
   const artifactRef = persistArtifact(input.root, {
     family: "titan",
     issueId: issue.id,

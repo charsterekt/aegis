@@ -35,6 +35,20 @@ describe("parseOracleAssessment", () => {
     ).toThrow(/unexpected field/i);
   });
 
+  it("extracts path strings from live files_affected objects", () => {
+    expect(
+      parseOracleAssessment(JSON.stringify({
+        files_affected: [
+          { path: "docs/setup-contract.md", status: "owned target" },
+        ],
+        estimated_complexity: "moderate",
+        risks: [],
+        suggested_checks: [],
+        scope_notes: [],
+      })).files_affected,
+    ).toEqual(["docs/setup-contract.md"]);
+  });
+
   it("rejects unexpected keys", () => {
     expect(() =>
       parseOracleAssessment(JSON.stringify({

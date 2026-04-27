@@ -175,7 +175,7 @@ function markRecordReviewing(root: string, issueId: string, timestamp: string) {
   return true;
 }
 
-function markReviewFailedOperational(root: string, issueId: string, timestamp: string, detail: string) {
+function markReviewRetryCooldown(root: string, issueId: string, timestamp: string, detail: string) {
   const dispatchState = loadDispatchState(root);
   const record = dispatchState.records[issueId];
   if (!record) {
@@ -188,7 +188,7 @@ function markReviewFailedOperational(root: string, issueId: string, timestamp: s
       ...dispatchState.records,
       [issueId]: {
         ...record,
-        stage: "failed_operational",
+        stage: "implemented",
         runningAgent: null,
         failureCount: record.failureCount + 1,
         consecutiveFailures: record.consecutiveFailures + 1,
@@ -208,6 +208,18 @@ function markReviewFailedOperational(root: string, issueId: string, timestamp: s
     outcome: "failed",
     detail,
   });
+}
+
+function isRecordCoolingDown(record: { cooldownUntil: string | null }, timestamp: string) {
+  if (!record.cooldownUntil) {
+    return false;
+  }
+
+  const cooldownMs = Date.parse(record.cooldownUntil);
+  const nowMs = Date.parse(timestamp);
+  return Number.isFinite(cooldownMs)
+    && Number.isFinite(nowMs)
+    && cooldownMs > nowMs;
 }
 
 function createPreMergeReviewLauncher(
@@ -245,7 +257,7 @@ async function runPreMergeReviews(
   launchPreMergeReview?: RunLoopPhaseOptions["launchPreMergeReview"],
 ): Promise<void> {
   const implementedRecords = Object.values(loadDispatchState(root).records)
-    .filter((record) => record.stage === "implemented");
+    .filter((record) => record.stage === "implemented" && !isRecordCoolingDown(record, timestamp));
   const launchReview = createPreMergeReviewLauncher(root, launchPreMergeReview);
 
   for (const record of implementedRecords) {
@@ -265,7 +277,7 @@ async function runPreMergeReviews(
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      markReviewFailedOperational(root, record.issueId, timestamp, detail);
+      markReviewRetryCooldown(root, record.issueId, timestamp, detail);
     } finally {
       ACTIVE_PRE_MERGE_REVIEWS.delete(record.issueId);
     }

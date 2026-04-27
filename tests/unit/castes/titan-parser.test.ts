@@ -83,6 +83,32 @@ describe("parseTitanArtifact", () => {
     ).toThrow(/proposal_type/i);
   });
 
+  it("normalizes live blocking_dependency proposals into out-of-scope blockers", () => {
+    expect(
+      parseTitanArtifact(JSON.stringify({
+        outcome: "failure",
+        summary: "package manifest is out of scope",
+        files_changed: [],
+        tests_and_checks_run: ["npm install"],
+        known_risks: [],
+        follow_up_work: [],
+        mutation_proposal: {
+          proposal_type: "blocking_dependency",
+          summary: "Need package manifest scope.",
+          suggested_title: "Allow package manifest updates",
+          suggested_description: "Scripts must be added to package.json.",
+          scope_evidence: "package.json is outside the current allowed file scope.",
+        },
+      })).mutation_proposal,
+    ).toEqual({
+      proposal_type: "create_out_of_scope_blocker",
+      summary: "Need package manifest scope.",
+      suggested_title: "Allow package manifest updates",
+      suggested_description: "Scripts must be added to package.json.",
+      scope_evidence: ["package.json is outside the current allowed file scope."],
+    });
+  });
+
   it("rejects unexpected keys", () => {
     expect(() =>
       parseTitanArtifact(JSON.stringify({

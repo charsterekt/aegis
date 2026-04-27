@@ -42,6 +42,32 @@ function assertStringArray(value: unknown, key: string): string[] {
   return value.slice();
 }
 
+function normalizeContractChecks(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error("Sentinel verdict field 'contractChecks' must be an array of strings.");
+  }
+
+  return value.map((item) => {
+    if (typeof item === "string") {
+      return item;
+    }
+
+    if (
+      typeof item === "object"
+      && item !== null
+      && !Array.isArray(item)
+    ) {
+      const check = (item as { check?: unknown }).check;
+      const result = (item as { result?: unknown }).result;
+      if (typeof check === "string" && typeof result === "string") {
+        return `${check}: ${result}`;
+      }
+    }
+
+    throw new Error("Sentinel verdict field 'contractChecks' must be an array of strings.");
+  });
+}
+
 function assertVerdict(value: unknown): SentinelVerdictValue {
   if (value === "pass" || value === "fail_blocking") {
     return value;
@@ -72,6 +98,6 @@ export function parseSentinelVerdict(raw: string): SentinelVerdict {
     blockingFindings: assertStringArray(obj["blockingFindings"], "blockingFindings"),
     advisories: assertStringArray(obj["advisories"], "advisories"),
     touchedFiles: assertStringArray(obj["touchedFiles"], "touchedFiles"),
-    contractChecks: assertStringArray(obj["contractChecks"], "contractChecks"),
+    contractChecks: normalizeContractChecks(obj["contractChecks"]),
   };
 }

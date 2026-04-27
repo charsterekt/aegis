@@ -40,6 +40,21 @@ describe("parseSentinelVerdict", () => {
     });
   });
 
+  it("extracts string summaries from live contractChecks objects", () => {
+    expect(
+      parseSentinelVerdict(JSON.stringify({
+        verdict: "pass",
+        reviewSummary: "clean",
+        blockingFindings: [],
+        advisories: [],
+        touchedFiles: ["docs/setup-contract.md"],
+        contractChecks: [
+          { check: "Local run targets cover install/dev/build/preview", result: "pass" },
+        ],
+      })).contractChecks,
+    ).toEqual(["Local run targets cover install/dev/build/preview: pass"]);
+  });
+
   it("rejects old follow-up control fields", () => {
     expect(() =>
       parseSentinelVerdict(JSON.stringify({
