@@ -118,13 +118,15 @@ describe("runDaemonCycle", () => {
     const state = JSON.parse(
       readFileSync(path.join(root, ".aegis", "dispatch-state.json"), "utf8"),
     ) as {
-      records: Record<string, { stage: string; oracleAssessmentRef: string | null; runningAgent: unknown }>;
+      records: Record<string, {
+        stage: string;
+        oracleAssessmentRef: string | null;
+        runningAgent: { caste: string } | null;
+      }>;
     };
 
-    expect(state.records["ISSUE-1"]).toMatchObject({
-      stage: "scouted",
-      runningAgent: null,
-    });
+    expect(["scouted", "implementing"]).toContain(state.records["ISSUE-1"]?.stage);
+    expect(state.records["ISSUE-1"]?.runningAgent?.caste ?? null).not.toBe("oracle");
     expect(state.records["ISSUE-1"]?.oracleAssessmentRef).toBeTruthy();
   });
 

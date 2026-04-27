@@ -448,6 +448,68 @@ describe("runCasteCommand", () => {
       });
   });
 
+  it("clears the active agent assignment when Titan saves completion", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-running-titan": {
+          issueId: "aegis-running-titan",
+          stage: "implementing",
+          runningAgent: {
+            caste: "titan",
+            sessionId: "session-running",
+            startedAt: "2026-04-14T12:00:00.000Z",
+          },
+          lastCompletedCaste: "oracle",
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-running-titan.json"),
+          titanHandoffRef: null,
+          titanClarificationRef: null,
+          sentinelVerdictRef: null,
+          janusArtifactRef: null,
+          failureTranscriptRef: null,
+          fileScope: null,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "daemon",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    await runCasteCommand({
+      root,
+      action: "implement",
+      issueId: "aegis-running-titan",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-running-titan")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        titan: () => ({
+          output: JSON.stringify({
+            outcome: "success",
+            summary: "done",
+            files_changed: [],
+            tests_and_checks_run: [],
+            known_risks: [],
+            follow_up_work: [],
+          }),
+        }),
+      }),
+      resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => ".aegis/labors",
+      ensureLabor: vi.fn(),
+    });
+
+    const state = loadDispatchState(root);
+    expect(state.records["aegis-running-titan"]).toMatchObject({
+      stage: "implemented",
+      runningAgent: null,
+    });
+  });
+
   it("routes Titan clarification blockers through policy and blocks the parent", async () => {
     const root = createTempRoot();
     saveDispatchState(root, {

@@ -368,6 +368,7 @@ function buildJanusPrompt(issue: AegisIssue, janusContext?: JanusConflictContext
 function clearDownstreamArtifactRefs(record: DispatchRecord) {
   return {
     ...record,
+    runningAgent: null,
     titanHandoffRef: null,
     titanClarificationRef: null,
     sentinelVerdictRef: null,
