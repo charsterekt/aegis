@@ -54,9 +54,25 @@ describe("TODO_MOCK_RUN_ISSUES", () => {
     const byKey = new Map(TODO_MOCK_RUN_ISSUES.map((issue) => [issue.key, issue]));
 
     expect(byKey.get("setup.dependencies")?.blocks).toEqual(["setup.contract"]);
-    expect(byKey.get("setup.tooling")?.blocks).toEqual(["setup.dependencies"]);
-    expect(byKey.get("setup.scaffold")?.blocks).toEqual(["setup.tooling"]);
+    expect(byKey.get("setup.scaffold")?.blocks).toEqual(["setup.dependencies"]);
+    expect(byKey.get("setup.tooling")?.blocks).toEqual(["setup.scaffold"]);
     expect(byKey.get("setup.gate")?.blocks).toContain("setup.scaffold");
+  });
+
+  it("lets setup tooling own package scripts after scaffold exists", () => {
+    const toolingScope = fileScopeOf(TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "setup.tooling")!);
+
+    expect(toolingScope).toContain("package.json");
+    expect(toolingScope).toContain("package-lock.json");
+  });
+
+  it("keeps package-run commands in the setup dependency lane", () => {
+    const dependencies = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "setup.dependencies")!;
+    const scaffold = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "setup.scaffold")!;
+
+    expect(dependencies.description).toContain("dev/build/preview");
+    expect(dependencies.description).toContain("Vite");
+    expect(scaffold.description).not.toContain("npm scripts");
   });
 
   it("lists blockers before dependents for deterministic seeding", () => {
