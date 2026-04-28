@@ -11,6 +11,7 @@ import { TITAN_EMIT_ARTIFACT_TOOL_NAME } from "../../../src/castes/titan/titan-t
 import type { CasteName } from "../../../src/runtime/caste-runtime.js";
 import {
   buildHiddenShellSpawnOptions,
+  commandLineReferencesWorkspace,
   PiCasteRuntime,
 } from "../../../src/runtime/pi-caste-runtime.js";
 
@@ -945,5 +946,18 @@ describe("PiCasteRuntime", () => {
     expect(options.windowsHide).toBe(true);
     expect(options.detached).toBe(process.platform !== "win32");
     expect(options.stdio).toEqual(["ignore", "pipe", "pipe"]);
+  });
+
+  it("matches leaked tool processes by labor workspace path", () => {
+    expect(commandLineReferencesWorkspace(
+      '"node" "C:\\dev\\aegis-qa\\aegis-mock-run\\.aegis\\labors\\ISSUE\\node_modules\\vite\\bin\\vite.js"',
+      "C:\\dev\\aegis-qa\\aegis-mock-run\\.aegis\\labors\\ISSUE",
+      "win32",
+    )).toBe(true);
+    expect(commandLineReferencesWorkspace(
+      "/usr/bin/node /tmp/aegis/.aegis/labors/ISSUE/node_modules/vite/bin/vite.js",
+      "/tmp/aegis/.aegis/labors/OTHER",
+      "linux",
+    )).toBe(false);
   });
 });

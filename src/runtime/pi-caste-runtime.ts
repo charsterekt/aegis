@@ -234,6 +234,69 @@ function terminateProcessTree(pid: number) {
   }
 }
 
+function normalizeProcessPath(candidate: string, platform: NodeJS.Platform) {
+  const normalized = path.resolve(candidate).replace(/\\/g, "/");
+  return platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+export function commandLineReferencesWorkspace(
+  commandLine: string,
+  workingDirectory: string,
+  platform: NodeJS.Platform = process.platform,
+) {
+  const normalizedCommand = commandLine.replace(/\\/g, "/");
+  const comparableCommand = platform === "win32"
+    ? normalizedCommand.toLowerCase()
+    : normalizedCommand;
+  const workspace = normalizeProcessPath(workingDirectory, platform);
+  return comparableCommand.includes(`${workspace}/`) || comparableCommand.includes(workspace);
+}
+
+function terminateWorkspaceProcesses(
+  workingDirectory: string,
+  platform: NodeJS.Platform = process.platform,
+) {
+  const workspace = normalizeProcessPath(workingDirectory, platform);
+  if (platform === "win32") {
+    const script = [
+      "$ErrorActionPreference = 'SilentlyContinue'",
+      `$workspace = ${JSON.stringify(workspace)}`,
+      "$current = $PID",
+      "Get-CimInstance Win32_Process | Where-Object {",
+      "  $_.ProcessId -ne $current -and $_.CommandLine -and ($_.CommandLine.Replace('\\\\','/').ToLowerInvariant().Contains($workspace))",
+      "} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+    ].join("\n");
+    spawnSync("powershell.exe", ["-NoProfile", "-Command", script], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    return;
+  }
+
+  const ps = spawnSync("ps", ["-eo", "pid=,command="], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (ps.status !== 0) {
+    return;
+  }
+  for (const line of ps.stdout.split(/\r?\n/)) {
+    const match = line.trim().match(/^(\d+)\s+(.+)$/);
+    if (!match) {
+      continue;
+    }
+    const pid = Number(match[1]);
+    const commandLine = match[2] ?? "";
+    if (pid > 0 && pid !== process.pid && commandLineReferencesWorkspace(commandLine, workingDirectory, platform)) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        // Ignore missing process.
+      }
+    }
+  }
+}
+
 function createHiddenShellBashOperations(): BashOperations {
   return {
     exec: (command, cwd, { onData, signal, timeout, env }) =>
@@ -1076,6 +1139,7 @@ export class PiCasteRuntime implements CasteRuntime {
       };
     } finally {
       session.dispose();
+      terminateWorkspaceProcesses(input.workingDirectory);
     }
   }
 }
