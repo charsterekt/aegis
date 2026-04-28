@@ -248,6 +248,7 @@ function buildTitanPrompt(
       ]
       : []),
     "Preserve existing Aegis/Beads operational files and ignore rules. Do not modify .aegis/, .beads/, or remove their existing .gitignore coverage.",
+    "If you start a long-running dev, preview, watcher, or server process for a check, stop it before calling the final artifact tool.",
     "Stage and commit all intended changes in the labor worktree before you call the final artifact tool so the candidate branch head advances.",
     "Use git add/git commit explicitly when you make required implementation changes.",
     "Do not leave required implementation changes uncommitted.",

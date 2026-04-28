@@ -74,7 +74,11 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   {
     key: "setup.tooling",
     title: "[setup] Wire tooling",
-    description: "Configure linting, formatting, and test runner scripts for repeatable local development.",
+    description: [
+      "Configure linting, formatting, and test runner scripts for repeatable local development.",
+      "Keep any format check scoped to owned tooling/package files in this lane.",
+      "Do not format or rewrite src/ from this lane; source lanes own source formatting.",
+    ].join("\n"),
     fileScope: [
       ".eslintrc.json",
       ".prettierrc",

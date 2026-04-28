@@ -66,6 +66,14 @@ describe("TODO_MOCK_RUN_ISSUES", () => {
     expect(toolingScope).toContain("package-lock.json");
   });
 
+  it("keeps setup tooling format checks inside owned files", () => {
+    const tooling = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "setup.tooling")!;
+
+    expect(tooling.description).toContain("format check");
+    expect(tooling.description).toContain("owned tooling/package files");
+    expect(tooling.description).toContain("Do not format or rewrite src/");
+  });
+
   it("keeps package-run commands in the setup dependency lane", () => {
     const dependencies = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "setup.dependencies")!;
     const scaffold = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "setup.scaffold")!;
