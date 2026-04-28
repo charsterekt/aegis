@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 import type {
   CasteName,
@@ -78,6 +78,99 @@ function resolveCodexSandboxMode(platform: NodeJS.Platform) {
   return platform === "win32" ? "danger-full-access" : "workspace-write";
 }
 
+function normalizeProcessPath(candidate: string, platform: NodeJS.Platform) {
+  const normalized = path.resolve(candidate).replace(/\\/g, "/");
+  return platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+export function commandLineReferencesWorkspace(
+  commandLine: string,
+  workingDirectory: string,
+  platform: NodeJS.Platform = process.platform,
+) {
+  const normalizedCommand = commandLine.replace(/\\/g, "/");
+  const comparableCommand = platform === "win32"
+    ? normalizedCommand.toLowerCase()
+    : normalizedCommand;
+  const workspace = normalizeProcessPath(workingDirectory, platform);
+  return comparableCommand.includes(`${workspace}/`) || comparableCommand.includes(workspace);
+}
+
+export function buildTerminateWorkspaceProcessesScript(workingDirectory: string) {
+  const workspace = normalizeProcessPath(workingDirectory, "win32");
+  const rawWorkspace = path.resolve(workingDirectory);
+  return [
+    "$ErrorActionPreference = 'SilentlyContinue'",
+    `$workspace = ${JSON.stringify(workspace)}`,
+    `$rawWorkspace = ${JSON.stringify(rawWorkspace)}`,
+    "$current = $PID",
+    "Get-CimInstance Win32_Process | Where-Object {",
+    "  $_.ProcessId -ne $current -and $_.CommandLine -and (",
+    "    $_.CommandLine.ToLowerInvariant().Contains($rawWorkspace.ToLowerInvariant()) -or",
+    "    $_.CommandLine.Replace('\\','/').ToLowerInvariant().Contains($workspace)",
+    "  )",
+    "} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+  ].join("\n");
+}
+
+function terminateProcessTree(pid: number) {
+  if (process.platform === "win32") {
+    const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    killer.on("error", () => undefined);
+    return;
+  }
+
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    // Ignore missing process group.
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    // Ignore missing process.
+  }
+}
+
+function terminateWorkspaceProcesses(
+  workingDirectory: string,
+  platform: NodeJS.Platform = process.platform,
+) {
+  if (platform === "win32") {
+    spawnSync("powershell.exe", ["-NoProfile", "-Command", buildTerminateWorkspaceProcessesScript(workingDirectory)], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    return;
+  }
+
+  const ps = spawnSync("ps", ["-eo", "pid=,command="], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (ps.status !== 0) {
+    return;
+  }
+  for (const line of ps.stdout.split(/\r?\n/)) {
+    const match = line.trim().match(/^(\d+)\s+(.+)$/);
+    if (!match) {
+      continue;
+    }
+    const pid = Number(match[1]);
+    const commandLine = match[2] ?? "";
+    if (pid > 0 && pid !== process.pid && commandLineReferencesWorkspace(commandLine, workingDirectory, platform)) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        // Ignore missing process.
+      }
+    }
+  }
+}
+
 export function buildCodexExecArgs(
   request: CodexRunRequest,
   platform: NodeJS.Platform = process.platform,
@@ -136,8 +229,16 @@ function runCodexExec(request: CodexRunRequest): Promise<CodexRunResult> {
 
     let stdout = "";
     let stderr = "";
+    const cleanup = () => {
+      terminateWorkspaceProcesses(request.cwd);
+    };
     const timeout = setTimeout(() => {
-      child.kill("SIGKILL");
+      if (typeof child.pid === "number") {
+        terminateProcessTree(child.pid);
+      } else {
+        child.kill("SIGKILL");
+      }
+      cleanup();
     }, request.timeoutMs);
 
     child.stdout.setEncoding("utf8");
@@ -150,6 +251,7 @@ function runCodexExec(request: CodexRunRequest): Promise<CodexRunResult> {
     });
     child.on("error", (error) => {
       clearTimeout(timeout);
+      cleanup();
       resolve({
         exitCode: 1,
         stdout,
@@ -158,6 +260,7 @@ function runCodexExec(request: CodexRunRequest): Promise<CodexRunResult> {
     });
     child.on("close", (exitCode) => {
       clearTimeout(timeout);
+      cleanup();
       resolve({ exitCode, stdout, stderr });
     });
     child.stdin.end(request.prompt);

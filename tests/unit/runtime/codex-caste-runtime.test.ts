@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildCodexExecArgs,
   buildCodexSpawnInvocation,
+  buildTerminateWorkspaceProcessesScript,
   CodexCasteRuntime,
+  commandLineReferencesWorkspace,
   createCodexModelConfigs,
 } from "../../../src/runtime/codex-caste-runtime.js";
 
@@ -174,5 +176,28 @@ describe("CodexCasteRuntime", () => {
         "& 'codex.cmd' '--version'; exit $LASTEXITCODE",
       ],
     });
+  });
+
+  it("matches leaked processes by labor workspace path", () => {
+    expect(commandLineReferencesWorkspace(
+      "node C:\\repo\\.aegis\\labors\\ISSUE-1\\node_modules\\vite\\bin\\vite.js",
+      "C:\\repo\\.aegis\\labors\\ISSUE-1",
+      "win32",
+    )).toBe(true);
+
+    expect(commandLineReferencesWorkspace(
+      "node C:\\repo\\.aegis\\labors\\ISSUE-2\\node_modules\\vite\\bin\\vite.js",
+      "C:\\repo\\.aegis\\labors\\ISSUE-1",
+      "win32",
+    )).toBe(false);
+  });
+
+  it("builds a Windows cleanup script that excludes the current cleanup process", () => {
+    const script = buildTerminateWorkspaceProcessesScript("C:\\repo\\.aegis\\labors\\ISSUE-1");
+
+    expect(script).toContain("$current = $PID");
+    expect(script).toContain("Stop-Process");
+    expect(script).toContain("ISSUE-1");
+    expect(script).toContain("ProcessId -ne $current");
   });
 });
