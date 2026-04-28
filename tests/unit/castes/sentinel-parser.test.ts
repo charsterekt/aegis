@@ -20,12 +20,18 @@ describe("parseSentinelVerdict", () => {
     });
   });
 
-  it("parses fail_blocking with blocking findings and advisories", () => {
+  it("parses fail_blocking with typed blocking findings and advisories", () => {
     expect(
       parseSentinelVerdict(JSON.stringify({
         verdict: "fail_blocking",
         reviewSummary: "contract broken",
-        blockingFindings: ["missing required test"],
+        blockingFindings: [{
+          finding_kind: "contract_gap",
+          summary: "missing required test",
+          required_files: ["tests/unit/core/example.test.ts"],
+          owner_issue: "aegis-123",
+          route: "rework_owner",
+        }],
         advisories: ["rename helper later"],
         touchedFiles: ["src/index.ts"],
         contractChecks: ["required tests run"],
@@ -33,11 +39,62 @@ describe("parseSentinelVerdict", () => {
     ).toEqual({
       verdict: "fail_blocking",
       reviewSummary: "contract broken",
-      blockingFindings: ["missing required test"],
+      blockingFindings: [{
+        finding_kind: "contract_gap",
+        summary: "missing required test",
+        required_files: ["tests/unit/core/example.test.ts"],
+        owner_issue: "aegis-123",
+        route: "rework_owner",
+      }],
       advisories: ["rename helper later"],
       touchedFiles: ["src/index.ts"],
       contractChecks: ["required tests run"],
     });
+  });
+
+  it("rejects legacy string blocking findings", () => {
+    expect(() =>
+      parseSentinelVerdict(JSON.stringify({
+        verdict: "fail_blocking",
+        reviewSummary: "contract broken",
+        blockingFindings: ["missing required test"],
+        advisories: [],
+        touchedFiles: ["src/index.ts"],
+        contractChecks: ["required tests run"],
+      })),
+    ).toThrow(/blockingFindings/i);
+  });
+
+  it("rejects pass verdicts that include blocking findings", () => {
+    expect(() =>
+      parseSentinelVerdict(JSON.stringify({
+        verdict: "pass",
+        reviewSummary: "contradictory",
+        blockingFindings: [{
+          finding_kind: "contract_gap",
+          summary: "missing required test",
+          required_files: ["tests/unit/core/example.test.ts"],
+          owner_issue: "aegis-123",
+          route: "rework_owner",
+        }],
+        advisories: [],
+        touchedFiles: ["src/index.ts"],
+        contractChecks: ["required tests run"],
+      })),
+    ).toThrow(/pass verdict/i);
+  });
+
+  it("rejects fail_blocking verdicts without blocking findings", () => {
+    expect(() =>
+      parseSentinelVerdict(JSON.stringify({
+        verdict: "fail_blocking",
+        reviewSummary: "missing evidence",
+        blockingFindings: [],
+        advisories: [],
+        touchedFiles: ["src/index.ts"],
+        contractChecks: ["required tests run"],
+      })),
+    ).toThrow(/fail_blocking verdict/i);
   });
 
   it("extracts string summaries from live contractChecks objects", () => {

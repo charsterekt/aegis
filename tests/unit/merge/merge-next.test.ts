@@ -167,7 +167,13 @@ describe("runMergeNext", () => {
           output: JSON.stringify({
             verdict: "fail_blocking",
             reviewSummary: "contract regression",
-            blockingFindings: ["missing required acceptance check"],
+            blockingFindings: [{
+              finding_kind: "contract_gap",
+              summary: "missing required acceptance check",
+              required_files: ["src/core/example.ts"],
+              owner_issue: "aegis-777",
+              route: "rework_owner",
+            }],
             advisories: ["tighten naming later"],
             touchedFiles: ["src/core/example.ts"],
             contractChecks: ["acceptance check present"],

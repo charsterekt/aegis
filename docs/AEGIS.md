@@ -27,6 +27,7 @@ Swarm posture:
 - Agents do not own orchestration truth, graph mutation, merge routing, retry policy, or durable completion semantics.
 - Swarm behavior comes from many scoped agents moving concurrently through deterministic shared state, not from a manager-agent prompt deciding the control plane.
 - Cross-agent handoffs must be typed artifacts that the control plane validates and routes mechanically. Prompt text may explain intent, but must not be the only enforcement layer.
+- Review findings are typed control inputs. Sentinel may identify `finding_kind`, `required_files`, `owner_issue`, and `route`, but Aegis routes those findings deterministically.
 - Operational exhaustion is a first-class control outcome. The daemon must halt or skip exhausted work visibly rather than consuming adapter quota indefinitely.
 
 Truth planes:
@@ -285,6 +286,7 @@ Sentinel output:
 
 - `pass`
 - `fail_blocking`
+- typed blocking findings with `finding_kind`, `summary`, `required_files`, `owner_issue`, and `route`
 - advisories
 
 Sentinel may not:
@@ -293,7 +295,9 @@ Sentinel may not:
 - mutate graph state.
 - fail for unrelated ambient debt.
 
-Blocking failure sends same parent back to Titan as `rework_required`.
+Blocking findings with `route=rework_owner` send the owner issue back to Titan as `rework_required`.
+
+Blocking findings with `route=create_blocker` are routed by Aegis policy code. Sentinel does not decide Beads mutation; the deterministic router creates or reuses the blocking issue, links it to the parent, and records the policy artifact.
 
 ### Janus
 
@@ -364,6 +368,11 @@ Allowed mutation proposals:
 - Janus: integration blocker, same-parent requeue.
 - Oracle: none.
 - Sentinel: none.
+
+Deterministic router inputs:
+
+- Sentinel typed finding with `route=rework_owner`: same owner issue returns to Titan.
+- Sentinel typed finding with `route=create_blocker`: Aegis creates or reuses a blocking child through policy code.
 
 Accepted blocker requirements:
 

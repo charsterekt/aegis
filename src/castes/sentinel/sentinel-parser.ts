@@ -1,9 +1,23 @@
 export type SentinelVerdictValue = "pass" | "fail_blocking";
+export type SentinelFindingKind =
+  | "contract_gap"
+  | "regression"
+  | "out_of_scope_blocker"
+  | "integration_blocker";
+export type SentinelFindingRoute = "rework_owner" | "create_blocker";
+
+export interface SentinelFinding {
+  finding_kind: SentinelFindingKind;
+  summary: string;
+  required_files: string[];
+  owner_issue: string;
+  route: SentinelFindingRoute;
+}
 
 export interface SentinelVerdict {
   verdict: SentinelVerdictValue;
   reviewSummary: string;
-  blockingFindings: string[];
+  blockingFindings: SentinelFinding[];
   advisories: string[];
   touchedFiles: string[];
   contractChecks: string[];
@@ -40,6 +54,66 @@ function assertStringArray(value: unknown, key: string): string[] {
   }
 
   return value.slice();
+}
+
+function assertFindingKind(value: unknown): SentinelFindingKind {
+  if (
+    value === "contract_gap"
+    || value === "regression"
+    || value === "out_of_scope_blocker"
+    || value === "integration_blocker"
+  ) {
+    return value;
+  }
+
+  throw new Error(
+    "Sentinel verdict field 'blockingFindings.finding_kind' must be one of contract_gap, regression, out_of_scope_blocker, integration_blocker.",
+  );
+}
+
+function assertFindingRoute(value: unknown): SentinelFindingRoute {
+  if (value === "rework_owner" || value === "create_blocker") {
+    return value;
+  }
+
+  throw new Error("Sentinel verdict field 'blockingFindings.route' must be one of rework_owner or create_blocker.");
+}
+
+function assertFinding(value: unknown, index: number): SentinelFinding {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Sentinel verdict field 'blockingFindings[${index}]' must be a typed finding object.`);
+  }
+
+  const finding = assertPlainObject(value);
+  const allowedKeys = new Set(["finding_kind", "summary", "required_files", "owner_issue", "route"]);
+
+  for (const key of Object.keys(finding)) {
+    if (!allowedKeys.has(key)) {
+      throw new Error(`Sentinel verdict field 'blockingFindings[${index}]' contains an unexpected field: ${key}`);
+    }
+  }
+
+  for (const field of allowedKeys) {
+    if (!(field in finding)) {
+      throw new Error(`Sentinel verdict field 'blockingFindings[${index}]' is missing required field '${field}'.`);
+    }
+  }
+
+  return {
+    finding_kind: assertFindingKind(finding["finding_kind"]),
+    summary: assertString(finding["summary"], "blockingFindings.summary"),
+    required_files: assertStringArray(finding["required_files"], "blockingFindings.required_files"),
+    owner_issue: assertString(finding["owner_issue"], "blockingFindings.owner_issue"),
+    route: assertFindingRoute(finding["route"]),
+  };
+}
+
+function assertFindingsArray(value: unknown): SentinelFinding[] {
+  if (!Array.isArray(value)) {
+    throw new Error("Sentinel verdict field 'blockingFindings' must be an array of typed finding objects.");
+  }
+
+  return value.map((finding, index) => assertFinding(finding, index));
 }
 
 function normalizeContractChecks(value: unknown): string[] {
@@ -92,10 +166,20 @@ export function parseSentinelVerdict(raw: string): SentinelVerdict {
     }
   }
 
+  const verdict = assertVerdict(obj["verdict"]);
+  const blockingFindings = assertFindingsArray(obj["blockingFindings"]);
+  if (verdict === "pass" && blockingFindings.length > 0) {
+    throw new Error("Sentinel pass verdict must not include blocking findings.");
+  }
+
+  if (verdict === "fail_blocking" && blockingFindings.length === 0) {
+    throw new Error("Sentinel fail_blocking verdict must include at least one blocking finding.");
+  }
+
   return {
-    verdict: assertVerdict(obj["verdict"]),
+    verdict,
     reviewSummary: assertString(obj["reviewSummary"], "reviewSummary"),
-    blockingFindings: assertStringArray(obj["blockingFindings"], "blockingFindings"),
+    blockingFindings,
     advisories: assertStringArray(obj["advisories"], "advisories"),
     touchedFiles: assertStringArray(obj["touchedFiles"], "touchedFiles"),
     contractChecks: normalizeContractChecks(obj["contractChecks"]),

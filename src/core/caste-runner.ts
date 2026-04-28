@@ -9,7 +9,7 @@ import { parseOracleAssessment } from "../castes/oracle/oracle-parser.js";
 import { ORACLE_EMIT_ASSESSMENT_TOOL_NAME } from "../castes/oracle/oracle-tool-contract.js";
 import { parseTitanArtifact } from "../castes/titan/titan-parser.js";
 import { TITAN_EMIT_ARTIFACT_TOOL_NAME } from "../castes/titan/titan-tool-contract.js";
-import { parseSentinelVerdict } from "../castes/sentinel/sentinel-parser.js";
+import { parseSentinelVerdict, type SentinelFinding } from "../castes/sentinel/sentinel-parser.js";
 import { SENTINEL_EMIT_VERDICT_TOOL_NAME } from "../castes/sentinel/sentinel-tool-contract.js";
 import { parseJanusResolutionArtifact } from "../castes/janus/janus-parser.js";
 import { JANUS_EMIT_RESOLUTION_TOOL_NAME } from "../castes/janus/janus-tool-contract.js";
@@ -214,6 +214,22 @@ function readReviewFeedbackContext(root: string, artifactRef: string | null) {
       for (const finding of blockingFindings) {
         if (typeof finding === "string" && finding.trim().length > 0) {
           lines.push(`Blocking finding: ${finding.trim()}`);
+        } else if (typeof finding === "object" && finding !== null && !Array.isArray(finding)) {
+          const summary = (finding as Record<string, unknown>)["summary"];
+          const kind = (finding as Record<string, unknown>)["finding_kind"];
+          const route = (finding as Record<string, unknown>)["route"];
+          const requiredFiles = (finding as Record<string, unknown>)["required_files"];
+          if (typeof summary === "string" && summary.trim().length > 0) {
+            const files = Array.isArray(requiredFiles)
+              ? requiredFiles.filter((entry): entry is string => typeof entry === "string")
+              : [];
+            lines.push([
+              `Blocking finding: ${summary.trim()}`,
+              ...(typeof kind === "string" ? [`kind=${kind}`] : []),
+              ...(typeof route === "string" ? [`route=${route}`] : []),
+              ...(files.length ? [`required_files=${files.join(", ")}`] : []),
+            ].join(" | "));
+          }
         }
       }
     }
@@ -335,12 +351,16 @@ function buildSentinelPrompt(issue: AegisIssue) {
     `Title: ${issue.title}`,
     `Description: ${description}`,
     "Return binary control verdict pass or fail_blocking.",
-    "Blocking findings must only cover original issue contract or regressions in touched scope.",
+    "Blocking findings must only cover original issue contract, regressions in touched scope, or required out-of-scope blockers.",
+    "blockingFindings must be typed objects with fields: finding_kind, summary, required_files, owner_issue, route.",
+    "Allowed finding_kind: contract_gap, regression, out_of_scope_blocker, integration_blocker.",
+    "Use route=rework_owner for in-scope parent rework. Use route=create_blocker only when required files are outside the owner issue scope.",
+    "Sentinel does not create issues. Aegis router handles create_blocker findings deterministically after the verdict.",
     "Advisories are logged only and must not create issues.",
     `Call tool '${SENTINEL_EMIT_VERDICT_TOOL_NAME}' exactly once as final step after review is complete.`,
     "Return only JSON. No markdown fences. No prose before or after JSON.",
     "JSON schema keys: verdict, reviewSummary, blockingFindings, advisories, touchedFiles, contractChecks.",
-    "touchedFiles and contractChecks must be arrays of strings, not objects.",
+    "touchedFiles and contractChecks must be arrays of strings. blockingFindings must be an array of typed objects, not strings.",
   ].join("\n");
 }
 
@@ -400,6 +420,45 @@ function buildJanusPolicyProposal(
     dependencyType: "blocks",
     scopeEvidence: proposal.scope_evidence,
     fingerprint: buildFindingFingerprint(issueId, `${proposal.proposal_type}:${proposal.summary}`),
+  };
+}
+
+function buildSentinelRouterPolicyProposal(
+  issueId: string,
+  finding: SentinelFinding,
+): MutationProposal {
+  const proposalType = finding.finding_kind === "integration_blocker"
+    ? "create_integration_blocker"
+    : "create_out_of_scope_blocker";
+  const requiredFiles = finding.required_files.length > 0
+    ? finding.required_files.join(", ")
+    : "not specified";
+  return {
+    originIssueId: issueId,
+    originCaste: "router",
+    proposalType,
+    blocking: true,
+    summary: finding.summary,
+    suggestedTitle: `Resolve Sentinel out-of-scope blocker for ${issueId}`,
+    suggestedDescription: [
+      `Sentinel found blocking work outside owner issue ${finding.owner_issue}.`,
+      `Finding kind: ${finding.finding_kind}.`,
+      `Required files: ${requiredFiles}.`,
+      "",
+      finding.summary,
+    ].join("\n"),
+    dependencyType: "blocks",
+    scopeEvidence: [
+      `Sentinel route=${finding.route}`,
+      `Sentinel finding_kind=${finding.finding_kind}`,
+      `Owner issue=${finding.owner_issue}`,
+      `Required files=${requiredFiles}`,
+      finding.summary,
+    ],
+    fingerprint: buildFindingFingerprint(
+      issueId,
+      `${finding.route}:${finding.finding_kind}:${finding.summary}:${finding.required_files.join(",")}`,
+    ),
   };
 }
 
@@ -1117,6 +1176,50 @@ async function runReview(
       session: createSessionMetadata(transcriptRef, runInput, session),
     },
   });
+  const blockerFinding = verdict.blockingFindings.find((finding) => finding.route === "create_blocker");
+  if (blockerFinding) {
+    const policyResult = await applyMutationProposal({
+      root: input.root,
+      tracker: input.tracker,
+      record,
+      proposal: buildSentinelRouterPolicyProposal(issue.id, blockerFinding),
+      now,
+    });
+
+    saveRecord(input.root, issue.id, {
+      ...clearDownstreamArtifactRefs(record),
+      stage: policyResult.parentStage,
+      oracleAssessmentRef: record.oracleAssessmentRef,
+      titanHandoffRef: record.titanHandoffRef ?? null,
+      titanClarificationRef: record.titanClarificationRef ?? null,
+      sentinelVerdictRef: artifactRef,
+      reviewFeedbackRef: artifactRef,
+      blockedByIssueId: policyResult.childIssueId,
+      policyArtifactRef: policyResult.policyArtifactRef,
+      updatedAt: now,
+    });
+    writePhaseLog(input.root, {
+      timestamp: offsetTimestamp(now, 50),
+      phase: "dispatch",
+      issueId: issue.id,
+      action: "sentinel_review_completed",
+      outcome: policyResult.parentStage,
+      sessionId: session.sessionId,
+      detail: JSON.stringify({
+        blockingFindingCount: verdict.blockingFindings.length,
+        routedFindingKind: blockerFinding.finding_kind,
+        routedFindingRoute: blockerFinding.route,
+        advisoryCount: verdict.advisories.length,
+      }),
+    });
+
+    return {
+      action: input.action,
+      issueId: issue.id,
+      stage: policyResult.parentStage,
+      artifactRefs: [artifactRef, policyResult.policyArtifactRef, transcriptRef],
+    };
+  }
 
   saveRecord(input.root, issue.id, {
     ...clearDownstreamArtifactRefs(record),

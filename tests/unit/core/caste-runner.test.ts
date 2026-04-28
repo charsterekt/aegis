@@ -114,10 +114,44 @@ function createSentinelFailOutput() {
   return JSON.stringify({
     verdict: "fail_blocking",
     reviewSummary: "needs fixes",
-    blockingFindings: ["update tests", "tighten validation"],
+    blockingFindings: [
+      {
+        finding_kind: "contract_gap",
+        summary: "update tests",
+        required_files: ["tests/unit/core/caste-runner.test.ts"],
+        owner_issue: "aegis-1001",
+        route: "rework_owner",
+      },
+      {
+        finding_kind: "regression",
+        summary: "tighten validation",
+        required_files: ["src/core/caste-runner.ts"],
+        owner_issue: "aegis-1001",
+        route: "rework_owner",
+      },
+    ],
     advisories: ["naming can improve later"],
     touchedFiles: ["src/index.ts"],
     contractChecks: ["issue contract"],
+  });
+}
+
+function createSentinelOutOfScopeBlockerOutput() {
+  return JSON.stringify({
+    verdict: "fail_blocking",
+    reviewSummary: "blocked outside parent scope",
+    blockingFindings: [
+      {
+        finding_kind: "out_of_scope_blocker",
+        summary: "package manifest change required before parent can pass",
+        required_files: ["package.json"],
+        owner_issue: "aegis-1003",
+        route: "create_blocker",
+      },
+    ],
+    advisories: [],
+    touchedFiles: ["src/index.ts"],
+    contractChecks: ["package manifest required"],
   });
 }
 
@@ -1516,7 +1550,13 @@ describe("runCasteCommand", () => {
         verdict: "fail_blocking",
         reviewSummary: "store persistence boundary violated",
         blockingFindings: [
-          "src/state/todo-store.ts persists filter state outside the core contract.",
+          {
+            finding_kind: "contract_gap",
+            summary: "src/state/todo-store.ts persists filter state outside the core contract.",
+            required_files: ["src/state/todo-store.ts"],
+            owner_issue: "aegis-rework",
+            route: "rework_owner",
+          },
         ],
         advisories: [
           "Add a focused persistence regression test.",
@@ -2067,7 +2107,16 @@ describe("runCasteCommand", () => {
       readFileSync(path.join(root, ".aegis", "sentinel", "aegis-1001.json"), "utf8"),
     )).toMatchObject({
       verdict: "fail_blocking",
-      blockingFindings: ["update tests", "tighten validation"],
+      blockingFindings: [
+        expect.objectContaining({
+          summary: "update tests",
+          route: "rework_owner",
+        }),
+        expect.objectContaining({
+          summary: "tighten validation",
+          route: "rework_owner",
+        }),
+      ],
     });
 
     const phaseLogDirectory = path.join(root, ".aegis", "logs", "phases");
@@ -2088,6 +2137,68 @@ describe("runCasteCommand", () => {
     )).toBe(true);
   });
 
+  it("routes Sentinel out-of-scope findings through deterministic blocker policy", async () => {
+    const root = createTempRoot();
+    writeTitanArtifact(root, "aegis-1003");
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-1003": {
+          issueId: "aegis-1003",
+          stage: "implemented",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-1003.json"),
+          titanHandoffRef: path.join(".aegis", "titan", "aegis-1003.json"),
+          sentinelVerdictRef: null,
+          fileScope: { files: ["src/index.ts"] },
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    const createBlockerIssue = vi.fn(async () => "aegis-blocker-1");
+    const linkBlockingIssue = vi.fn(async () => undefined);
+
+    const result = await runCasteCommand({
+      root,
+      action: "review",
+      issueId: "aegis-1003",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-1003")),
+        createIssue: createBlockerIssue,
+        linkBlockingIssue,
+      },
+      runtime: new ScriptedCasteRuntime({
+        sentinel: () => ({
+          output: createSentinelOutOfScopeBlockerOutput(),
+        }),
+      }),
+    });
+
+    expect(result).toMatchObject({
+      action: "review",
+      issueId: "aegis-1003",
+      stage: "blocked_on_child",
+    });
+    expect(createBlockerIssue).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Resolve Sentinel out-of-scope blocker for aegis-1003",
+    }), root);
+    expect(linkBlockingIssue).toHaveBeenCalledWith({
+      blockingIssueId: "aegis-blocker-1",
+      blockedIssueId: "aegis-1003",
+    }, root);
+
+    const record = loadDispatchState(root).records["aegis-1003"];
+    expect(record?.blockedByIssueId).toBe("aegis-blocker-1");
+    expect(record?.reviewFeedbackRef).toBe(path.join(".aegis", "sentinel", "aegis-1003.json"));
+    expect(record?.policyArtifactRef).toContain(path.join(".aegis", "policy"));
+  });
+
   it("does not create Sentinel follow-up issues on review rerun", async () => {
     const root = createTempRoot();
     writeTitanArtifact(root, "aegis-1002");
@@ -2097,7 +2208,22 @@ describe("runCasteCommand", () => {
       `${JSON.stringify({
         verdict: "fail_blocking",
         reviewSummary: "needs fixes",
-        blockingFindings: ["update tests", "tighten validation"],
+        blockingFindings: [
+          {
+            finding_kind: "contract_gap",
+            summary: "update tests",
+            required_files: ["tests/unit/core/caste-runner.test.ts"],
+            owner_issue: "aegis-1002",
+            route: "rework_owner",
+          },
+          {
+            finding_kind: "regression",
+            summary: "tighten validation",
+            required_files: ["src/core/caste-runner.ts"],
+            owner_issue: "aegis-1002",
+            route: "rework_owner",
+          },
+        ],
         advisories: ["coverage"],
         touchedFiles: ["src/index.ts"],
         contractChecks: ["issue contract"],
@@ -2156,7 +2282,16 @@ describe("runCasteCommand", () => {
       readFileSync(path.join(root, ".aegis", "sentinel", "aegis-1002.json"), "utf8"),
     )).toMatchObject({
       verdict: "fail_blocking",
-      blockingFindings: ["update tests", "tighten validation"],
+      blockingFindings: [
+        expect.objectContaining({
+          summary: "update tests",
+          route: "rework_owner",
+        }),
+        expect.objectContaining({
+          summary: "tighten validation",
+          route: "rework_owner",
+        }),
+      ],
     });
   });
 

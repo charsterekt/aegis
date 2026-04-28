@@ -405,7 +405,13 @@ describe("runDaemonCycle", () => {
       `${JSON.stringify({
         verdict: "fail_blocking",
         reviewSummary: "needs rework",
-        blockingFindings: ["format drift remains"],
+        blockingFindings: [{
+          finding_kind: "regression",
+          summary: "format drift remains",
+          required_files: ["docs/setup-gate.md"],
+          owner_issue: "ISSUE-REVIEW",
+          route: "rework_owner",
+        }],
         advisories: [],
         touchedFiles: ["docs/setup-gate.md"],
         contractChecks: ["format check"],

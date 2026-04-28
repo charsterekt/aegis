@@ -280,7 +280,13 @@ export function createDefaultScriptedCasteRuntime(
             verdict: "fail_blocking",
             reviewSummary: "deterministic scripted review failure",
             blockingFindings: [
-              "add missing sentinel regression coverage",
+              {
+                finding_kind: "contract_gap",
+                summary: "add missing sentinel regression coverage",
+                required_files: [],
+                owner_issue: input.issueId,
+                route: "rework_owner",
+              },
             ],
             advisories: ["review-observability"],
             touchedFiles: [],

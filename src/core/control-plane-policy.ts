@@ -10,10 +10,11 @@ export type MutationProposalType =
   | "create_out_of_scope_blocker"
   | "create_integration_blocker"
   | "requeue_parent";
+export type MutationProposalOrigin = AgentCaste | "router";
 
 export interface MutationProposal {
   originIssueId: string;
-  originCaste: AgentCaste;
+  originCaste: MutationProposalOrigin;
   proposalType: MutationProposalType;
   blocking: boolean;
   summary: string;
@@ -81,6 +82,11 @@ const TITAN_PROPOSALS = new Set<MutationProposalType>([
 
 const JANUS_PROPOSALS = new Set<MutationProposalType>([
   "requeue_parent",
+  "create_integration_blocker",
+]);
+
+const ROUTER_PROPOSALS = new Set<MutationProposalType>([
+  "create_out_of_scope_blocker",
   "create_integration_blocker",
 ]);
 
@@ -268,7 +274,11 @@ function validateProposal(input: ApplyMutationProposalInput): PolicyRejectionRea
     return "unsupported_proposal";
   }
 
-  if (proposal.originCaste !== "titan" && proposal.originCaste !== "janus") {
+  if (proposal.originCaste === "router" && !ROUTER_PROPOSALS.has(proposal.proposalType)) {
+    return "unsupported_proposal";
+  }
+
+  if (proposal.originCaste !== "titan" && proposal.originCaste !== "janus" && proposal.originCaste !== "router") {
     return "caste_not_permitted";
   }
 
