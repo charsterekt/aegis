@@ -671,6 +671,40 @@ function assertSuccessfulSession(
   throw new Error(`${casteLabel} session failed for ${runInput.issueId}: ${detail}`);
 }
 
+function synthesizeTitanArtifactFromCommittedWork(input: {
+  issueId: string;
+  session: CasteSessionResult;
+  workingDirectory: string;
+  proofPair: ReturnType<typeof completeGitProofPair>;
+}): ReturnType<typeof parseTitanArtifact> | null {
+  if (!hasAdvancedGitHead(input.proofPair)) {
+    return null;
+  }
+
+  const filesChanged = resolveCommittedChangedFiles(input.workingDirectory, input.proofPair);
+  if (filesChanged.length === 0) {
+    return null;
+  }
+
+  const sessionDetail = input.session.error?.trim().length
+    ? input.session.error
+    : `Runtime returned status=${input.session.status}.`;
+
+  return {
+    outcome: "success",
+    summary: `Recovered committed Titan work for ${input.issueId} after the session ended before artifact emission.`,
+    files_changed: filesChanged,
+    tests_and_checks_run: [
+      "Recovered from committed git proof; Titan did not report explicit checks.",
+    ],
+    known_risks: [
+      `Titan session did not emit the final artifact: ${sessionDetail}`,
+      "Recovered commit still requires Sentinel review before merge.",
+    ],
+    follow_up_work: [],
+  };
+}
+
 async function runScout(
   input: RunCasteCommandInput,
   issue: AegisIssue,
@@ -777,14 +811,22 @@ async function runImplement(
       artifactId: transcriptArtifactId,
     });
     transcriptRefs.push(transcriptRef);
-    assertSuccessfulSession(candidateInput, session);
-    const artifact = parseTitanArtifact(session.outputText);
+    let artifact: ReturnType<typeof parseTitanArtifact> | null = null;
+    let parseError: unknown = null;
+    if (session.status === "succeeded") {
+      try {
+        artifact = parseTitanArtifact(session.outputText);
+      } catch (error) {
+        parseError = error;
+      }
+    }
 
     return {
       runInput: candidateInput,
       session,
       transcriptRef,
       artifact,
+      parseError,
     };
   };
 
@@ -792,7 +834,23 @@ async function runImplement(
 
   const completedGitProof = completeGitProofPair(labor.laborPath, gitProofPair);
   const completedRootGitProof = completeGitProofPair(input.root, rootGitProofPair);
-  const baseArtifact = finalAttempt.artifact;
+  const recoveredArtifact = finalAttempt.artifact
+    ?? synthesizeTitanArtifactFromCommittedWork({
+      issueId: issue.id,
+      session: finalAttempt.session,
+      workingDirectory: labor.laborPath,
+      proofPair: completedGitProof,
+    });
+  if (!recoveredArtifact) {
+    if (finalAttempt.session.status !== "succeeded") {
+      assertSuccessfulSession(finalAttempt.runInput, finalAttempt.session);
+    }
+    if (finalAttempt.parseError) {
+      throw finalAttempt.parseError;
+    }
+    throw new Error(`Titan session for ${issue.id} did not produce a usable artifact.`);
+  }
+  const baseArtifact = recoveredArtifact;
   const rootAdoption = resolveRootCommitAdoption({
     issueId: issue.id,
     root: input.root,

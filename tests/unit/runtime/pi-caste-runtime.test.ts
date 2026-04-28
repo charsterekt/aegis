@@ -150,6 +150,7 @@ const mockedAgent = vi.hoisted(() => {
 
       listener({ type: "agent_end" });
     }),
+    abort: vi.fn(async () => undefined),
     setActiveToolsByName: vi.fn(),
     dispose: vi.fn(),
   };
@@ -298,6 +299,7 @@ describe("PiCasteRuntime", () => {
     mockedAgent.DefaultResourceLoader.mockClear();
     mockedAgent.session.subscribe.mockClear();
     mockedAgent.session.prompt.mockReset();
+    mockedAgent.session.abort.mockClear();
     mockedAgent.session.setActiveToolsByName.mockClear();
     mockedAgent.session.dispose.mockClear();
     mockedAgent.session.state.error = null;
@@ -453,6 +455,7 @@ describe("PiCasteRuntime", () => {
 
     expect(result.status).toBe("failed");
     expect(result.error).toBe("Pi oracle session timed out after 10ms.");
+    expect(mockedAgent.session.abort).toHaveBeenCalledTimes(1);
   });
 
   it("uses caste-specific timeout override when configured", async () => {

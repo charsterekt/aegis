@@ -807,6 +807,85 @@ describe("runCasteCommand", () => {
     expect(gitDiff.diff).toContain("phase-i-proof.txt");
   });
 
+  it("recovers a scoped Titan commit when the session times out before artifact emission", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-timeout-commit": {
+          issueId: "aegis-timeout-commit",
+          stage: "scouted",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-timeout-commit.json"),
+          sentinelVerdictRef: null,
+          fileScope: {
+            files: ["phase-i-proof.txt"],
+          },
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    writeFileSync(path.join(root, "README.md"), "# baseline\n", "utf8");
+    runGit(root, ["init"]);
+    runGit(root, ["config", "user.email", "test@aegis.local"]);
+    runGit(root, ["config", "user.name", "Aegis Test"]);
+    runGit(root, ["add", "--all"]);
+    runGit(root, ["commit", "-m", "baseline"]);
+    runGit(root, ["branch", "-M", "main"]);
+
+    const result = await runCasteCommand({
+      root,
+      action: "implement",
+      issueId: "aegis-timeout-commit",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-timeout-commit")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        titan: (input) => {
+          writeFileSync(path.join(input.workingDirectory, "phase-i-proof.txt"), "proof\n", "utf8");
+          runGit(input.workingDirectory, ["add", "phase-i-proof.txt"]);
+          runGit(input.workingDirectory, ["commit", "-m", "phase i"]);
+          return {
+            output: "committed but no artifact",
+            error: "Pi titan session timed out after 300000ms.",
+          };
+        },
+      }),
+      resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => "scratchpad",
+    });
+
+    expect(result).toMatchObject({
+      action: "implement",
+      issueId: "aegis-timeout-commit",
+      stage: "implemented",
+    });
+
+    const artifact = JSON.parse(
+      readFileSync(path.join(root, ".aegis", "titan", "aegis-timeout-commit.json"), "utf8"),
+    ) as {
+      outcome: string;
+      files_changed: string[];
+      summary: string;
+      known_risks: string[];
+      session: { status: string };
+    };
+
+    expect(artifact).toMatchObject({
+      outcome: "success",
+      files_changed: ["phase-i-proof.txt"],
+      session: { status: "failed" },
+    });
+    expect(artifact.summary).toContain("Recovered committed Titan work");
+    expect(artifact.known_risks.join("\n")).toContain("Pi titan session timed out");
+  });
+
   it("tells Titan to stage and commit labor changes before emitting the artifact", async () => {
     const root = createTempRoot();
     saveDispatchState(root, {

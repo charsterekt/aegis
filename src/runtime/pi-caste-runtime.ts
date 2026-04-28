@@ -946,6 +946,7 @@ export class PiCasteRuntime implements CasteRuntime {
         let settled = false;
         let repairAttempted = false;
         const sessionTimeout = setTimeout(() => {
+          void session.abort().catch(() => undefined);
           settle(() => {
             reject(new Error(
               `Pi ${input.caste} session timed out after ${sessionTimeoutMs}ms.`,
