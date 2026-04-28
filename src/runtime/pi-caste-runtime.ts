@@ -261,9 +261,13 @@ function terminateWorkspaceProcesses(
     const script = [
       "$ErrorActionPreference = 'SilentlyContinue'",
       `$workspace = ${JSON.stringify(workspace)}`,
+      `$rawWorkspace = ${JSON.stringify(path.resolve(workingDirectory))}`,
       "$current = $PID",
       "Get-CimInstance Win32_Process | Where-Object {",
-      "  $_.ProcessId -ne $current -and $_.CommandLine -and ($_.CommandLine.Replace('\\\\','/').ToLowerInvariant().Contains($workspace))",
+      "  $_.ProcessId -ne $current -and $_.CommandLine -and (",
+      "    $_.CommandLine.ToLowerInvariant().Contains($rawWorkspace.ToLowerInvariant()) -or",
+      "    $_.CommandLine.Replace('\\','/').ToLowerInvariant().Contains($workspace)",
+      "  )",
       "} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
     ].join("\n");
     spawnSync("powershell.exe", ["-NoProfile", "-Command", script], {
