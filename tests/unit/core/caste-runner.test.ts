@@ -1424,6 +1424,166 @@ describe("runCasteCommand", () => {
     expect(loadDispatchState(root).records["aegis-resume-parent"]?.blockedByIssueId).toBeNull();
   });
 
+  it("rejects already_satisfied for policy-created blocker issues", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-policy-child": {
+          issueId: "aegis-policy-child",
+          stage: "scouted",
+          runningAgent: null,
+          lastCompletedCaste: "oracle",
+          blockedByIssueId: null,
+          reviewFeedbackRef: null,
+          policyArtifactRef: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-policy-child.json"),
+          titanHandoffRef: null,
+          titanClarificationRef: null,
+          sentinelVerdictRef: null,
+          janusArtifactRef: null,
+          failureTranscriptRef: null,
+          fileScope: {
+            files: ["package.json"],
+          },
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+    persistArtifact(root, {
+      family: "oracle",
+      issueId: "aegis-policy-child",
+      artifact: {
+        files_affected: ["package.json"],
+        estimated_complexity: "moderate",
+        risks: [],
+        suggested_checks: ["npm run format:check"],
+        scope_notes: [],
+      },
+    });
+    initializeGitRepository(root);
+
+    const issue = createIssue("aegis-policy-child");
+    issue.description = [
+      "Fix package formatting.",
+      "Policy proposal: create_out_of_scope_blocker",
+      "Fingerprint: abc123",
+      "Scope evidence:",
+      "- package.json was failing format check.",
+    ].join("\n");
+
+    await expect(runCasteCommand({
+      root,
+      action: "implement",
+      issueId: "aegis-policy-child",
+      tracker: {
+        getIssue: vi.fn(async () => issue),
+      },
+      runtime: new ScriptedCasteRuntime({
+        titan: () => ({
+          output: JSON.stringify({
+            outcome: "already_satisfied",
+            summary: "No changes needed.",
+            files_changed: [],
+            tests_and_checks_run: ["npm run format:check"],
+            known_risks: [],
+            follow_up_work: [],
+          }),
+        }),
+      }),
+      resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => "scratchpad",
+    })).rejects.toThrow("policy-created blocker");
+  });
+
+  it("fails closed instead of creating repeated blockers after a resolved child", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-resume-parent": {
+          issueId: "aegis-resume-parent",
+          stage: "implementing",
+          runningAgent: null,
+          lastCompletedCaste: "titan",
+          blockedByIssueId: "aegis-child-done",
+          reviewFeedbackRef: null,
+          policyArtifactRef: path.join(".aegis", "policy", "aegis-resume-parent.json"),
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-resume-parent.json"),
+          titanHandoffRef: null,
+          titanClarificationRef: path.join(".aegis", "titan", "aegis-resume-parent.json"),
+          sentinelVerdictRef: null,
+          janusArtifactRef: null,
+          failureTranscriptRef: null,
+          fileScope: {
+            files: ["docs/setup-gate.md"],
+          },
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+    persistArtifact(root, {
+      family: "oracle",
+      issueId: "aegis-resume-parent",
+      artifact: {
+        files_affected: ["docs/setup-gate.md"],
+        estimated_complexity: "moderate",
+        risks: [],
+        suggested_checks: ["npm run format:check"],
+        scope_notes: [],
+      },
+    });
+    initializeGitRepository(root);
+
+    const createIssueSpy = vi.fn();
+    await expect(runCasteCommand({
+      root,
+      action: "implement",
+      issueId: "aegis-resume-parent",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-resume-parent")),
+        createIssue: createIssueSpy,
+      },
+      runtime: new ScriptedCasteRuntime({
+        titan: () => ({
+          output: JSON.stringify({
+            outcome: "failure",
+            summary: "Still blocked.",
+            files_changed: [],
+            tests_and_checks_run: ["npm run format:check"],
+            known_risks: [],
+            follow_up_work: [],
+            mutation_proposal: {
+              proposal_type: "create_out_of_scope_blocker",
+              summary: "Same formatting blocker remains.",
+              suggested_title: "Format config",
+              suggested_description: "Format config files.",
+              scope_evidence: ["format:check still failed"],
+            },
+          }),
+        }),
+      }),
+      resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => "scratchpad",
+      now: "2026-04-14T12:00:00.000Z",
+    })).rejects.toThrow("avoid blocker amplification");
+
+    const record = loadDispatchState(root).records["aegis-resume-parent"];
+    expect(record?.stage).toBe("failed_operational");
+    expect(record?.failureCount).toBe(1);
+    expect(createIssueSpy).not.toHaveBeenCalled();
+  });
+
   it("rejects Titan artifact file links instead of treating them as changed paths", async () => {
     const root = createTempRoot();
     saveDispatchState(root, {

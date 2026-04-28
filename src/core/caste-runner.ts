@@ -41,6 +41,7 @@ import {
   applyMutationProposal,
   type MutationProposal,
 } from "./control-plane-policy.js";
+import { calculateFailureCooldown, resolveFailureWindowStartMs } from "./failure-policy.js";
 import type { TrackerClient } from "../tracker/tracker.js";
 
 interface TrackerLike extends Pick<TrackerClient, "closeIssue" | "createIssue" | "linkBlockingIssue"> {
@@ -383,6 +384,19 @@ function saveRecord(root: string, issueId: string, record: DispatchRecord) {
   saveDispatchState(root, replaceDispatchRecord(state, issueId, record));
 }
 
+function toOperationalFailureRecord(record: DispatchRecord, timestamp: string): DispatchRecord {
+  return {
+    ...record,
+    stage: "failed_operational",
+    runningAgent: null,
+    failureCount: record.failureCount + 1,
+    consecutiveFailures: record.consecutiveFailures + 1,
+    failureWindowStartMs: record.failureWindowStartMs ?? resolveFailureWindowStartMs(timestamp),
+    cooldownUntil: calculateFailureCooldown(timestamp),
+    updatedAt: timestamp,
+  };
+}
+
 function resolveCandidateWorkingDirectory(root: string, laborPath: string) {
   return path.isAbsolute(laborPath)
     ? laborPath
@@ -391,6 +405,7 @@ function resolveCandidateWorkingDirectory(root: string, laborPath: string) {
 
 function validateTitanSessionOutcome(input: {
   issueId: string;
+  issueDescription: string;
   artifact: ReturnType<typeof parseTitanArtifact>;
   candidateBranch: string;
   fileScope: { files: string[] } | null;
@@ -448,6 +463,10 @@ function validateTitanSessionOutcome(input: {
     if (input.artifact.tests_and_checks_run.length === 0) {
       return `Titan already_satisfied handoff for ${input.issueId} must include verification checks.`;
     }
+
+    if (isPolicyCreatedBlockerDescription(input.issueDescription)) {
+      return `Titan policy-created blocker ${input.issueId} must resolve with success or failure, not already_satisfied.`;
+    }
   }
 
   if (
@@ -459,6 +478,12 @@ function validateTitanSessionOutcome(input: {
   }
 
   return null;
+}
+
+function isPolicyCreatedBlockerDescription(description: string) {
+  return description.includes("Policy proposal:")
+    && description.includes("Fingerprint:")
+    && description.includes("Scope evidence:");
 }
 
 function hasChangedHead(proofPair: {
@@ -908,6 +933,7 @@ async function runImplement(
   });
   const validationError = validateTitanSessionOutcome({
     issueId: issue.id,
+    issueDescription: issue.description ?? "",
     artifact,
     candidateBranch,
     fileScope: record.fileScope,
@@ -920,6 +946,17 @@ async function runImplement(
     throw new Error(validationError);
   }
   if (artifact.mutation_proposal) {
+    if (record.blockedByIssueId) {
+      const failureReason = `Titan for ${issue.id} proposed another blocker after resolved child ${record.blockedByIssueId}; failing closed to avoid blocker amplification.`;
+      const failureRecord = toOperationalFailureRecord(record, now);
+      saveRecord(input.root, issue.id, {
+        ...failureRecord,
+        titanClarificationRef: artifactRef,
+        failureTranscriptRef: finalAttempt.transcriptRef,
+      });
+      throw new Error(failureReason);
+    }
+
     const policyResult = await applyMutationProposal({
       root: input.root,
       tracker: input.tracker,
@@ -974,7 +1011,6 @@ async function runReview(
   if (record.stage !== "implemented" && record.stage !== "reviewing") {
     throw new Error("Review requires an implemented issue.");
   }
-  assertDispatchRecordStage(record, "implemented");
 
   writePhaseLog(input.root, {
     timestamp: offsetTimestamp(now, 0),

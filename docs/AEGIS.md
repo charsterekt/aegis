@@ -353,6 +353,8 @@ Accepted blocker requirements:
 - Beads dependency makes parent not ready.
 - dispatch state becomes `blocked_on_child`.
 - policy artifact is persisted.
+- policy-created blocker work must resolve with `success` or explicit `failure`; `already_satisfied` is not accepted because the blocker exists to change unresolved parent state.
+- if a resumed parent emits another blocker after its previous child closed, Aegis fails closed instead of creating a blocker chain.
 
 Rejected proposals fail closed as policy failures.
 

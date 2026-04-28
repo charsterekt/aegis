@@ -54,7 +54,11 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   {
     key: "setup.scaffold",
     title: "[setup] Scaffold app shell",
-    description: "Scaffold React + TypeScript localhost app shell and baseline source tree.",
+    description: [
+      "Scaffold React + TypeScript localhost app shell and baseline source tree.",
+      "Do not require build or preview checks to pass in this lane; tooling lane owns TypeScript/Vite config files.",
+      "Do not create blockers for tooling files already represented by the downstream setup.tooling issue.",
+    ].join("\n"),
     fileScope: [
       "index.html",
       "public/favicon.ico",
@@ -77,6 +81,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     description: [
       "Configure linting, formatting, and test runner scripts for repeatable local development.",
       "Keep any format check scoped to owned tooling/package files in this lane.",
+      "Before finalizing, run the formatter on owned tooling/package files and then prove npm run format:check is green.",
       "Do not format or rewrite src/ from this lane; source lanes own source formatting.",
     ].join("\n"),
     fileScope: [
