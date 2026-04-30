@@ -8,7 +8,7 @@ export default defineConfig({
       {
         test: {
           name: "default",
-          include: ["tests/**/*.{test,spec}.{ts,tsx}"],
+          include: ["tests/**/*.{test,spec}.{ts,tsx}", "packages/*/tests/**/*.{test,spec}.{ts,tsx}"],
           exclude: ["tests/acceptance/**/*.{test,spec}.{ts,tsx}"],
           environment: "node",
         },

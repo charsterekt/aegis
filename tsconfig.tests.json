@@ -6,6 +6,8 @@
   },
   "include": [
     "src/**/*.ts",
+    "packages/agora/src/**/*.ts",
+    "packages/agora/tests/**/*.ts",
     "tests/**/*.ts",
     "vitest.config.ts"
   ]
