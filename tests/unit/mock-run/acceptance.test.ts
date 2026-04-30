@@ -85,14 +85,14 @@ describe("runMockAcceptance", () => {
       },
       dispatch: {
         happy: {
-          stage: "reviewed" as const,
+          stage: "complete" as const,
           oracleAssessmentRef: ".aegis/oracle/issue-happy.json",
           titanHandoffRef: ".aegis/titan/issue-happy.json",
           sentinelVerdictRef: ".aegis/sentinel/issue-happy.json",
           janusArtifactRef: null,
         },
         janus: {
-          stage: "queued_for_merge" as const,
+          stage: "rework_required" as const,
           oracleAssessmentRef: ".aegis/oracle/issue-janus.json",
           titanHandoffRef: ".aegis/titan/issue-janus.json",
           sentinelVerdictRef: null,
@@ -107,7 +107,7 @@ describe("runMockAcceptance", () => {
           lastTier: "T1" as const,
         },
         janus: {
-          status: "queued" as const,
+          status: "failed" as const,
           attempts: 3,
           janusInvocations: 1,
           lastTier: "T3" as const,
@@ -175,7 +175,7 @@ describe("runMockAcceptance", () => {
           preservedLaborPathExists: true,
           janusArtifactRef: ".aegis/janus/issue-janus.json",
           janusArtifactExists: true,
-          recommendedNextAction: "requeue",
+          recommendedNextAction: "requeue_parent",
         },
         happy: {
           queueLaborPath: ".aegis/labors/labor-issue-happy",
@@ -299,7 +299,7 @@ describe("waitForMockAcceptanceProgress", () => {
         records: {
           "issue-happy": {
             issueId: "issue-happy",
-            stage: "reviewed",
+            stage: "complete",
             runningAgent: null,
             oracleAssessmentRef: ".aegis/oracle/issue-happy.json",
             oracleReady: true,
@@ -320,7 +320,7 @@ describe("waitForMockAcceptanceProgress", () => {
           },
           "issue-janus": {
             issueId: "issue-janus",
-            stage: "queued_for_merge",
+            stage: "rework_required",
             runningAgent: null,
             oracleAssessmentRef: ".aegis/oracle/issue-janus.json",
             oracleReady: true,
@@ -364,7 +364,7 @@ describe("waitForMockAcceptanceProgress", () => {
             candidateBranch: "aegis/issue-janus",
             targetBranch: "main",
             laborPath: ".aegis/labors/labor-issue-janus",
-            status: "queued",
+            status: "failed",
             attempts: 3,
             janusInvocations: 1,
             lastTier: "T3",
@@ -431,6 +431,73 @@ describe("waitForMockAcceptanceProgress", () => {
 
     expect(sleep).not.toHaveBeenCalled();
   });
+
+  it("fails proof when a parent creates extra work but remains runnable", async () => {
+    const runningState = {
+      schema_version: 1 as const,
+      pid: 4242,
+      server_state: "running" as const,
+      mode: "auto" as const,
+      started_at: "2026-04-24T10:00:00.000Z",
+    };
+    const sleep = vi.fn(async () => undefined);
+
+    await expect(waitForMockAcceptanceProgress("/repo", {
+      happyIssueId: "issue-parent",
+      janusIssueId: "issue-janus",
+    }, {
+      timeoutMs: 25,
+      pollMs: 10,
+      readRuntimeState: () => runningState,
+      isProcessRunning: () => true,
+      readDispatchState: () => ({
+        schemaVersion: 1,
+        records: {
+          "issue-parent": {
+            issueId: "issue-parent",
+            stage: "blocked_on_child",
+            runningAgent: null,
+            oracleAssessmentRef: ".aegis/oracle/issue-parent.json",
+            titanHandoffRef: ".aegis/titan/issue-parent.json",
+            titanClarificationRef: ".aegis/titan/issue-parent.json",
+            blockedByIssueId: "issue-child",
+            sentinelVerdictRef: null,
+            janusArtifactRef: null,
+            failureTranscriptRef: null,
+            fileScope: null,
+            failureCount: 0,
+            consecutiveFailures: 0,
+            failureWindowStartMs: null,
+            cooldownUntil: null,
+            sessionProvenanceId: "test",
+            updatedAt: "2026-04-24T10:00:00.000Z",
+          } as any,
+          "issue-janus": {
+            issueId: "issue-janus",
+            stage: "complete",
+            runningAgent: null,
+            oracleAssessmentRef: ".aegis/oracle/issue-janus.json",
+            titanHandoffRef: ".aegis/titan/issue-janus.json",
+            sentinelVerdictRef: ".aegis/sentinel/issue-janus.json",
+            janusArtifactRef: ".aegis/janus/issue-janus.json",
+            failureTranscriptRef: null,
+            fileScope: null,
+            failureCount: 0,
+            consecutiveFailures: 0,
+            failureWindowStartMs: null,
+            cooldownUntil: null,
+            sessionProvenanceId: "test",
+            updatedAt: "2026-04-24T10:00:00.000Z",
+          } as any,
+        },
+      }),
+      readMergeQueueState: () => ({
+        schemaVersion: 1,
+        items: [],
+      }),
+      sleep,
+    })).rejects.toThrow("created blocker without removing parent from readiness");
+  });
 });
 
 describe("collectMockAcceptanceSurface", () => {
@@ -442,7 +509,7 @@ describe("collectMockAcceptanceSurface", () => {
       records: {
         "issue-happy": {
           issueId: "issue-happy",
-          stage: "reviewed",
+          stage: "complete",
           runningAgent: null,
           oracleAssessmentRef: ".aegis/oracle/issue-happy.json",
           titanHandoffRef: ".aegis/titan/issue-happy.json",
@@ -460,7 +527,7 @@ describe("collectMockAcceptanceSurface", () => {
         },
         "issue-janus": {
           issueId: "issue-janus",
-          stage: "queued_for_merge",
+          stage: "rework_required",
           runningAgent: null,
           oracleAssessmentRef: ".aegis/oracle/issue-janus.json",
           titanHandoffRef: ".aegis/titan/issue-janus.json",
@@ -502,7 +569,7 @@ describe("collectMockAcceptanceSurface", () => {
           candidateBranch: "aegis/issue-janus",
           targetBranch: "main",
           laborPath: ".aegis/labors/labor-issue-janus",
-          status: "queued",
+          status: "failed",
           attempts: 3,
           janusInvocations: 1,
           lastTier: "T3",
@@ -527,7 +594,7 @@ describe("collectMockAcceptanceSurface", () => {
         filesTouched: [],
         validationsRun: [],
         residualRisks: [],
-        recommendedNextAction: "requeue",
+        recommendedNextAction: "requeue_parent",
       }, null, 2)}\n`,
       "utf8",
     );
@@ -596,12 +663,12 @@ describe("collectMockAcceptanceSurface", () => {
     });
 
     expect(surface.runtimeState.server_state).toBe("stopped");
-    expect(surface.dispatch.happy.stage).toBe("reviewed");
+    expect(surface.dispatch.happy.stage).toBe("complete");
     expect(surface.dispatch.happy.oracleAssessmentRef).toBe(".aegis/oracle/issue-happy.json");
-    expect(surface.dispatch.janus.stage).toBe("queued_for_merge");
+    expect(surface.dispatch.janus.stage).toBe("rework_required");
     expect(surface.dispatch.janus.janusArtifactRef).toBe(".aegis/janus/issue-janus.json");
     expect(surface.mergeQueue.happy.status).toBe("merged");
-    expect(surface.mergeQueue.janus.status).toBe("queued");
+    expect(surface.mergeQueue.janus.status).toBe("failed");
     expect(surface.mergeQueue.janus.janusInvocations).toBe(1);
     expect(surface.trackerIssues.happy.status).toBe("closed");
     expect(surface.trackerIssues.janus.status).toBe("blocked");
@@ -614,10 +681,10 @@ describe("collectMockAcceptanceSurface", () => {
     expect(surface.labor.janus.queueLaborPathExists).toBe(true);
     expect(surface.labor.janus.janusArtifactExists).toBe(true);
     expect(surface.labor.janus.preservedLaborPathExists).toBe(true);
-    expect(surface.labor.janus.recommendedNextAction).toBe("requeue");
+    expect(surface.labor.janus.recommendedNextAction).toBe("requeue_parent");
   });
 
-  it("accepts the Janus fail-closed proof path when the queue item is failed", () => {
+  it("accepts the Janus integration-blocker proof path when the queue item is failed", () => {
     const surface: MockAcceptanceSurface = {
       runtimeState: {
         schema_version: 1,
@@ -630,14 +697,14 @@ describe("collectMockAcceptanceSurface", () => {
       },
       dispatch: {
         happy: {
-          stage: "reviewed",
+          stage: "complete",
           oracleAssessmentRef: ".aegis/oracle/issue-happy.json",
           titanHandoffRef: ".aegis/titan/issue-happy.json",
           sentinelVerdictRef: ".aegis/sentinel/issue-happy.json",
           janusArtifactRef: null,
         },
         janus: {
-          stage: "failed",
+          stage: "blocked_on_child",
           oracleAssessmentRef: ".aegis/oracle/issue-janus.json",
           titanHandoffRef: ".aegis/titan/issue-janus.json",
           sentinelVerdictRef: null,
@@ -729,7 +796,7 @@ describe("collectMockAcceptanceSurface", () => {
           preservedLaborPathExists: true,
           janusArtifactRef: ".aegis/janus/issue-janus.json",
           janusArtifactExists: true,
-          recommendedNextAction: "manual_decision",
+          recommendedNextAction: "create_integration_blocker",
         },
       },
     };

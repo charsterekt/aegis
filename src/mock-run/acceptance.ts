@@ -198,7 +198,7 @@ function isHappyProofComplete(
   record: DispatchRecord | undefined,
   queueItem: MergeQueueItem | undefined,
 ) {
-  return record?.stage === "reviewed"
+  return record?.stage === "complete"
     && queueItem?.status === "merged"
     && typeof record.oracleAssessmentRef === "string"
     && typeof record.titanHandoffRef === "string"
@@ -220,12 +220,12 @@ function isJanusProofComplete(
     return false;
   }
 
-  const janusRequeued = record.stage === "queued_for_merge"
-    && queueItem.status === "queued";
-  const janusFailed = record.stage === "failed"
+  const janusRework = record.stage === "rework_required"
+    && queueItem.status === "failed";
+  const janusBlocked = record.stage === "blocked_on_child"
     && queueItem.status === "failed";
 
-  return janusRequeued || janusFailed;
+  return janusRework || janusBlocked;
 }
 
 function summarizeProofProgress(
@@ -242,11 +242,15 @@ function summarizeProofProgress(
 }
 
 function getDeadlockReason(record: DispatchRecord | undefined) {
-  if (!record || record.stage !== "scouted") {
+  if (!record) {
     return null;
   }
 
-  if (record.oracleDecompose === true) {
+  if (record.stage === "blocked_on_child") {
+    return `created blocker without removing parent from readiness: ${record.issueId}`;
+  }
+
+  if (record.stage === "scouted" && record.oracleDecompose === true) {
     return `Oracle returned decompose=true for ${record.issueId}, but the executable proof flow has no decomposition completion path.`;
   }
 
@@ -323,9 +327,15 @@ function readLaborSummary(root: string, item: MergeQueueItem): MockAcceptanceLab
     preservedLaborPath = typeof artifact.preservedLaborPath === "string"
       ? artifact.preservedLaborPath
       : null;
+    const mutationProposal = artifact.mutation_proposal;
     recommendedNextAction = typeof artifact.recommendedNextAction === "string"
       ? artifact.recommendedNextAction
-      : null;
+      : typeof mutationProposal === "object"
+        && mutationProposal !== null
+        && !Array.isArray(mutationProposal)
+        && typeof (mutationProposal as Record<string, unknown>).proposal_type === "string"
+          ? (mutationProposal as Record<string, string>).proposal_type
+          : null;
   }
 
   const resolvedPreservedLaborPath = preservedLaborPath === null
@@ -414,8 +424,8 @@ export function assertMockAcceptanceSurface(surface: MockAcceptanceSurface) {
     throw new Error(`Expected mock-run runtime to be stopped, got ${surface.runtimeState.server_state}.`);
   }
 
-  if (surface.dispatch.happy.stage !== "reviewed") {
-    throw new Error(`Expected happy-path issue to be reviewed, got ${surface.dispatch.happy.stage}.`);
+  if (surface.dispatch.happy.stage !== "complete") {
+    throw new Error(`Expected happy-path issue to be complete, got ${surface.dispatch.happy.stage}.`);
   }
 
   if (!surface.dispatch.happy.oracleAssessmentRef || !surface.dispatch.happy.titanHandoffRef || !surface.dispatch.happy.sentinelVerdictRef) {
@@ -426,15 +436,16 @@ export function assertMockAcceptanceSurface(surface: MockAcceptanceSurface) {
     throw new Error(`Expected happy-path merge queue item to be merged, got ${surface.mergeQueue.happy.status}.`);
   }
 
-  const janusRequeued = surface.dispatch.janus.stage === "queued_for_merge"
-    && surface.mergeQueue.janus.status === "queued";
-  const janusFailClosed = surface.dispatch.janus.stage === "failed"
+  const janusRework = surface.dispatch.janus.stage === "rework_required"
     && surface.mergeQueue.janus.status === "failed"
-    && surface.labor.janus.recommendedNextAction === "manual_decision";
+    && surface.labor.janus.recommendedNextAction === "requeue_parent";
+  const janusBlocked = surface.dispatch.janus.stage === "blocked_on_child"
+    && surface.mergeQueue.janus.status === "failed"
+    && surface.labor.janus.recommendedNextAction === "create_integration_blocker";
 
-  if (!janusRequeued && !janusFailClosed) {
+  if (!janusRework && !janusBlocked) {
     throw new Error(
-      `Expected Janus-path issue to be requeued or fail-closed, got dispatch=${surface.dispatch.janus.stage} queue=${surface.mergeQueue.janus.status}.`,
+      `Expected Janus-path issue to require rework or block on child, got dispatch=${surface.dispatch.janus.stage} queue=${surface.mergeQueue.janus.status}.`,
     );
   }
 

@@ -36,6 +36,7 @@ export const DEFAULT_GITIGNORE_ENTRIES = [
   ".aegis/labors/",
   ".aegis/logs/",
   ".aegis/oracle/",
+  ".aegis/policy/",
   ".aegis/titan/",
   ".aegis/sentinel/",
   ".aegis/janus/",

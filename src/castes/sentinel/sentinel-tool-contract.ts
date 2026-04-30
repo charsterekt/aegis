@@ -9,14 +9,34 @@ const sentinelStructuredContract = createStructuredToolContract<SentinelVerdict>
   toolName: SENTINEL_EMIT_VERDICT_TOOL_NAME,
   label: "Emit Sentinel Verdict",
   description:
-    "Finalize review by returning contract JSON with keys verdict, reviewSummary, issuesFound, followUpIssueIds, riskAreas.",
+    "Finalize review by returning contract JSON with keys verdict, reviewSummary, typed blockingFindings, advisories, touchedFiles, contractChecks.",
   parameters: Type.Object(
     {
-      verdict: Type.Union([Type.Literal("pass"), Type.Literal("fail")]),
+      verdict: Type.Union([Type.Literal("pass"), Type.Literal("fail_blocking")]),
       reviewSummary: Type.String(),
-      issuesFound: Type.Array(Type.String()),
-      followUpIssueIds: Type.Array(Type.String()),
-      riskAreas: Type.Array(Type.String()),
+      blockingFindings: Type.Array(Type.Object(
+        {
+          finding_kind: Type.Union([
+            Type.Literal("contract_gap"),
+            Type.Literal("regression"),
+            Type.Literal("out_of_scope_blocker"),
+            Type.Literal("integration_blocker"),
+          ]),
+          summary: Type.String(),
+          required_files: Type.Array(Type.String()),
+          owner_issue: Type.String(),
+          route: Type.Union([
+            Type.Literal("rework_owner"),
+            Type.Literal("create_blocker"),
+          ]),
+        },
+        {
+          additionalProperties: false,
+        },
+      )),
+      advisories: Type.Array(Type.String()),
+      touchedFiles: Type.Array(Type.String()),
+      contractChecks: Type.Array(Type.String()),
     },
     {
       additionalProperties: false,

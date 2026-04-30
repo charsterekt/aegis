@@ -155,6 +155,27 @@ function parseBdReady(raw: string): BdIssueRecord[] {
   return Array.isArray(parsed) ? parsed : [];
 }
 
+function normalizeMockScopeFile(candidate: string) {
+  return candidate.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+}
+
+export function formatMockRunIssueDescription(issue: MockRunIssueDefinition) {
+  const files = (issue.fileScope ?? [])
+    .map((entry) => normalizeMockScopeFile(entry))
+    .filter((entry) => entry.length > 0);
+
+  if (files.length === 0) {
+    return issue.description;
+  }
+
+  return [
+    issue.description.trim(),
+    "",
+    `Aegis file ownership: ${files.join(", ")}`,
+    "Only edit these owned files. If required work is outside this scope, emit a blocking mutation proposal instead of editing sibling-lane files.",
+  ].join("\n");
+}
+
 function createDatabaseName(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}`;
 }
@@ -223,7 +244,7 @@ function createIssue(
     "--title",
     issue.title,
     "--description",
-    issue.description,
+    formatMockRunIssueDescription(issue),
     "--type",
     issue.issueType,
     "--priority",

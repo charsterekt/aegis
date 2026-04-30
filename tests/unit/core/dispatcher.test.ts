@@ -132,7 +132,7 @@ describe("dispatchReadyWork", () => {
     });
   });
 
-  it("puts failed launches on cooldown so the same issue is not redispatched immediately", async () => {
+  it("puts failed launches in failed_operational cooldown so the same issue is not redispatched immediately", async () => {
     const root = createTempRoot();
     const result = await dispatchReadyWork({
       dispatchState: emptyDispatchState(),
@@ -161,8 +161,127 @@ describe("dispatchReadyWork", () => {
     });
 
     expect(result.failed).toEqual(["ISSUE-1"]);
-    expect(result.state.records["ISSUE-1"]?.stage).toBe("failed");
+    expect(result.state.records["ISSUE-1"]?.stage).toBe("failed_operational");
+    expect(result.state.records["ISSUE-1"]?.operationalFailureKind).toBe("runtime_failure");
     expect(result.state.records["ISSUE-1"]?.cooldownUntil).toBeTruthy();
+  });
+
+  it("preserves child blocker context while dispatching resumed work", async () => {
+    const root = createTempRoot();
+    const result = await dispatchReadyWork({
+      dispatchState: {
+        schemaVersion: 1,
+        records: {
+          "ISSUE-1": {
+            issueId: "ISSUE-1",
+            stage: "blocked_on_child",
+            runningAgent: null,
+            blockedByIssueId: "ISSUE-child-1",
+            policyArtifactRef: ".aegis/policy/ISSUE-1.json",
+            oracleAssessmentRef: ".aegis/oracle/ISSUE-1.json",
+            titanHandoffRef: ".aegis/titan/ISSUE-1.json",
+            titanClarificationRef: ".aegis/titan/ISSUE-1.json",
+            sentinelVerdictRef: null,
+            janusArtifactRef: null,
+            failureTranscriptRef: null,
+            fileScope: null,
+            failureCount: 0,
+            consecutiveFailures: 0,
+            failureWindowStartMs: null,
+            cooldownUntil: null,
+            sessionProvenanceId: "daemon-0",
+            updatedAt: "2026-04-14T11:59:59.000Z",
+          },
+        },
+      },
+      decisions: [
+        {
+          issueId: "ISSUE-1",
+          title: "Resume",
+          caste: "titan",
+          stage: "implementing",
+        },
+      ],
+      runtime: createRuntime(),
+      sessionProvenanceId: "daemon-1",
+      root,
+      now: "2026-04-14T12:00:00.000Z",
+    });
+
+    expect(result.state.records["ISSUE-1"]).toMatchObject({
+      stage: "implementing",
+      blockedByIssueId: "ISSUE-child-1",
+      policyArtifactRef: ".aegis/policy/ISSUE-1.json",
+    });
+  });
+
+  it("marks launch failures as failed_operational", async () => {
+    const root = createTempRoot();
+    const result = await dispatchReadyWork({
+      dispatchState: emptyDispatchState(),
+      decisions: [
+        {
+          issueId: "ISSUE-1",
+          title: "First",
+          caste: "oracle",
+          stage: "scouting",
+        },
+      ],
+      runtime: {
+        async launch() {
+          throw new Error("phase e runtime missing");
+        },
+        async readSession() {
+          return null;
+        },
+        async terminate() {
+          return null;
+        },
+      },
+      sessionProvenanceId: "daemon-1",
+      root,
+      now: "2026-04-24T10:00:00.000Z",
+    });
+
+    expect(result.failed).toEqual(["ISSUE-1"]);
+    expect(result.state.records["ISSUE-1"]?.stage).toBe("failed_operational");
+    expect(result.state.records["ISSUE-1"]?.operationalFailureKind).toBe("runtime_failure");
+    expect(result.state.records["ISSUE-1"]?.cooldownUntil).toBeTruthy();
+  });
+
+  it("classifies provider usage limit launch failures", async () => {
+    const root = createTempRoot();
+    const result = await dispatchReadyWork({
+      dispatchState: emptyDispatchState(),
+      decisions: [
+        {
+          issueId: "ISSUE-1",
+          title: "First",
+          caste: "oracle",
+          stage: "scouting",
+        },
+      ],
+      runtime: {
+        async launch() {
+          throw new Error("You've hit your usage limit. Try again at 11:30 PM.");
+        },
+        async readSession() {
+          return null;
+        },
+        async terminate() {
+          return null;
+        },
+      },
+      sessionProvenanceId: "daemon-1",
+      root,
+      now: "2026-04-29T20:01:00.000Z",
+    });
+
+    expect(result.state.records["ISSUE-1"]).toMatchObject({
+      stage: "failed_operational",
+      consecutiveFailures: 3,
+      operationalFailureKind: "provider_usage_limit",
+    });
   });
 
   it("stops dispatching the rest of the current pass after a launch failure", async () => {

@@ -36,7 +36,7 @@ function writeTitanArtifact(root: string, issueId: string) {
 }
 
 describe("autoEnqueueImplementedIssuesForMerge", () => {
-  it("queues implemented issues and advances dispatch stage to queued_for_merge", () => {
+  it("queues Sentinel-passed issues already marked queued_for_merge", () => {
     const root = createTempRoot();
     writeTitanArtifact(root, "aegis-501");
     saveMergeQueueState(root, emptyMergeQueueState());
@@ -45,12 +45,12 @@ describe("autoEnqueueImplementedIssuesForMerge", () => {
       records: {
         "aegis-501": {
           issueId: "aegis-501",
-          stage: "implemented",
+          stage: "queued_for_merge",
           runningAgent: null,
           oracleAssessmentRef: ".aegis/oracle/aegis-501.json",
           titanHandoffRef: ".aegis/titan/aegis-501.json",
           titanClarificationRef: null,
-          sentinelVerdictRef: null,
+          sentinelVerdictRef: ".aegis/sentinel/aegis-501.json",
           janusArtifactRef: null,
           failureTranscriptRef: null,
           fileScope: null,
@@ -82,9 +82,28 @@ describe("autoEnqueueImplementedIssuesForMerge", () => {
     ]);
   });
 
-  it("is idempotent when no implemented issue remains", () => {
+  it("is idempotent when a queued issue is already present in the merge queue", () => {
     const root = createTempRoot();
-    saveMergeQueueState(root, emptyMergeQueueState());
+    writeTitanArtifact(root, "aegis-777");
+    saveMergeQueueState(root, {
+      schemaVersion: 1,
+      items: [
+        {
+          queueItemId: "queue-aegis-777",
+          issueId: "aegis-777",
+          candidateBranch: "aegis/aegis-777",
+          targetBranch: "main",
+          laborPath: ".aegis/labors/aegis-777",
+          status: "queued",
+          attempts: 0,
+          janusInvocations: 0,
+          lastTier: null,
+          lastError: null,
+          enqueuedAt: "2026-04-19T15:00:00.000Z",
+          updatedAt: "2026-04-19T15:00:00.000Z",
+        },
+      ],
+    });
     saveDispatchState(root, {
       schemaVersion: 1,
       records: {
@@ -95,7 +114,7 @@ describe("autoEnqueueImplementedIssuesForMerge", () => {
           oracleAssessmentRef: ".aegis/oracle/aegis-777.json",
           titanHandoffRef: ".aegis/titan/aegis-777.json",
           titanClarificationRef: null,
-          sentinelVerdictRef: null,
+          sentinelVerdictRef: ".aegis/sentinel/aegis-777.json",
           janusArtifactRef: null,
           failureTranscriptRef: null,
           fileScope: null,
@@ -109,7 +128,6 @@ describe("autoEnqueueImplementedIssuesForMerge", () => {
       },
     });
 
-    const beforeQueue = readFileSync(path.join(root, ".aegis", "merge-queue.json"), "utf8");
     const beforeDispatch = readFileSync(path.join(root, ".aegis", "dispatch-state.json"), "utf8");
 
     const result = autoEnqueueImplementedIssuesForMerge(
@@ -117,8 +135,15 @@ describe("autoEnqueueImplementedIssuesForMerge", () => {
       "2026-04-19T15:01:00.000Z",
     );
 
-    expect(result.enqueuedIssueIds).toEqual([]);
-    expect(readFileSync(path.join(root, ".aegis", "merge-queue.json"), "utf8")).toBe(beforeQueue);
+    expect(result.enqueuedIssueIds).toEqual(["aegis-777"]);
+    expect(JSON.parse(readFileSync(path.join(root, ".aegis", "merge-queue.json"), "utf8"))).toMatchObject({
+      items: [
+        {
+          issueId: "aegis-777",
+          status: "queued",
+        },
+      ],
+    });
     expect(readFileSync(path.join(root, ".aegis", "dispatch-state.json"), "utf8")).toBe(beforeDispatch);
   });
 });

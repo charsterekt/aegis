@@ -29,6 +29,7 @@ import {
   type RuntimeCommandResponse,
 } from "./runtime-command.js";
 import { createCasteRuntime } from "../runtime/create-caste-runtime.js";
+import { createAgentRuntime } from "../runtime/scripted-agent-runtime.js";
 import { verifyConfiguredPiModels } from "../runtime/pi-model-config.js";
 import { runMergeNext as defaultRunMergeNext } from "../merge/merge-next.js";
 import {
@@ -42,10 +43,10 @@ import {
   clearStopRequest,
   isProcessRunning,
   readStopRequest,
-  readRuntimeState,
   writeRuntimeState,
   type RuntimeStateRecord,
 } from "./runtime-state.js";
+import { recoverStaleRuntimeState } from "./runtime-recovery.js";
 
 export const START_COMMAND_NAME = "start";
 
@@ -256,7 +257,7 @@ function verifyGitRepository(root: string) {
 }
 
 function verifyRuntimeAdapter(config: AegisConfig): StartupPreflightProbeResult {
-  if (config.runtime !== "pi" && config.runtime !== "scripted") {
+  if (config.runtime !== "pi" && config.runtime !== "scripted" && config.runtime !== "codex") {
     return {
       ok: false,
       detail: `Unsupported runtime adapter: ${config.runtime}`,
@@ -487,7 +488,9 @@ export async function startAegis(
     throw new StartupPreflightBlockedError(preflight);
   }
 
-  const recoveredRuntime = readRuntimeState(repoRoot);
+  const recoveredRuntime = recoverStaleRuntimeState(repoRoot, {
+    recoveryProvenanceId: String(process.pid),
+  }).runtimeState;
   const isAlreadyRunning = recoveredRuntime
     && recoveredRuntime.server_state !== "stopped"
     && isProcessRunning(recoveredRuntime.pid);
@@ -557,6 +560,16 @@ export async function startAegis(
       }
       clearStopRequest(repoRoot);
       clearRuntimeCommandArtifacts(repoRoot);
+      const stopRuntime = createAgentRuntime(resolvedConfig.runtime);
+      const activeRecords = Object.values(loadDispatchState(repoRoot).records)
+        .filter((record) => record.runningAgent !== null);
+      for (const record of activeRecords) {
+        await stopRuntime.terminate(
+          repoRoot,
+          record.runningAgent!.sessionId,
+          `Daemon stopped: ${reason}.`,
+        );
+      }
       runningState = toStoppedRuntimeState(runningState, reason);
       writeRuntimeState(runningState, repoRoot);
       appendDaemonLog(repoRoot, `[daemon][stop] reason=${reason}`);

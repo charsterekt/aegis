@@ -1,6 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { resolveFailureWindowStartMs } from "./failure-policy.js";
+import {
+  calculateFailureCooldown,
+  type OperationalFailureKind,
+  resolveFailureWindowStartMs,
+  shouldEscalateSentinelOperationalFailure,
+} from "./failure-policy.js";
+import { renameWithRetries } from "../shared/atomic-write.js";
 
 export type AgentCaste = "oracle" | "titan" | "sentinel" | "janus";
 
@@ -10,10 +16,29 @@ export interface AgentAssignment {
   startedAt: string;
 }
 
+export type DispatchStage =
+  | "pending"
+  | "scouting"
+  | "scouted"
+  | "implementing"
+  | "implemented"
+  | "reviewing"
+  | "queued_for_merge"
+  | "merging"
+  | "resolving_integration"
+  | "blocked_on_child"
+  | "rework_required"
+  | "failed_operational"
+  | "complete";
+
 export interface DispatchRecord {
   issueId: string;
-  stage: string;
+  stage: DispatchStage;
   runningAgent: AgentAssignment | null;
+  lastCompletedCaste?: AgentCaste | null;
+  blockedByIssueId?: string | null;
+  reviewFeedbackRef?: string | null;
+  policyArtifactRef?: string | null;
   oracleAssessmentRef: string | null;
   oracleReady?: boolean | null;
   oracleDecompose?: boolean | null;
@@ -23,6 +48,7 @@ export interface DispatchRecord {
   sentinelVerdictRef: string | null;
   janusArtifactRef?: string | null;
   failureTranscriptRef?: string | null;
+  operationalFailureKind?: OperationalFailureKind | null;
   fileScope: { files: string[] } | null;
   failureCount: number;
   consecutiveFailures: number;
@@ -102,10 +128,10 @@ export function saveDispatchState(projectRoot: string, state: DispatchState): vo
   const tmpPath = dispatchStateTmpPath(projectRoot);
   const finalPath = dispatchStatePath(projectRoot);
   writeFileSync(tmpPath, JSON.stringify(state, null, 2), "utf-8");
-  renameSync(tmpPath, finalPath);
+  renameWithRetries(tmpPath, finalPath);
 }
 
-const IN_PROGRESS_STAGES = new Set([
+const IN_PROGRESS_STAGES = new Set<DispatchStage>([
   "scouting",
   "implementing",
   "reviewing",
@@ -116,22 +142,42 @@ const IN_PROGRESS_STAGES = new Set([
 export function reconcileDispatchState(
   state: DispatchState,
   liveSessionId: string,
+  timestamp = new Date().toISOString(),
 ): DispatchState {
   const reconciledRecords: Record<string, DispatchRecord> = {};
-  const timestamp = new Date().toISOString();
 
   for (const [issueId, record] of Object.entries(state.records)) {
     if (
       IN_PROGRESS_STAGES.has(record.stage)
       && record.sessionProvenanceId !== liveSessionId
     ) {
+      if (record.stage === "reviewing" && record.runningAgent?.caste === "sentinel") {
+        const nextConsecutiveFailures = record.consecutiveFailures + 1;
+        reconciledRecords[issueId] = {
+          ...record,
+          stage: shouldEscalateSentinelOperationalFailure(nextConsecutiveFailures)
+            ? "failed_operational"
+            : "implemented",
+          runningAgent: null,
+          failureCount: record.failureCount + 1,
+          consecutiveFailures: nextConsecutiveFailures,
+          operationalFailureKind: "runtime_failure",
+          failureWindowStartMs: record.failureWindowStartMs
+            ?? resolveFailureWindowStartMs(timestamp),
+          cooldownUntil: calculateFailureCooldown(timestamp),
+          sessionProvenanceId: liveSessionId,
+          updatedAt: timestamp,
+        };
+        continue;
+      }
+
       reconciledRecords[issueId] = {
         ...record,
-        stage: "failed",
+        stage: "failed_operational",
         runningAgent: null,
-        fileScope: null,
         failureCount: record.failureCount + 1,
         consecutiveFailures: record.consecutiveFailures + 1,
+        operationalFailureKind: "runtime_failure",
         failureWindowStartMs: record.failureWindowStartMs
           ?? resolveFailureWindowStartMs(timestamp),
         cooldownUntil: null,

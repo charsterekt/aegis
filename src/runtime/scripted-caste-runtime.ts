@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
 import type {
   CasteName,
@@ -23,6 +26,28 @@ type ScriptedModelConfig = {
 };
 type ScriptedModelConfigs = Partial<Record<CasteName, ScriptedModelConfig>>;
 
+const SCRIPTED_TITAN_PROOF_FILE = "aegis-scripted-proof.txt";
+
+function normalizeScriptedScopeFile(candidate: string) {
+  return candidate.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+}
+
+function extractAllowedFileScope(prompt: string): string[] {
+  const match = prompt.match(/^Allowed file scope:\s*(.+)$/im);
+  if (!match) {
+    return [];
+  }
+
+  return match[1]!
+    .split(",")
+    .map((entry) => normalizeScriptedScopeFile(entry))
+    .filter((entry) => entry.length > 0);
+}
+
+function selectScriptedTitanProofFile(input: CasteRunInput) {
+  return extractAllowedFileScope(input.prompt)[0] ?? SCRIPTED_TITAN_PROOF_FILE;
+}
+
 function isScriptedHandlers(
   value: ScriptedModelConfigs | ScriptedHandlers,
 ): value is ScriptedHandlers {
@@ -37,13 +62,13 @@ export class ScriptedCasteRuntime implements CasteRuntime {
     modelConfigsOrHandlers: ScriptedModelConfigs | ScriptedHandlers = {},
     handlers: ScriptedHandlers = {},
   ) {
-    if (isScriptedHandlers(modelConfigsOrHandlers)) {
+    if (Object.keys(handlers).length === 0 && isScriptedHandlers(modelConfigsOrHandlers)) {
       this.modelConfigs = {};
       this.handlers = modelConfigsOrHandlers;
       return;
     }
 
-    this.modelConfigs = modelConfigsOrHandlers;
+    this.modelConfigs = modelConfigsOrHandlers as ScriptedModelConfigs;
     this.handlers = handlers;
   }
 
@@ -123,12 +148,97 @@ function parseForcedIssueSet(value: string | undefined) {
   );
 }
 
-function parseForcedJanusAction(value: string | undefined): "requeue" | "manual_decision" | "fail" {
-  if (value === "manual_decision" || value === "fail" || value === "requeue") {
-    return value;
+function parseForcedJanusAction(
+  value: string | undefined,
+): "requeue_parent" | "create_integration_blocker" {
+  if (value === "create_integration_blocker" || value === "manual_decision" || value === "fail") {
+    return "create_integration_blocker";
   }
 
-  return "requeue";
+  if (value === "requeue_parent" || value === "requeue") {
+    return "requeue_parent";
+  }
+
+  return "requeue_parent";
+}
+
+function runGit(workingDirectory: string, args: string[]) {
+  return spawnSync("git", args, {
+    cwd: workingDirectory,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+}
+
+function isGitWorkingTree(workingDirectory: string) {
+  const probe = runGit(workingDirectory, ["rev-parse", "--is-inside-work-tree"]);
+  return probe.status === 0 && probe.stdout.trim() === "true";
+}
+
+function formatGitFailure(result: ReturnType<typeof runGit>) {
+  return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+}
+
+function buildDeterministicTitanResponse(input: CasteRunInput): ScriptedResponse {
+  if (!isGitWorkingTree(input.workingDirectory)) {
+    return {
+      output: JSON.stringify({
+        outcome: "success",
+        summary: "deterministic scripted implementation",
+        files_changed: [],
+        tests_and_checks_run: [],
+        known_risks: [],
+        follow_up_work: [],
+      }),
+      toolsUsed: ["write_file"],
+    };
+  }
+
+  const proofFile = selectScriptedTitanProofFile(input);
+  const proofPath = path.join(input.workingDirectory, ...proofFile.split("/"));
+  mkdirSync(path.dirname(proofPath), { recursive: true });
+  const existingProof = existsSync(proofPath)
+    ? readFileSync(proofPath, "utf8")
+    : "";
+  const nextSequence = (existingProof.match(/^sequence:/gm) ?? []).length + 1;
+  writeFileSync(
+    proofPath,
+    `scripted titan proof for ${input.issueId}\nsequence:${nextSequence}\n`,
+    "utf8",
+  );
+
+  const add = runGit(input.workingDirectory, ["add", proofFile]);
+  if (add.status !== 0) {
+    return {
+      output: "{}",
+      error: `Failed to stage scripted Titan proof. ${formatGitFailure(add)}`,
+      toolsUsed: ["write_file"],
+    };
+  }
+
+  const commit = runGit(
+    input.workingDirectory,
+    ["commit", "-m", `chore(${input.issueId}): scripted titan proof`],
+  );
+  if (commit.status !== 0) {
+    return {
+      output: "{}",
+      error: `Failed to commit scripted Titan proof. ${formatGitFailure(commit)}`,
+      toolsUsed: ["write_file"],
+    };
+  }
+
+  return {
+    output: JSON.stringify({
+      outcome: "success",
+      summary: "deterministic scripted implementation",
+      files_changed: [proofFile],
+      tests_and_checks_run: ["git rev-parse HEAD"],
+      known_risks: [],
+      follow_up_work: [],
+    }),
+    toolsUsed: ["write_file", "shell"],
+  };
 }
 
 export function createScriptedModelConfigs(
@@ -156,34 +266,31 @@ export function createDefaultScriptedCasteRuntime(
       output: JSON.stringify({
         files_affected: [],
         estimated_complexity: "moderate",
-        decompose: false,
-        ready: true,
+        risks: [],
+        suggested_checks: [],
+        scope_notes: [],
       }),
       toolsUsed: ["read_file"],
     }),
-    titan: () => ({
-      output: JSON.stringify({
-        outcome: "success",
-        summary: "deterministic scripted implementation",
-        files_changed: [],
-        tests_and_checks_run: [],
-        known_risks: [],
-        follow_up_work: [],
-        learnings_written_to_mnemosyne: [],
-      }),
-      toolsUsed: ["write_file"],
-    }),
+    titan: (input) => buildDeterministicTitanResponse(input),
     sentinel: (input) => {
       if (forcedSentinelFailures.has("*") || forcedSentinelFailures.has(input.issueId)) {
         return {
           output: JSON.stringify({
-            verdict: "fail",
+            verdict: "fail_blocking",
             reviewSummary: "deterministic scripted review failure",
-            issuesFound: [
-              "add missing sentinel regression coverage",
+            blockingFindings: [
+              {
+                finding_kind: "contract_gap",
+                summary: "add missing sentinel regression coverage",
+                required_files: [],
+                owner_issue: input.issueId,
+                route: "rework_owner",
+              },
             ],
-            followUpIssueIds: [],
-            riskAreas: ["review-observability"],
+            advisories: ["review-observability"],
+            touchedFiles: [],
+            contractChecks: ["scripted contract check"],
           }),
           toolsUsed: ["read_file"],
         };
@@ -193,9 +300,10 @@ export function createDefaultScriptedCasteRuntime(
         output: JSON.stringify({
           verdict: "pass",
           reviewSummary: "deterministic scripted review",
-          issuesFound: [],
-          followUpIssueIds: [],
-          riskAreas: [],
+          blockingFindings: [],
+          advisories: [],
+          touchedFiles: [],
+          contractChecks: ["scripted contract check"],
         }),
         toolsUsed: ["read_file"],
       };
@@ -210,7 +318,19 @@ export function createDefaultScriptedCasteRuntime(
         filesTouched: [],
         validationsRun: [],
         residualRisks: [],
-        recommendedNextAction: forcedJanusAction,
+        mutation_proposal: forcedJanusAction === "requeue_parent"
+          ? {
+              proposal_type: "requeue_parent",
+              summary: "deterministic scripted requeue",
+              scope_evidence: ["scripted merge conflict remains in parent scope"],
+            }
+          : {
+              proposal_type: "create_integration_blocker",
+              summary: "deterministic scripted integration blocker",
+              suggested_title: `Resolve integration blocker for ${issueId}`,
+              suggested_description: "Scripted Janus found integration work outside parent scope.",
+              scope_evidence: ["scripted merge conflict outside parent scope"],
+            },
       }),
       toolsUsed: ["read_file"],
     }),

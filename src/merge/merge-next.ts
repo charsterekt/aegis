@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 
 import { loadConfig } from "../config/load-config.js";
+import { captureGitProofPair, summarizeOperationalDirtyFiles } from "../core/git-proof.js";
 import {
   loadDispatchState,
   replaceDispatchRecord,
@@ -13,6 +14,7 @@ import { createCasteRuntime } from "../runtime/create-caste-runtime.js";
 import type { CasteRuntime } from "../runtime/caste-runtime.js";
 import { BeadsTrackerClient } from "../tracker/beads-tracker.js";
 import type { AegisIssue } from "../tracker/issue-model.js";
+import type { TrackerClient } from "../tracker/tracker.js";
 import {
   findNextQueuedItem,
   loadMergeQueueState,
@@ -25,7 +27,7 @@ import {
   type MergeExecutionOutcome,
 } from "./tier-policy.js";
 
-interface TrackerLike {
+interface TrackerLike extends Pick<TrackerClient, "closeIssue" | "createIssue" | "linkBlockingIssue"> {
   getIssue(id: string, root?: string): Promise<AegisIssue>;
 }
 
@@ -191,6 +193,15 @@ function runGit(root: string, args: string[]) {
 
 class GitMergeExecutor implements MergeExecutor {
   async execute(root: string, item: MergeQueueItem): Promise<MergeExecutorResult> {
+    const rootWorkspace = captureGitProofPair(root).before;
+    const dirtyWorkspaceDetail = summarizeOperationalDirtyFiles(rootWorkspace);
+    if (dirtyWorkspaceDetail) {
+      return {
+        outcome: "stale_branch",
+        detail: `Project root has non-Aegis working tree changes. Merge requires a clean root: ${dirtyWorkspaceDetail}.`,
+      };
+    }
+
     const targetProbe = runGit(root, ["rev-parse", "--verify", item.targetBranch]);
     if (targetProbe.status !== 0) {
       return {
@@ -254,7 +265,7 @@ function updateDispatchStage(
   root: string,
   issueId: string,
   record: DispatchRecord,
-  stage: string,
+  stage: DispatchRecord["stage"],
   now: string,
 ) {
   const state = loadDispatchState(root);
@@ -292,7 +303,6 @@ export async function runMergeNext(
 
   const executor = options.executor ?? createDefaultExecutor(root);
   const tracker = options.tracker ?? createDefaultTracker();
-  const runtime = options.runtime ?? createDefaultRuntime(root, queueItem.issueId);
 
   const mergingQueueState = updateMergeQueueItem(queueState, queueItem.queueItemId, (item) => ({
     ...item,
@@ -313,6 +323,7 @@ export async function runMergeNext(
   });
 
   if (decision.action === "merge") {
+    await tracker.closeIssue?.(queueItem.issueId, root);
     const mergedQueueState = updateMergeQueueItem(mergingQueueState, queueItem.queueItemId, (item) => ({
       ...item,
       status: "merged",
@@ -321,24 +332,15 @@ export async function runMergeNext(
       updatedAt: now,
     }));
     saveMergeQueueState(root, mergedQueueState);
-    updateDispatchStage(root, queueItem.issueId, dispatchRecord, "merged", now);
-
-    const review = await runCasteCommand({
-      root,
-      action: "review",
-      issueId: queueItem.issueId,
-      tracker,
-      runtime,
-      now,
-    });
+    updateDispatchStage(root, queueItem.issueId, dispatchRecord, "complete", now);
 
     return {
       action: "merge_next",
-      status: review.stage === "reviewed" ? "merged" : "failed",
+      status: "merged",
       issueId: queueItem.issueId,
       queueItemId: queueItem.queueItemId,
       tier: "T1",
-      stage: review.stage,
+      stage: "complete",
       detail: attempt.detail,
     };
   }
@@ -369,6 +371,8 @@ export async function runMergeNext(
   if (decision.action === "janus") {
     const janusInvocation = queueItem.janusInvocations + 1;
     const attemptNumber = queueItem.attempts + 1;
+    const config = loadConfig(root);
+    const runtime = options.runtime ?? createDefaultRuntime(root, queueItem.issueId);
     updateDispatchStage(root, queueItem.issueId, dispatchRecord, "resolving_integration", now);
     const janus = await runCasteCommand({
       root,
@@ -376,6 +380,7 @@ export async function runMergeNext(
       issueId: queueItem.issueId,
       tracker,
       runtime,
+      artifactEmissionMode: config.runtime === "pi" ? "tool" : "json",
       janusContext: {
         queueItemId: queueItem.queueItemId,
         mergeOutcome: attempt.outcome,
@@ -386,13 +391,10 @@ export async function runMergeNext(
       },
       now,
     });
-    const recommendation = janus.janusRecommendation
-      ?? (janus.stage === "queued_for_merge" ? "requeue" : "manual_decision");
-    const requeued = janus.stage === "queued_for_merge";
-    const janusDetail = `${attempt.detail} Janus recommended ${recommendation}.`;
+    const janusDetail = `${attempt.detail} Janus recommended ${janus.janusRecommendation ?? janus.stage}.`;
     const afterJanusState = updateMergeQueueItem(mergingQueueState, queueItem.queueItemId, (item) => ({
       ...item,
-      status: requeued ? "queued" : "failed",
+      status: "failed",
       attempts: item.attempts + 1,
       janusInvocations: item.janusInvocations + 1,
       lastTier: "T3",
@@ -403,7 +405,7 @@ export async function runMergeNext(
 
     return {
       action: "merge_next",
-      status: requeued ? "janus_requeued" : "failed",
+      status: "failed",
       issueId: queueItem.issueId,
       queueItemId: queueItem.queueItemId,
       tier: "T3",
@@ -421,7 +423,7 @@ export async function runMergeNext(
     updatedAt: now,
   }));
   saveMergeQueueState(root, failedState);
-  updateDispatchStage(root, queueItem.issueId, dispatchRecord, "failed", now);
+  updateDispatchStage(root, queueItem.issueId, dispatchRecord, "failed_operational", now);
 
   return {
     action: "merge_next",
@@ -429,7 +431,7 @@ export async function runMergeNext(
     issueId: queueItem.issueId,
     queueItemId: queueItem.queueItemId,
     tier: "T3",
-    stage: "failed",
+    stage: "failed_operational",
     detail: attempt.detail,
   };
 }

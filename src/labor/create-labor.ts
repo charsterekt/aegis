@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 export interface LaborGitCommand {
@@ -12,6 +12,7 @@ export interface LaborCreationRequest {
   projectRoot: string;
   baseBranch: string;
   laborBasePath: string;
+  refreshExisting?: boolean;
 }
 
 export interface LaborCreationPlan {
@@ -20,8 +21,16 @@ export interface LaborCreationPlan {
   laborPath: string;
   branchName: string;
   baseBranch: string;
+  refreshExisting: boolean;
   createWorktreeCommand: LaborGitCommand;
 }
+
+const LABOR_GIT_EXCLUDE_PATTERNS = [
+  "node_modules/",
+  "dist/",
+  "coverage/",
+  ".vite/",
+];
 
 function sanitizeIssueId(issueId: string) {
   return issueId.replace(/[^a-zA-Z0-9._-]/g, "-");
@@ -45,6 +54,7 @@ export function planLaborCreation(request: LaborCreationRequest): LaborCreationP
     laborPath,
     branchName,
     baseBranch: request.baseBranch,
+    refreshExisting: request.refreshExisting ?? false,
     createWorktreeCommand: {
       command: "git",
       args: ["worktree", "add", "-b", branchName, laborPath, request.baseBranch],
@@ -81,8 +91,83 @@ function formatGitFailure(result: ReturnType<typeof runGit>) {
   return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
 }
 
+function resolveWorktreeGitDirectory(laborPath: string) {
+  const commonGitDirectory = runGit(laborPath, ["rev-parse", "--git-common-dir"]);
+  if (commonGitDirectory.status === 0) {
+    const gitDirectory = commonGitDirectory.stdout.trim();
+    if (gitDirectory.length > 0) {
+      return path.isAbsolute(gitDirectory)
+        ? gitDirectory
+        : path.resolve(laborPath, gitDirectory);
+    }
+  }
+
+  const dotGit = path.join(laborPath, ".git");
+  if (!existsSync(dotGit)) {
+    return null;
+  }
+
+  if (statSync(dotGit).isDirectory()) {
+    return dotGit;
+  }
+
+  const match = readFileSync(dotGit, "utf8").match(/^gitdir:\s*(.+)$/im);
+  if (!match) {
+    return null;
+  }
+
+  const gitDirectory = match[1]!.trim();
+  return path.isAbsolute(gitDirectory)
+    ? gitDirectory
+    : path.resolve(laborPath, gitDirectory);
+}
+
+function ensureLaborGitInfoExcludes(laborPath: string) {
+  const gitDirectory = resolveWorktreeGitDirectory(laborPath);
+  if (!gitDirectory) {
+    return;
+  }
+
+  const infoDirectory = path.join(gitDirectory, "info");
+  const excludePath = path.join(infoDirectory, "exclude");
+  mkdirSync(infoDirectory, { recursive: true });
+
+  const current = existsSync(excludePath) ? readFileSync(excludePath, "utf8") : "";
+  const currentLines = new Set(
+    current
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0),
+  );
+  const missing = LABOR_GIT_EXCLUDE_PATTERNS.filter((pattern) => !currentLines.has(pattern));
+  if (missing.length === 0) {
+    return;
+  }
+
+  const prefix = current.endsWith("\n") || current.length === 0 ? "" : "\n";
+  const header = currentLines.has("# Aegis labor-generated artifacts")
+    ? ""
+    : "# Aegis labor-generated artifacts\n";
+  writeFileSync(excludePath, `${current}${prefix}${header}${missing.join("\n")}\n`, "utf8");
+}
+
 export function prepareLaborWorktree(plan: LaborCreationPlan) {
   if (isKnownWorktreePath(plan.projectRoot, plan.laborPath)) {
+    if (plan.refreshExisting) {
+      const reset = runGit(plan.laborPath, ["reset", "--hard", plan.baseBranch]);
+      if (reset.status !== 0) {
+        throw new Error(
+          `Failed to refresh labor worktree ${plan.laborPath} for issue ${plan.issueId}. ${formatGitFailure(reset)}`,
+        );
+      }
+      const clean = runGit(plan.laborPath, ["clean", "-fdx"]);
+      if (clean.status !== 0) {
+        throw new Error(
+          `Failed to clean labor worktree ${plan.laborPath} for issue ${plan.issueId}. ${formatGitFailure(clean)}`,
+        );
+      }
+    }
+    ensureLaborGitInfoExcludes(plan.laborPath);
     return;
   }
 
@@ -90,6 +175,7 @@ export function prepareLaborWorktree(plan: LaborCreationPlan) {
 
   const created = runGit(plan.projectRoot, [...plan.createWorktreeCommand.args]);
   if (created.status === 0) {
+    ensureLaborGitInfoExcludes(plan.laborPath);
     return;
   }
 
@@ -100,6 +186,7 @@ export function prepareLaborWorktree(plan: LaborCreationPlan) {
     plan.branchName,
   ]);
   if (fallback.status === 0) {
+    ensureLaborGitInfoExcludes(plan.laborPath);
     return;
   }
 

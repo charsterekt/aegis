@@ -20,16 +20,18 @@ describe("oracle tool contract", () => {
           assessment: {
             files_affected: ["src/index.ts"],
             estimated_complexity: "moderate",
-            decompose: false,
-            ready: true,
+            risks: [],
+            suggested_checks: ["npm test"],
+            scope_notes: ["scout only"],
           },
         },
       },
     })).toEqual({
       files_affected: ["src/index.ts"],
       estimated_complexity: "moderate",
-      decompose: false,
-      ready: true,
+      risks: [],
+      suggested_checks: ["npm test"],
+      scope_notes: ["scout only"],
     });
   });
 
@@ -90,8 +92,9 @@ describe("oracle tool contract", () => {
       {
         files_affected: [],
         estimated_complexity: "complex",
-        decompose: true,
-        ready: false,
+        risks: ["risk"],
+        suggested_checks: [],
+        scope_notes: ["needs care"],
       },
       undefined,
       undefined,
@@ -101,8 +104,9 @@ describe("oracle tool contract", () => {
         assessment: {
           files_affected: [],
           estimated_complexity: "complex",
-          decompose: true,
-          ready: false,
+          risks: ["risk"],
+          suggested_checks: [],
+          scope_notes: ["needs care"],
         },
       },
     });

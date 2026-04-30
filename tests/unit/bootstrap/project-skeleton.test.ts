@@ -49,13 +49,14 @@ describe("S00 project skeleton contract", () => {
     expect(packageJson.bin.aegis).toBe("dist/index.js");
     expect(packageJson.files).toEqual(["dist"]);
     expect(packageJson.workspaces).toBeUndefined();
-    expect(scripts.build).toBe("npm run build:node");
+    expect(scripts.build).toBe("npm run build:node && npm run build:agora");
     expect(scripts["build:node"]).toContain("tsc --project tsconfig.json");
+    expect(scripts["build:agora"]).toContain("tsc --project packages/agora/tsconfig.json");
     expect(scripts.dev).toBe("tsx src/index.ts");
     expect(scripts.start).toBe("node dist/index.js");
     expect(scripts.test).toBe("vitest run --config vitest.config.ts --project default");
     expect(scripts["test:acceptance"]).toBe("vitest run --config vitest.config.ts --project acceptance");
-    expect(scripts.lint).toBe("tsc --project tsconfig.tests.json --noEmit");
+    expect(scripts.lint).toBe("tsc --project tsconfig.tests.json --noEmit && tsc --project packages/agora/tsconfig.json --noEmit");
     expect(scripts["build:olympus"]).toBeUndefined();
     expect(scripts["build:all"]).toBeUndefined();
     expect(scripts.prepack).toBe("npm run build");
@@ -164,7 +165,7 @@ describe("S00 project skeleton contract", () => {
       expect.objectContaining({
         test: expect.objectContaining({
           name: "default",
-          include: ["tests/**/*.{test,spec}.{ts,tsx}"],
+          include: ["tests/**/*.{test,spec}.{ts,tsx}", "packages/*/tests/**/*.{test,spec}.{ts,tsx}"],
           exclude: ["tests/acceptance/**/*.{test,spec}.{ts,tsx}"],
           environment: "node",
         }),
@@ -200,28 +201,9 @@ describe("S00 project skeleton contract", () => {
     expect(existsSync(path.join(repoRoot, "src", "shared", "steer-command-reference.ts"))).toBe(false);
   });
 
-  it("pins the seam-only CI and Phase G completion docs", () => {
+  it("pins the seam-only CI and canonical source-of-truth doc", () => {
     const ciWorkflow = readFileSync(path.join(repoRoot, ".github", "workflows", "ci.yml"), "utf8");
-    const triageDesign = readFileSync(
-      path.join(
-        repoRoot,
-        "docs",
-        "superpowers",
-        "specs",
-        "2026-04-13-aegis-emergency-mvp-triage-design.md",
-      ),
-      "utf8",
-    );
-    const handoffPrompt = readFileSync(
-      path.join(
-        repoRoot,
-        "docs",
-        "superpowers",
-        "plans",
-        "2026-04-14-phase-g-proof-reset-handoff-prompt.md",
-      ),
-      "utf8",
-    );
+    const canonicalSpec = readFileSync(path.join(repoRoot, "docs", "AEGIS.md"), "utf8");
 
     expect(ciWorkflow).toContain("name: Seam-only CI");
     expect(ciWorkflow).toContain("npm run lint");
@@ -230,15 +212,10 @@ describe("S00 project skeleton contract", () => {
     expect(ciWorkflow).not.toContain("npm pack");
     expect(ciWorkflow).not.toContain("npm run test:acceptance");
 
-    expect(triageDesign).toContain("Phase G complete on 2026-04-16.");
-    expect(triageDesign).toContain("CI should run deterministic tests only.");
-    expect(triageDesign).toContain("Seeded mock-run acceptance");
-    expect(triageDesign).not.toContain("Phase G remains open.");
-
-    expect(handoffPrompt).toContain("Emergency rewrite phases are complete.");
-    expect(handoffPrompt).toContain("Fresh follow-up work belongs in new addenda and Beads issues");
-    expect(handoffPrompt).not.toContain("implement Phase G only");
-    expect(handoffPrompt).not.toContain("Phase G remains open");
+    expect(canonicalSpec).toContain("This document is the only active product and architecture spec for Aegis.");
+    expect(canonicalSpec).toContain("Step 1 is not complete until Aegis has at least one real adapter");
+    expect(canonicalSpec).toContain("Codex adapter is the approved fallback");
+    expect(canonicalSpec).toContain("Do not read old docs for current requirements.");
   });
 
   it("creates the workspace skeleton required by the workspace contract", () => {

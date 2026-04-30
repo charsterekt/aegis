@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { JANUS_EMIT_RESOLUTION_TOOL_NAME } from "../../../src/castes/janus/janus-tool-contract.js";
 import { ORACLE_EMIT_ASSESSMENT_TOOL_NAME } from "../../../src/castes/oracle/oracle-tool-contract.js";
@@ -7,6 +11,8 @@ import { TITAN_EMIT_ARTIFACT_TOOL_NAME } from "../../../src/castes/titan/titan-t
 import type { CasteName } from "../../../src/runtime/caste-runtime.js";
 import {
   buildHiddenShellSpawnOptions,
+  commandLineReferencesWorkspace,
+  isForbiddenLongRunningShellCommand,
   PiCasteRuntime,
 } from "../../../src/runtime/pi-caste-runtime.js";
 
@@ -31,8 +37,9 @@ const CONTRACT_FIXTURES: ContractFixture[] = [
     detailsValue: {
       files_affected: ["src/index.ts"],
       estimated_complexity: "moderate",
-      decompose: false,
-      ready: true,
+      risks: [],
+      suggested_checks: ["npm test"],
+      scope_notes: ["scout only"],
     },
     outputSnippet: "\"estimated_complexity\":\"moderate\"",
     expectedActiveTools: ["read", "find", "ls", "grep", ORACLE_EMIT_ASSESSMENT_TOOL_NAME],
@@ -49,7 +56,6 @@ const CONTRACT_FIXTURES: ContractFixture[] = [
       tests_and_checks_run: [],
       known_risks: [],
       follow_up_work: [],
-      learnings_written_to_mnemosyne: [],
     },
     outputSnippet: "\"outcome\":\"success\"",
     expectedActiveTools: ["read", "bash", "edit", "write", TITAN_EMIT_ARTIFACT_TOOL_NAME],
@@ -62,9 +68,10 @@ const CONTRACT_FIXTURES: ContractFixture[] = [
     detailsValue: {
       verdict: "pass",
       reviewSummary: "clean",
-      issuesFound: [],
-      followUpIssueIds: [],
-      riskAreas: [],
+      blockingFindings: [],
+      advisories: [],
+      touchedFiles: [],
+      contractChecks: [],
     },
     outputSnippet: "\"verdict\":\"pass\"",
     expectedActiveTools: ["read", "find", "ls", "grep", SENTINEL_EMIT_VERDICT_TOOL_NAME],
@@ -83,15 +90,41 @@ const CONTRACT_FIXTURES: ContractFixture[] = [
       filesTouched: [],
       validationsRun: [],
       residualRisks: [],
-      recommendedNextAction: "manual_decision",
+      mutation_proposal: {
+        proposal_type: "create_integration_blocker",
+        summary: "manual integration decision",
+        suggested_title: "Resolve integration conflict",
+        suggested_description: "Conflict needs separate integration work.",
+        scope_evidence: ["manual conflict context"],
+      },
     },
-    outputSnippet: "\"recommendedNextAction\":\"manual_decision\"",
+    outputSnippet: "\"create_integration_blocker\"",
     expectedActiveTools: ["read", "find", "ls", "grep", JANUS_EMIT_RESOLUTION_TOOL_NAME],
   },
 ];
 
 const mockedAgent = vi.hoisted(() => {
   const listeners: MockListener[] = [];
+  const createTool = (name: string) => ({
+    name,
+    parameters: {},
+    execute: vi.fn(async () => ({
+      content: [],
+      isError: false,
+    })),
+  });
+  const createResourceLoader = (options: Record<string, unknown>) => ({
+    options,
+    reload: vi.fn(async () => undefined),
+    getExtensions: vi.fn(() => ({ extensions: [], errors: [], runtime: {} })),
+    getSkills: vi.fn(() => ({ skills: [], diagnostics: [] })),
+    getPrompts: vi.fn(() => ({ prompts: [], diagnostics: [] })),
+    getThemes: vi.fn(() => ({ themes: [], diagnostics: [] })),
+    getAgentsFiles: vi.fn(() => ({ agentsFiles: [] })),
+    getSystemPrompt: vi.fn(() => undefined),
+    getAppendSystemPrompt: vi.fn(() => []),
+    extendResources: vi.fn(),
+  });
   const session = {
     sessionId: "pi-session-1",
     agent: {
@@ -119,6 +152,7 @@ const mockedAgent = vi.hoisted(() => {
 
       listener({ type: "agent_end" });
     }),
+    abort: vi.fn(async () => undefined),
     setActiveToolsByName: vi.fn(),
     dispose: vi.fn(),
   };
@@ -133,10 +167,16 @@ const mockedAgent = vi.hoisted(() => {
       { name: "edit" },
       { name: "write" },
     ]),
-    createReadTool: vi.fn(() => ({ name: "read" })),
+    createReadTool: vi.fn(() => createTool("read")),
+    createBashTool: vi.fn(() => createTool("bash")),
+    createEditTool: vi.fn(() => createTool("edit")),
+    createWriteTool: vi.fn(() => createTool("write")),
     createFindTool: vi.fn(() => ({ name: "find" })),
     createLsTool: vi.fn(() => ({ name: "ls" })),
     createGrepTool: vi.fn(() => ({ name: "grep" })),
+    DefaultResourceLoader: vi.fn(function DefaultResourceLoader(options: Record<string, unknown>) {
+      return createResourceLoader(options);
+    }),
   };
 });
 
@@ -144,9 +184,13 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   createAgentSession: mockedAgent.createAgentSession,
   createCodingTools: mockedAgent.createCodingTools,
   createReadTool: mockedAgent.createReadTool,
+  createBashTool: mockedAgent.createBashTool,
+  createEditTool: mockedAgent.createEditTool,
+  createWriteTool: mockedAgent.createWriteTool,
   createFindTool: mockedAgent.createFindTool,
   createLsTool: mockedAgent.createLsTool,
   createGrepTool: mockedAgent.createGrepTool,
+  DefaultResourceLoader: mockedAgent.DefaultResourceLoader,
 }));
 
 function configureToolSuccess(fixture: ContractFixture) {
@@ -248,11 +292,16 @@ describe("PiCasteRuntime", () => {
     mockedAgent.createAgentSession.mockClear();
     mockedAgent.createCodingTools.mockClear();
     mockedAgent.createReadTool.mockClear();
+    mockedAgent.createBashTool.mockClear();
+    mockedAgent.createEditTool.mockClear();
+    mockedAgent.createWriteTool.mockClear();
     mockedAgent.createFindTool.mockClear();
     mockedAgent.createLsTool.mockClear();
     mockedAgent.createGrepTool.mockClear();
+    mockedAgent.DefaultResourceLoader.mockClear();
     mockedAgent.session.subscribe.mockClear();
     mockedAgent.session.prompt.mockReset();
+    mockedAgent.session.abort.mockClear();
     mockedAgent.session.setActiveToolsByName.mockClear();
     mockedAgent.session.dispose.mockClear();
     mockedAgent.session.state.error = null;
@@ -354,6 +403,10 @@ describe("PiCasteRuntime", () => {
     expect(result.status).toBe("succeeded");
     expect(result.outputText).toContain(fixture.outputSnippet);
     expect(mockedAgent.session.prompt).toHaveBeenCalledTimes(2);
+    const repairPromptCall = mockedAgent.session.prompt.mock.calls[1] as unknown[] | undefined;
+    expect(repairPromptCall?.[1]).toEqual({
+      streamingBehavior: "followUp",
+    });
     expect(result.messageLog.some((entry) => (
       entry.role === "user"
       && entry.content.includes("Tool contract repair required")
@@ -404,6 +457,7 @@ describe("PiCasteRuntime", () => {
 
     expect(result.status).toBe("failed");
     expect(result.error).toBe("Pi oracle session timed out after 10ms.");
+    expect(mockedAgent.session.abort).toHaveBeenCalledTimes(1);
   });
 
   it("uses caste-specific timeout override when configured", async () => {
@@ -464,6 +518,79 @@ describe("PiCasteRuntime", () => {
     }
   });
 
+  it("keeps Pi sessions alive while model events heartbeat", async () => {
+    vi.useFakeTimers();
+    try {
+      mockedAgent.session.prompt.mockImplementation(async () => {
+        const listener = mockedAgent.listeners.at(-1);
+        if (!listener) {
+          return;
+        }
+
+        setTimeout(() => {
+          listener({
+            type: "message_end",
+            message: {
+              role: "assistant",
+              content: "Still inspecting package graph.",
+            },
+          });
+        }, 8);
+
+        setTimeout(() => {
+          listener({
+            type: "tool_execution_start",
+            toolCallId: "call-heartbeat",
+            toolName: ORACLE_EMIT_ASSESSMENT_TOOL_NAME,
+            args: {},
+          });
+          listener({
+            type: "tool_execution_end",
+            toolCallId: "call-heartbeat",
+            toolName: ORACLE_EMIT_ASSESSMENT_TOOL_NAME,
+            isError: false,
+            result: {
+              content: [{ type: "text", text: "Oracle payload emitted." }],
+              details: {
+                assessment: {
+                  files_affected: ["package.json"],
+                  estimated_complexity: "moderate",
+                  risks: [],
+                  suggested_checks: ["npm.cmd install"],
+                  scope_notes: ["heartbeat kept session alive"],
+                },
+              },
+            },
+          });
+        }, 16);
+      });
+
+      const runtime = new PiCasteRuntime({
+        oracle: createModelConfig("oracle"),
+      }, {
+        sessionTimeoutMs: 10,
+        timeoutRetryCount: 0,
+      });
+
+      const resultPromise = runtime.run({
+        caste: "oracle",
+        issueId: "aegis-heartbeat",
+        root: "repo",
+        workingDirectory: "repo",
+        prompt: "Scout heartbeat",
+      });
+
+      await vi.advanceTimersByTimeAsync(16);
+      const result = await resultPromise;
+
+      expect(result.status).toBe("succeeded");
+      expect(result.outputText).toContain("\"estimated_complexity\":\"moderate\"");
+      expect(mockedAgent.session.abort).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("retries timed-out sessions once and succeeds when second attempt returns", async () => {
     let attempt = 0;
     mockedAgent.session.prompt.mockImplementation(async () => {
@@ -494,8 +621,9 @@ describe("PiCasteRuntime", () => {
             assessment: {
               files_affected: ["src/index.ts"],
               estimated_complexity: "moderate",
-              decompose: false,
-              ready: true,
+              risks: [],
+              suggested_checks: ["npm test"],
+              scope_notes: ["retry"],
             },
           },
         },
@@ -548,8 +676,9 @@ describe("PiCasteRuntime", () => {
             assessment: {
               files_affected: ["src/index.ts"],
               estimated_complexity: "moderate",
-              decompose: false,
-              ready: true,
+              risks: [],
+              suggested_checks: ["npm test"],
+              scope_notes: ["direct"],
             },
           },
         },
@@ -589,13 +718,20 @@ describe("PiCasteRuntime", () => {
       });
     }
 
-    expect(mockedAgent.createCodingTools).toHaveBeenCalledWith(
+    expect(mockedAgent.createReadTool).toHaveBeenCalledWith(
+      "repo/titan",
+    );
+    expect(mockedAgent.createBashTool).toHaveBeenCalledWith(
       "repo/titan",
       expect.objectContaining({
-        bash: expect.objectContaining({
-          operations: expect.any(Object),
-        }),
+        operations: expect.any(Object),
       }),
+    );
+    expect(mockedAgent.createEditTool).toHaveBeenCalledWith(
+      "repo/titan",
+    );
+    expect(mockedAgent.createWriteTool).toHaveBeenCalledWith(
+      "repo/titan",
     );
     expect(mockedAgent.createReadTool).toHaveBeenCalledWith(
       "repo/oracle",
@@ -653,11 +789,269 @@ describe("PiCasteRuntime", () => {
     );
   });
 
+  it("blocks titan tool paths and shell escapes outside the working directory", async () => {
+    const fixture = CONTRACT_FIXTURES.find((candidate) => candidate.caste === "titan");
+    if (!fixture) {
+      throw new Error("Missing titan fixture.");
+    }
+
+    configureToolSuccess(fixture);
+    const runtime = createSingleCasteRuntime("titan");
+
+    await runtime.run({
+      caste: "titan",
+      issueId: "aegis-tool-guard",
+      root: "repo",
+      workingDirectory: "repo/titan",
+      prompt: "Titan tool guard",
+    });
+
+    const createSessionCall = mockedAgent.createAgentSession.mock.calls.at(-1) as [
+      { tools?: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }> },
+    ] | undefined;
+    const tools = createSessionCall?.[0].tools ?? [];
+    const writeTool = tools.find((tool) => tool.name === "write");
+    const bashTool = tools.find((tool) => tool.name === "bash");
+
+    await expect(writeTool?.execute("call-1", {
+      path: "../escape.txt",
+      content: "escape\n",
+    }, undefined, undefined)).rejects.toThrow("write path escapes working directory");
+    await expect(bashTool?.execute("call-2", {
+      command: "cd ../../.. && pwd",
+    }, undefined, undefined)).rejects.toThrow("bash path escapes working directory");
+    await expect(bashTool?.execute("call-3", {
+      command: "git checkout main",
+    }, undefined, undefined)).rejects.toThrow("Titan bash command cannot change git branch state");
+    await expect(bashTool?.execute("call-4", {
+      command: "npm.ps1 run build",
+    }, undefined, undefined)).rejects.toThrow("Titan bash command cannot invoke PowerShell scripts directly");
+    await expect(bashTool?.execute("call-5", {
+      command: "start npm.ps1",
+    }, undefined, undefined)).rejects.toThrow("Titan bash command cannot launch GUI/open/start commands");
+    await expect(bashTool?.execute("call-6", {
+      command: "npm.cmd run dev -- --host 127.0.0.1",
+    }, undefined, undefined)).rejects.toThrow("Titan bash command cannot run dev, preview, watch, or server processes");
+
+    const originalWriteTool = mockedAgent.createWriteTool.mock.results.at(-1)?.value as
+      | { execute: ReturnType<typeof vi.fn> }
+      | undefined;
+    const originalBashTool = mockedAgent.createBashTool.mock.results.at(-1)?.value as
+      | { execute: ReturnType<typeof vi.fn> }
+      | undefined;
+
+    expect(originalWriteTool?.execute).not.toHaveBeenCalled();
+    expect(originalBashTool?.execute).not.toHaveBeenCalled();
+  });
+
+  it("detects forbidden long-running shell commands", () => {
+    expect(isForbiddenLongRunningShellCommand("npm.cmd run dev -- --host 127.0.0.1")).toBe(true);
+    expect(isForbiddenLongRunningShellCommand("node node_modules/vite/bin/vite.js --host 127.0.0.1")).toBe(true);
+    expect(isForbiddenLongRunningShellCommand("node node_modules/vite/bin/vite.js build")).toBe(false);
+    expect(isForbiddenLongRunningShellCommand("npm.cmd run build")).toBe(false);
+  });
+
+  it("blocks Titan package installs outside declared package file scope", async () => {
+    const fixture = CONTRACT_FIXTURES.find((candidate) => candidate.caste === "titan");
+    if (!fixture) {
+      throw new Error("Missing titan fixture.");
+    }
+
+    configureToolSuccess(fixture);
+    const runtime = createSingleCasteRuntime("titan");
+
+    await runtime.run({
+      caste: "titan",
+      issueId: "aegis-package-guard",
+      root: "repo",
+      workingDirectory: "repo/titan",
+      prompt: "Allowed file scope: docs/setup-contract.md",
+    });
+
+    const createSessionCall = mockedAgent.createAgentSession.mock.calls.at(-1) as [
+      { tools?: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }> },
+    ] | undefined;
+    const bashTool = createSessionCall?.[0].tools?.find((tool) => tool.name === "bash");
+
+    await expect(bashTool?.execute("call-1", {
+      command: "npm install react",
+    }, undefined, undefined)).rejects.toThrow("Titan package install requires package files in allowed scope");
+
+    const originalBashTool = mockedAgent.createBashTool.mock.results.at(-1)?.value as
+      | { execute: ReturnType<typeof vi.fn> }
+      | undefined;
+    expect(originalBashTool?.execute).not.toHaveBeenCalled();
+  });
+
+  it("blocks Titan file mutations outside declared file scope", async () => {
+    const fixture = CONTRACT_FIXTURES.find((candidate) => candidate.caste === "titan");
+    if (!fixture) {
+      throw new Error("Missing titan fixture.");
+    }
+
+    configureToolSuccess(fixture);
+    const runtime = createSingleCasteRuntime("titan");
+
+    await runtime.run({
+      caste: "titan",
+      issueId: "aegis-file-scope",
+      root: "repo",
+      workingDirectory: "repo/titan",
+      prompt: "Allowed file scope: docs/setup-contract.md",
+    });
+
+    const createSessionCall = mockedAgent.createAgentSession.mock.calls.at(-1) as [
+      { tools?: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }> },
+    ] | undefined;
+    const writeTool = createSessionCall?.[0].tools?.find((tool) => tool.name === "write");
+
+    await expect(writeTool?.execute("call-1", {
+      path: "package.json",
+      content: "{}\n",
+    }, undefined, undefined)).rejects.toThrow("write path is outside allowed file scope");
+
+    await expect(writeTool?.execute("call-2", {
+      path: "docs/setup-contract.md",
+      content: "contract\n",
+    }, undefined, undefined)).resolves.toEqual({ content: [], isError: false });
+
+    const originalWriteTool = mockedAgent.createWriteTool.mock.results.at(-1)?.value as
+      | { execute: ReturnType<typeof vi.fn> }
+      | undefined;
+    expect(originalWriteTool?.execute).toHaveBeenLastCalledWith("call-2", {
+      path: path.resolve("repo/titan", "docs/setup-contract.md"),
+      content: "contract\n",
+    }, undefined, undefined);
+  });
+
+  it("blocks Titan package scaffolds outside declared package file scope", async () => {
+    const fixture = CONTRACT_FIXTURES.find((candidate) => candidate.caste === "titan");
+    if (!fixture) {
+      throw new Error("Missing titan fixture.");
+    }
+
+    configureToolSuccess(fixture);
+    const runtime = createSingleCasteRuntime("titan");
+
+    await runtime.run({
+      caste: "titan",
+      issueId: "aegis-bash-scope",
+      root: "repo",
+      workingDirectory: "repo/titan",
+      prompt: "Allowed file scope: docs/setup-contract.md",
+    });
+
+    const createSessionCall = mockedAgent.createAgentSession.mock.calls.at(-1) as [
+      { tools?: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }> },
+    ] | undefined;
+    const bashTool = createSessionCall?.[0].tools?.find((tool) => tool.name === "bash");
+
+    await expect(bashTool?.execute("call-1", {
+      command: "npm create vite@latest .",
+    }, undefined, undefined)).rejects.toThrow("Titan package install requires package files in allowed scope");
+  });
+
+  it("rejects Titan bash commands that dirty files outside declared file scope", async () => {
+    const fixture = CONTRACT_FIXTURES.find((candidate) => candidate.caste === "titan");
+    if (!fixture) {
+      throw new Error("Missing titan fixture.");
+    }
+
+    const workingDirectory = mkdtempSync(path.join(tmpdir(), "aegis-pi-scope-"));
+    try {
+      execFileSync("git", ["init"], { cwd: workingDirectory, stdio: "ignore" });
+      mkdirSync(path.join(workingDirectory, "docs"));
+      mockedAgent.createBashTool.mockReturnValueOnce({
+        name: "bash",
+        parameters: {},
+        execute: vi.fn(async () => {
+          writeFileSync(path.join(workingDirectory, "package.json"), "{}\n");
+          return { content: [], isError: false };
+        }),
+      });
+      configureToolSuccess(fixture);
+      const runtime = createSingleCasteRuntime("titan");
+
+      await runtime.run({
+        caste: "titan",
+        issueId: "aegis-bash-drift",
+        root: workingDirectory,
+        workingDirectory,
+        prompt: "Allowed file scope: docs/setup-contract.md",
+      });
+
+      const createSessionCall = mockedAgent.createAgentSession.mock.calls.at(-1) as [
+        { tools?: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }> },
+      ] | undefined;
+      const bashTool = createSessionCall?.[0].tools?.find((tool) => tool.name === "bash");
+
+      await expect(bashTool?.execute("call-1", {
+        command: "node scripts/scaffold.js",
+      }, undefined, undefined)).rejects.toThrow(
+        "Titan bash command changed files outside allowed scope: package.json",
+      );
+    } finally {
+      rmSync(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("isolates Pi sessions from discovered extensions", async () => {
+    const fixture = CONTRACT_FIXTURES.find((candidate) => candidate.caste === "titan");
+    if (!fixture) {
+      throw new Error("Missing titan fixture.");
+    }
+
+    configureToolSuccess(fixture);
+    const runtime = createSingleCasteRuntime("titan");
+
+    await runtime.run({
+      caste: "titan",
+      issueId: "aegis-isolated-loader",
+      root: "repo",
+      workingDirectory: "repo/titan",
+      prompt: "Titan isolated loader",
+    });
+
+    expect(mockedAgent.DefaultResourceLoader).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: "repo/titan",
+        noExtensions: true,
+        skillsOverride: expect.any(Function),
+        agentsFilesOverride: expect.any(Function),
+        promptsOverride: expect.any(Function),
+        systemPromptOverride: expect.any(Function),
+      }),
+    );
+
+    const resourceLoader = mockedAgent.DefaultResourceLoader.mock.results.at(-1)?.value as {
+      reload: ReturnType<typeof vi.fn>;
+    } | undefined;
+    expect(resourceLoader?.reload).toHaveBeenCalledTimes(1);
+
+    const createSessionCall = mockedAgent.createAgentSession.mock.calls.at(-1) as [
+      { resourceLoader?: unknown },
+    ] | undefined;
+    expect(createSessionCall?.[0].resourceLoader).toBe(resourceLoader);
+  });
+
   it("does not detach hidden shell commands on Windows", () => {
     const options = buildHiddenShellSpawnOptions("repo", process.env);
 
     expect(options.windowsHide).toBe(true);
     expect(options.detached).toBe(process.platform !== "win32");
     expect(options.stdio).toEqual(["ignore", "pipe", "pipe"]);
+  });
+
+  it("matches leaked tool processes by labor workspace path", () => {
+    expect(commandLineReferencesWorkspace(
+      '"node" "C:\\dev\\aegis-qa\\aegis-mock-run\\.aegis\\labors\\ISSUE\\node_modules\\vite\\bin\\vite.js"',
+      "C:\\dev\\aegis-qa\\aegis-mock-run\\.aegis\\labors\\ISSUE",
+      "win32",
+    )).toBe(true);
+    expect(commandLineReferencesWorkspace(
+      "/usr/bin/node /tmp/aegis/.aegis/labors/ISSUE/node_modules/vite/bin/vite.js",
+      "/tmp/aegis/.aegis/labors/OTHER",
+      "linux",
+    )).toBe(false);
   });
 });

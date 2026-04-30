@@ -4,9 +4,10 @@ import {
   type FindOperations,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
-import { spawn, type SpawnOptions } from "node:child_process";
+import { spawn, spawnSync, type SpawnOptions } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
+import path from "node:path";
 import { globSync } from "glob";
 
 import {
@@ -45,6 +46,7 @@ import type {
   CasteSessionResult,
 } from "./caste-runtime.js";
 import type { ResolvedConfiguredCasteModel } from "./pi-model-config.js";
+import { buildCodexRunEnvironment } from "./codex-caste-runtime.js";
 
 type PiCodingAgentModule = typeof import("@mariozechner/pi-coding-agent");
 const require = createRequire(import.meta.url);
@@ -205,7 +207,7 @@ export function buildHiddenShellSpawnOptions(
   return {
     cwd,
     detached: process.platform !== "win32",
-    env: env ?? process.env,
+    env: buildCodexRunEnvironment(env ?? process.env),
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   };
@@ -213,11 +215,10 @@ export function buildHiddenShellSpawnOptions(
 
 function terminateProcessTree(pid: number) {
   if (process.platform === "win32") {
-    const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], {
+    spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
       stdio: "ignore",
       windowsHide: true,
     });
-    killer.on("error", () => undefined);
     return;
   }
 
@@ -230,6 +231,91 @@ function terminateProcessTree(pid: number) {
     process.kill(pid, "SIGTERM");
   } catch {
     // Ignore missing process.
+  }
+}
+
+function normalizeProcessPath(candidate: string, platform: NodeJS.Platform) {
+  const normalized = (platform === "win32"
+    ? path.win32.resolve(candidate)
+    : path.posix.resolve(candidate)).replace(/\\/g, "/");
+  return platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function commandLineContainsWorkspace(commandLine: string, workspace: string) {
+  let searchFrom = 0;
+  while (searchFrom < commandLine.length) {
+    const index = commandLine.indexOf(workspace, searchFrom);
+    if (index === -1) {
+      return false;
+    }
+    const next = commandLine[index + workspace.length];
+    if (next === undefined || next === "/" || next === "\"" || next === "'" || /\s/.test(next)) {
+      return true;
+    }
+    searchFrom = index + workspace.length;
+  }
+  return false;
+}
+
+export function commandLineReferencesWorkspace(
+  commandLine: string,
+  workingDirectory: string,
+  platform: NodeJS.Platform = process.platform,
+) {
+  const normalizedCommand = commandLine.replace(/\\/g, "/");
+  const comparableCommand = platform === "win32"
+    ? normalizedCommand.toLowerCase()
+    : normalizedCommand;
+  const workspace = normalizeProcessPath(workingDirectory, platform);
+  return commandLineContainsWorkspace(comparableCommand, workspace);
+}
+
+export function terminateWorkspaceProcesses(
+  workingDirectory: string,
+  platform: NodeJS.Platform = process.platform,
+) {
+  const workspace = normalizeProcessPath(workingDirectory, platform);
+  if (platform === "win32") {
+    const script = [
+      "$ErrorActionPreference = 'SilentlyContinue'",
+      `$workspace = ${JSON.stringify(workspace)}`,
+      `$rawWorkspace = ${JSON.stringify(path.resolve(workingDirectory))}`,
+      "$current = $PID",
+      "Get-CimInstance Win32_Process | Where-Object {",
+      "  $_.ProcessId -ne $current -and $_.CommandLine -and (",
+      "    $_.CommandLine.ToLowerInvariant().Contains($rawWorkspace.ToLowerInvariant()) -or",
+      "    $_.CommandLine.Replace('\\','/').ToLowerInvariant().Contains($workspace)",
+      "  )",
+      "} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+    ].join("\n");
+    spawnSync("powershell.exe", ["-NoProfile", "-Command", script], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    return;
+  }
+
+  const ps = spawnSync("ps", ["-eo", "pid=,command="], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (ps.status !== 0) {
+    return;
+  }
+  for (const line of ps.stdout.split(/\r?\n/)) {
+    const match = line.trim().match(/^(\d+)\s+(.+)$/);
+    if (!match) {
+      continue;
+    }
+    const pid = Number(match[1]);
+    const commandLine = match[2] ?? "";
+    if (pid > 0 && pid !== process.pid && commandLineReferencesWorkspace(commandLine, workingDirectory, platform)) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        // Ignore missing process.
+      }
+    }
   }
 }
 
@@ -313,10 +399,12 @@ function createHiddenShellBashOperations(): BashOperations {
   };
 }
 
+const HIDDEN_BASH_TOOL_OPTIONS = {
+  operations: createHiddenShellBashOperations(),
+};
+
 const HIDDEN_SHELL_TOOL_OPTIONS = {
-  bash: {
-    operations: createHiddenShellBashOperations(),
-  },
+  bash: HIDDEN_BASH_TOOL_OPTIONS,
 };
 
 const HIDDEN_FIND_OPERATIONS: FindOperations = {
@@ -330,13 +418,395 @@ const HIDDEN_FIND_OPERATIONS: FindOperations = {
     }).slice(0, options.limit),
 };
 
+function stripShellQuotes(candidate: string) {
+  return candidate.replace(/^['"]|['"]$/g, "");
+}
+
+function normalizePathCandidate(candidate: string) {
+  const stripped = stripShellQuotes(candidate.trim());
+  if (
+    process.platform === "win32"
+    && /^\/[a-zA-Z]\//.test(stripped)
+  ) {
+    const driveLetter = stripped[1]!.toUpperCase();
+    const remainder = stripped.slice(3).replace(/\//g, "\\");
+    return `${driveLetter}:\\${remainder}`;
+  }
+
+  return stripped;
+}
+
+function resolvePathWithinWorkingDirectory(candidate: string, workingDirectory: string) {
+  const normalized = normalizePathCandidate(candidate);
+  return path.isAbsolute(normalized)
+    ? path.resolve(normalized)
+    : path.resolve(workingDirectory, normalized);
+}
+
+function isWithinWorkingDirectory(candidate: string, workingDirectory: string) {
+  const resolvedWorkingDirectory = path.resolve(workingDirectory);
+  const resolvedCandidate = resolvePathWithinWorkingDirectory(candidate, workingDirectory);
+  return resolvedCandidate === resolvedWorkingDirectory
+    || resolvedCandidate.startsWith(`${resolvedWorkingDirectory}${path.sep}`);
+}
+
+function assertPathWithinWorkingDirectory(
+  candidate: string,
+  workingDirectory: string,
+  toolName: string,
+) {
+  if (!isWithinWorkingDirectory(candidate, workingDirectory)) {
+    throw new Error(
+      `${toolName} path escapes working directory: ${candidate}`,
+    );
+  }
+}
+
+function normalizeScopedPath(candidate: string, workingDirectory: string) {
+  const resolvedWorkingDirectory = path.resolve(workingDirectory);
+  const resolvedCandidate = resolvePathWithinWorkingDirectory(candidate, workingDirectory);
+  return path.relative(resolvedWorkingDirectory, resolvedCandidate)
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "")
+    .trim();
+}
+
+function assertPathWithinAllowedFileScope(
+  candidate: string,
+  workingDirectory: string,
+  allowedFileScope: string[],
+  toolName: string,
+) {
+  if (allowedFileScope.length === 0) {
+    return;
+  }
+
+  const normalizedCandidate = normalizeScopedPath(candidate, workingDirectory);
+  if (isPathAllowedByScope(normalizedCandidate, allowedFileScope)) {
+    return;
+  }
+
+  throw new Error(
+    `${toolName} path is outside allowed file scope: ${normalizedCandidate}`,
+  );
+}
+
+function isPathAllowedByScope(normalizedCandidate: string, allowedFileScope: string[]) {
+  if (allowedFileScope.length === 0) {
+    return true;
+  }
+
+  return allowedFileScope.some((entry) => {
+    const normalizedEntry = entry.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+    return normalizedCandidate === normalizedEntry
+      || (normalizedEntry.endsWith("/") && normalizedCandidate.startsWith(normalizedEntry));
+  });
+}
+
+function tokenizeShellCommand(command: string) {
+  return command.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+}
+
+function looksLikePathToken(token: string) {
+  const normalized = normalizePathCandidate(token);
+  return normalized.startsWith("..")
+    || normalized.startsWith("~/")
+    || normalized === "~"
+    || path.isAbsolute(normalized);
+}
+
+function assertCommandWithinWorkingDirectory(command: string, workingDirectory: string) {
+  const tokens = tokenizeShellCommand(command).map((token) => stripShellQuotes(token));
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
+
+    if (token === "cd" && index + 1 < tokens.length) {
+      assertPathWithinWorkingDirectory(tokens[index + 1]!, workingDirectory, "bash");
+      continue;
+    }
+
+    if (token === "git" && tokens[index + 1] === "-C" && index + 2 < tokens.length) {
+      assertPathWithinWorkingDirectory(tokens[index + 2]!, workingDirectory, "bash");
+      continue;
+    }
+
+    if (token === "git" && index + 1 < tokens.length) {
+      assertTitanGitCommandAllowed(tokens.slice(index + 1));
+      continue;
+    }
+
+    if (looksLikePathToken(token)) {
+      assertPathWithinWorkingDirectory(token, workingDirectory, "bash");
+    }
+  }
+}
+
+function extractAllowedFileScopeFromPrompt(prompt: string): string[] {
+  const match = prompt.match(/^Allowed file scope:\s*(.+)$/im);
+  if (!match) {
+    return [];
+  }
+
+  return match[1]!
+    .split(",")
+    .map((entry) => entry.replace(/\\/g, "/").replace(/^\.\//, "").trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function normalizeExecutableToken(token: string) {
+  return path.basename(stripShellQuotes(token)).replace(/\.(cmd|exe|ps1|bat)$/i, "").toLowerCase();
+}
+
+function isPackageInstallCommand(tokens: string[]) {
+  for (let index = 0; index < tokens.length; index += 1) {
+    const executable = normalizeExecutableToken(tokens[index]!);
+    const subcommand = tokens[index + 1]?.toLowerCase();
+
+    if (executable === "npm" && (
+      subcommand === "install"
+      || subcommand === "i"
+      || subcommand === "add"
+      || subcommand === "ci"
+      || subcommand === "create"
+      || subcommand === "init"
+      || subcommand === "exec"
+      || subcommand === "x"
+      || subcommand === "update"
+      || subcommand === "remove"
+      || subcommand === "uninstall"
+    )) {
+      return true;
+    }
+
+    if ((executable === "pnpm" || executable === "yarn" || executable === "bun") && (
+      subcommand === "install"
+      || subcommand === "add"
+      || subcommand === "create"
+      || subcommand === "init"
+      || subcommand === "exec"
+      || subcommand === "x"
+      || subcommand === "update"
+      || subcommand === "remove"
+      || subcommand === "uninstall"
+    )) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function scopeAllowsPackageMutation(allowedFileScope: string[]) {
+  if (allowedFileScope.length === 0) {
+    return true;
+  }
+
+  const packageFiles = new Set([
+    "package.json",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lock",
+    "bun.lockb",
+  ]);
+
+  return allowedFileScope.some((entry) => packageFiles.has(entry));
+}
+
+function assertPackageCommandAllowed(command: string, allowedFileScope: string[]) {
+  const tokens = tokenizeShellCommand(command).map((token) => stripShellQuotes(token));
+  if (!isPackageInstallCommand(tokens) || scopeAllowsPackageMutation(allowedFileScope)) {
+    return;
+  }
+
+  throw new Error(
+    "Titan package install requires package files in allowed scope.",
+  );
+}
+
+function assertTerminalOnlyCommand(command: string) {
+  const tokens = tokenizeShellCommand(command).map((token) => stripShellQuotes(token));
+  for (const token of tokens) {
+    const executable = normalizeExecutableToken(token);
+    if (/\.ps1$/i.test(token)) {
+      throw new Error("Titan bash command cannot invoke PowerShell scripts directly; use .cmd launchers.");
+    }
+    if (executable === "start" || executable === "start-process" || executable === "invoke-item" || executable === "ii") {
+      throw new Error("Titan bash command cannot launch GUI/open/start commands.");
+    }
+  }
+}
+
+export function isForbiddenLongRunningShellCommand(command: string) {
+  const normalized = command.replace(/\\/g, "/").replace(/\s+/g, " ").trim().toLowerCase();
+  return /\b(npm|npm\.cmd|pnpm|pnpm\.cmd|yarn|yarn\.cmd|bun|bun\.cmd)\s+run\s+(dev|preview|start)\b/.test(normalized)
+    || /\b(npm|npm\.cmd|pnpm|pnpm\.cmd|yarn|yarn\.cmd|bun|bun\.cmd)\s+(dev|preview|start)\b/.test(normalized)
+    || /\b(vite|next|astro)\s+dev\b/.test(normalized)
+    || /\b(vite|vite\.cmd|vite\.js)\s+(--host|--port|dev|preview|serve)\b/.test(normalized)
+    || /node_modules\/(\.bin\/)?vite\b.*\s(dev|preview|serve|--host|--port)\b/.test(normalized)
+    || /vite\/bin\/vite\.js\b.*\s(dev|preview|serve|--host|--port)\b/.test(normalized)
+    || /\b(vitest|tsc)\b.*\s--watch\b/.test(normalized)
+    || /\bwebpack\s+serve\b/.test(normalized);
+}
+
+function assertNoLongRunningShellCommand(command: string) {
+  if (!isForbiddenLongRunningShellCommand(command)) {
+    return;
+  }
+
+  throw new Error(
+    "Titan bash command cannot run dev, preview, watch, or server processes; use finite build/test checks.",
+  );
+}
+
+function readGitChangedFiles(workingDirectory: string) {
+  const probe = spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
+    cwd: workingDirectory,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (probe.status !== 0) {
+    return [];
+  }
+
+  return probe.stdout
+    .split(/\r?\n/)
+    .map((line) => line.slice(3).trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.includes(" -> ") ? line.split(" -> ").at(-1)! : line)
+    .map((line) => line.replace(/\\/g, "/").replace(/^\.\//, ""));
+}
+
+function assertBashDidNotDirtyOutOfScope(workingDirectory: string, allowedFileScope: string[]) {
+  if (allowedFileScope.length === 0) {
+    return;
+  }
+
+  const outOfScope = readGitChangedFiles(workingDirectory)
+    .filter((file) => !isPathAllowedByScope(file, allowedFileScope));
+  if (outOfScope.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    `Titan bash command changed files outside allowed scope: ${outOfScope.join(", ")}`,
+  );
+}
+
+function assertTitanGitCommandAllowed(args: string[]) {
+  const subcommand = args.find((arg) => !arg.startsWith("-"));
+  if (!subcommand) {
+    return;
+  }
+
+  const forbiddenSubcommands = new Set([
+    "branch",
+    "checkout",
+    "merge",
+    "pull",
+    "push",
+    "rebase",
+    "reset",
+    "switch",
+    "worktree",
+  ]);
+  if (!forbiddenSubcommands.has(subcommand)) {
+    return;
+  }
+
+  throw new Error(
+    `Titan bash command cannot change git branch state: git ${subcommand}`,
+  );
+}
+
+function wrapTitanFileTool<TTool extends { name: string; execute: (...args: any[]) => any }>(
+  tool: TTool,
+  workingDirectory: string,
+  options: {
+    allowedFileScope?: string[];
+    enforceAllowedScope?: boolean;
+  } = {},
+) {
+  return {
+    ...tool,
+    async execute(toolCallId: string, params: { path?: string }, signal: AbortSignal | undefined, onUpdate: unknown) {
+      let normalizedParams = params;
+      if (typeof params?.path === "string") {
+        assertPathWithinWorkingDirectory(params.path, workingDirectory, tool.name);
+        if (options.enforceAllowedScope) {
+          assertPathWithinAllowedFileScope(
+            params.path,
+            workingDirectory,
+            options.allowedFileScope ?? [],
+            tool.name,
+          );
+        }
+        normalizedParams = {
+          ...params,
+          path: resolvePathWithinWorkingDirectory(params.path, workingDirectory),
+        };
+      }
+
+      return tool.execute(toolCallId, normalizedParams, signal, onUpdate);
+    },
+  };
+}
+
+function wrapTitanBashTool<TTool extends { execute: (...args: any[]) => any }>(
+  tool: TTool,
+  workingDirectory: string,
+  allowedFileScope: string[],
+) {
+  return {
+    ...tool,
+    async execute(
+      toolCallId: string,
+      params: { command?: string },
+      signal: AbortSignal | undefined,
+      onUpdate: unknown,
+    ) {
+      if (typeof params?.command === "string") {
+        assertCommandWithinWorkingDirectory(params.command, workingDirectory);
+        assertTerminalOnlyCommand(params.command);
+        assertNoLongRunningShellCommand(params.command);
+        assertPackageCommandAllowed(params.command, allowedFileScope);
+      }
+
+      const result = await tool.execute(toolCallId, params, signal, onUpdate);
+      if (typeof params?.command === "string") {
+        assertBashDidNotDirtyOutOfScope(workingDirectory, allowedFileScope);
+      }
+      return result;
+    },
+  };
+}
+
 function resolveTools(
   piCodingAgent: PiCodingAgentModule,
   caste: CasteName,
   workingDirectory: string,
+  prompt: string,
 ) {
   if (caste === "titan") {
-    return piCodingAgent.createCodingTools(workingDirectory, HIDDEN_SHELL_TOOL_OPTIONS);
+    const allowedFileScope = extractAllowedFileScopeFromPrompt(prompt);
+    return [
+      wrapTitanFileTool(piCodingAgent.createReadTool(workingDirectory), workingDirectory),
+      wrapTitanBashTool(
+        piCodingAgent.createBashTool(workingDirectory, HIDDEN_BASH_TOOL_OPTIONS),
+        workingDirectory,
+        allowedFileScope,
+      ),
+      wrapTitanFileTool(piCodingAgent.createEditTool(workingDirectory), workingDirectory, {
+        allowedFileScope,
+        enforceAllowedScope: true,
+      }),
+      wrapTitanFileTool(piCodingAgent.createWriteTool(workingDirectory), workingDirectory, {
+        allowedFileScope,
+        enforceAllowedScope: true,
+      }),
+    ];
   }
 
   return [
@@ -442,6 +912,22 @@ function createContractRepairPrompt(contract: CasteToolContract) {
     "Do not call any other tools.",
     "Do not return prose or markdown.",
   ].join("\n");
+}
+
+async function createIsolatedResourceLoader(
+  piCodingAgent: PiCodingAgentModule,
+  workingDirectory: string,
+) {
+  const resourceLoader = new piCodingAgent.DefaultResourceLoader({
+    cwd: workingDirectory,
+    noExtensions: true,
+    skillsOverride: () => ({ skills: [], diagnostics: [] }),
+    agentsFilesOverride: () => ({ agentsFiles: [] }),
+    promptsOverride: () => ({ prompts: [], diagnostics: [] }),
+    systemPromptOverride: () => "You are an Aegis caste subagent. Follow the user prompt exactly and use only the provided tools.",
+  });
+  await resourceLoader.reload();
+  return resourceLoader;
 }
 
 export class PiCasteRuntime implements CasteRuntime {
@@ -559,18 +1045,20 @@ export class PiCasteRuntime implements CasteRuntime {
       content: input.prompt,
     }];
     const toolContract = CASTE_TOOL_CONTRACTS[input.caste];
-    const baseTools = resolveTools(piCodingAgent, input.caste, input.workingDirectory);
+    const baseTools = resolveTools(piCodingAgent, input.caste, input.workingDirectory, input.prompt);
     const customTools = resolveCustomTools(input.caste);
     const activeToolNames = [...new Set([
       ...baseTools.map((tool) => tool.name),
       ...customTools.map((tool) => tool.name),
     ])];
+    const resourceLoader = await createIsolatedResourceLoader(piCodingAgent, input.workingDirectory);
     const { session } = await piCodingAgent.createAgentSession({
       cwd: input.workingDirectory,
       model: modelConfig.model,
       thinkingLevel: modelConfig.thinkingLevel,
       tools: baseTools,
       customTools,
+      resourceLoader,
     });
     session.setActiveToolsByName(activeToolNames);
     let enforceContractPayload = false;
@@ -583,13 +1071,8 @@ export class PiCasteRuntime implements CasteRuntime {
       await new Promise<void>((resolve, reject) => {
         let settled = false;
         let repairAttempted = false;
-        const sessionTimeout = setTimeout(() => {
-          settle(() => {
-            reject(new Error(
-              `Pi ${input.caste} session timed out after ${sessionTimeoutMs}ms.`,
-            ));
-          });
-        }, sessionTimeoutMs);
+        let sessionTimeout: ReturnType<typeof setTimeout> | null = null;
+        let unsubscribe: () => void = () => undefined;
 
         const settle = (action: () => void) => {
           if (settled) {
@@ -597,12 +1080,31 @@ export class PiCasteRuntime implements CasteRuntime {
           }
 
           settled = true;
-          clearTimeout(sessionTimeout);
+          if (sessionTimeout) {
+            clearTimeout(sessionTimeout);
+            sessionTimeout = null;
+          }
           unsubscribe();
           action();
         };
 
-        const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
+        const refreshSessionTimeout = () => {
+          if (sessionTimeout) {
+            clearTimeout(sessionTimeout);
+          }
+
+          sessionTimeout = setTimeout(() => {
+            void session.abort().catch(() => undefined);
+            settle(() => {
+              reject(new Error(
+                `Pi ${input.caste} session timed out after ${sessionTimeoutMs}ms.`,
+              ));
+            });
+          }, sessionTimeoutMs);
+        };
+
+        unsubscribe = session.subscribe((event: AgentSessionEvent) => {
+          refreshSessionTimeout();
           const casteOutput = toolContract.extractStructuredOutput(event);
           if (casteOutput) {
             structuredOutput = casteOutput;
@@ -658,7 +1160,7 @@ export class PiCasteRuntime implements CasteRuntime {
                 content: repairPrompt,
               });
 
-              void session.prompt(repairPrompt).catch((error: unknown) => {
+              void session.prompt(repairPrompt, { streamingBehavior: "followUp" }).catch((error: unknown) => {
                 settle(() => {
                   reject(error);
                 });
@@ -674,6 +1176,7 @@ export class PiCasteRuntime implements CasteRuntime {
           }
         });
 
+        refreshSessionTimeout();
         void session.prompt(input.prompt).catch((error: unknown) => {
           settle(() => {
             reject(error);
@@ -713,6 +1216,7 @@ export class PiCasteRuntime implements CasteRuntime {
       };
     } finally {
       session.dispose();
+      terminateWorkspaceProcesses(input.workingDirectory);
     }
   }
 }

@@ -45,11 +45,17 @@ describe("parallel lane scheduling", () => {
           issueId: "foundation.lane_a",
           stage: "scouted",
           oracleAssessmentRef: ".aegis/oracle/foundation.lane_a.json",
+          fileScope: {
+            files: ["src/layout/AppShell.jsx"],
+          },
         }),
         "foundation.lane_b": createRecord({
           issueId: "foundation.lane_b",
           stage: "scouted",
           oracleAssessmentRef: ".aegis/oracle/foundation.lane_b.json",
+          fileScope: {
+            files: ["src/components/TodoList.jsx"],
+          },
         }),
       }),
       config: {
@@ -78,6 +84,98 @@ describe("parallel lane scheduling", () => {
       },
     ]);
     expect(result.skipped).toEqual([]);
+  });
+
+  it("serializes overlapping titan scopes even when titan capacity allows more work", () => {
+    const result = triageReadyWork({
+      readyIssues: [
+        { id: "foundation.lane_a", title: "[foundation] Lane A" },
+        { id: "foundation.lane_b", title: "[foundation] Lane B" },
+      ],
+      dispatchState: createState({
+        "foundation.lane_a": createRecord({
+          issueId: "foundation.lane_a",
+          stage: "scouted",
+          oracleAssessmentRef: ".aegis/oracle/foundation.lane_a.json",
+          fileScope: {
+            files: ["src/App.jsx", "package.json"],
+          },
+        }),
+        "foundation.lane_b": createRecord({
+          issueId: "foundation.lane_b",
+          stage: "scouted",
+          oracleAssessmentRef: ".aegis/oracle/foundation.lane_b.json",
+          fileScope: {
+            files: ["src/App.tsx", "package-lock.json"],
+          },
+        }),
+      }),
+      config: {
+        ...DEFAULT_AEGIS_CONFIG,
+        concurrency: {
+          ...DEFAULT_AEGIS_CONFIG.concurrency,
+          max_agents: 4,
+          max_titans: 2,
+        },
+      },
+      now: "2026-04-19T12:00:00.000Z",
+    });
+
+    expect(result.dispatchable).toEqual([
+      {
+        issueId: "foundation.lane_a",
+        title: "[foundation] Lane A",
+        caste: "titan",
+        stage: "implementing",
+      },
+    ]);
+    expect(result.skipped).toEqual([
+      {
+        issueId: "foundation.lane_b",
+        reason: "scope_overlap",
+      },
+    ]);
+  });
+
+  it("keeps overlapping titan work blocked until earlier scoped work fully merges", () => {
+    const result = triageReadyWork({
+      readyIssues: [{ id: "foundation.lane_b", title: "[foundation] Lane B" }],
+      dispatchState: createState({
+        "foundation.lane_a": createRecord({
+          issueId: "foundation.lane_a",
+          stage: "reviewing",
+          oracleAssessmentRef: ".aegis/oracle/foundation.lane_a.json",
+          fileScope: {
+            files: ["package.json", "src/App.jsx"],
+          },
+        }),
+        "foundation.lane_b": createRecord({
+          issueId: "foundation.lane_b",
+          stage: "scouted",
+          oracleAssessmentRef: ".aegis/oracle/foundation.lane_b.json",
+          fileScope: {
+            files: ["package-lock.json", "src/App.tsx"],
+          },
+        }),
+      }),
+      config: {
+        ...DEFAULT_AEGIS_CONFIG,
+        concurrency: {
+          ...DEFAULT_AEGIS_CONFIG.concurrency,
+          max_agents: 4,
+          max_titans: 2,
+        },
+      },
+      now: "2026-04-19T12:00:00.000Z",
+    });
+
+    expect(result.dispatchable).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        issueId: "foundation.lane_b",
+        reason: "scope_overlap",
+      },
+    ]);
   });
 
   it("keeps gate out of dispatch until tracker marks prerequisites done", () => {
