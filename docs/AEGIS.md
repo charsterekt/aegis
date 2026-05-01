@@ -1,6 +1,6 @@
 # Aegis Source Of Truth
 
-Date: 2026-04-26
+Date: 2026-05-01
 Status: Canonical
 
 This document is the only active product and architecture spec for Aegis.
@@ -11,9 +11,9 @@ It supersedes all older specs, addenda, plans, discovery notes, and follow-up do
 
 Aegis is a terminal-first deterministic multi-agent orchestrator for software work.
 
-It reads task truth from Beads, tracks orchestration truth in `.aegis`, runs agents through runtime adapters, and integrates work through a deterministic merge queue.
+It reads task truth from Agora, tracks orchestration truth in `.aegis`, runs agents through runtime adapters, and integrates work through a deterministic merge queue.
 
-Aegis is not a dashboard product first. It is not an agent chatroom. It is not a second issue tracker.
+Aegis is not a dashboard product first. It is not an agent chatroom. Agora is its lightweight ticket graph, not an optional sidecar.
 
 Core loop:
 
@@ -35,7 +35,7 @@ Truth planes:
 
 | Concern | Source |
 | --- | --- |
-| task truth | Beads |
+| task truth | Agora `.agora/tickets.json` plus `.agora/events.jsonl` |
 | orchestration truth | `.aegis/dispatch-state.json` |
 | merge truth | `.aegis/merge-queue.json` |
 | durable observability | `.aegis/logs/` and caste artifacts |
@@ -49,7 +49,7 @@ That run is the MVP proof. Scripted seam tests are necessary but insufficient.
 
 Required proof:
 
-- Seeded Beads graph drains to `bd ready --json` returning `[]`.
+- Seeded Agora graph drains: no executable ticket remains in `ready`, `in_progress`, `in_review`, `blocked`, or `ready_to_merge`; no ticket is `halted`.
 - Generated app is an animated React todo app matching seeded graph intent.
 - App installs, builds, and runs.
 - Oracle, Titan, Sentinel, Janus, merge, and dispatch artifacts explain the path.
@@ -65,7 +65,7 @@ Built or mostly built:
 
 - Terminal daemon and direct commands.
 - Core loop shell.
-- Beads tracker integration.
+- Legacy Beads tracker integration.
 - `.aegis` dispatch, runtime, log, transcript, and caste artifact surfaces.
 - Deterministic scripted runtime for seam tests.
 - Pi-backed live runtime path.
@@ -111,7 +111,7 @@ Allowed adapters:
 
 Exit gate:
 
-- `bd ready --json` returns `[]` in seeded mock repo.
+- Agora seeded executable tickets all reach `done`, with no `halted` tickets.
 - The React todo app runs.
 - All artifacts and logs support the claim.
 
@@ -167,7 +167,7 @@ Deferred until Steps 1-3 work:
 
 - budget/economics guardrails
 - Mnemosyne/Lethe
-- Beads-native messaging
+- Beads integration and Beads-native messaging
 - eval harness and benchmark corpus
 - extra tracker adapters
 - configurable pipelines
@@ -192,7 +192,7 @@ Every real adapter must enforce or allow Aegis to enforce:
 - no absolute-path escape.
 - no `cd` or shell equivalent that escapes labor.
 - no root mutation outside allowed orchestrator-owned files.
-- no direct writes to Beads except through Aegis policy code.
+- no direct writes to Agora except through Aegis policy code.
 - no direct merge to base branch by Titan.
 - artifact emission before success is accepted.
 - transcript persistence on failure and enough metadata on success.
@@ -256,7 +256,7 @@ Oracle may produce:
 Oracle may not:
 
 - veto Titan dispatch.
-- create Beads issues.
+- create Agora tickets.
 - mutate graph state.
 - block parent issues.
 
@@ -298,7 +298,7 @@ Sentinel may not:
 
 Blocking findings with `route=rework_owner` send the owner issue back to Titan as `rework_required`.
 
-Blocking findings with `route=create_blocker` are routed by Aegis policy code. Sentinel does not decide Beads mutation; the deterministic router creates or reuses the blocking issue, links it to the parent, and records the policy artifact.
+Blocking findings with `route=create_blocker` are routed by Aegis policy code. Sentinel does not decide Agora mutation; the deterministic router creates or reuses the blocking ticket, links it to the parent, and records the policy artifact.
 
 ### Janus
 
@@ -333,7 +333,7 @@ pending
 Side paths:
 
 - `rework_required`: same parent returns to Titan with Sentinel or Janus feedback.
-- `blocked_on_child`: parent blocked in Beads by accepted child issue.
+- `blocked_on_child`: parent blocked in Agora by accepted child ticket.
 - `failed_operational`: runtime/tool/provider/policy failure, retry only through cooldown/manual policy. Exhausted provider/runtime failures must be reported explicitly in terminal status so a raw tracker queue cannot masquerade as runnable work.
 - `resolving_integration`: Janus owns merge-boundary failure.
 
@@ -359,7 +359,7 @@ Runtime session ownership:
 
 ## Mutation Policy
 
-Castes never write Beads directly.
+Castes never write Agora directly.
 
 All graph mutation goes through deterministic Aegis policy code.
 
@@ -380,7 +380,7 @@ Accepted blocker requirements:
 - proposal has evidence.
 - proposal is blocking.
 - child issue is created or reused.
-- Beads dependency makes parent not ready.
+- Agora dependency makes parent not ready.
 - dispatch state becomes `blocked_on_child`.
 - policy artifact is persisted.
 - policy-created blocker work must resolve with `success` or explicit `failure`; `already_satisfied` is not accepted because the blocker exists to change unresolved parent state.
@@ -423,6 +423,9 @@ Expected graph shape:
 - review/merge closure
 - at least one path exercising Janus if seeded conflict is present
 - gate issues may own cross-lane integration files, and any discovered missing work may become a typed child blocker when Aegis policy accepts the route
+- initial ready set exposes multiple Oracle sessions in parallel
+- post-Oracle dispatch exposes multiple Titan lanes in parallel when scopes do not overlap
+- dependencies stress blocked -> ready transitions without relying on issue-name semantics
 
 Expected product:
 
@@ -456,7 +459,7 @@ Rules:
 - Do not update old specs, addenda, or plans.
 - Do not create new source-of-truth addenda.
 - If this document is wrong, edit this document.
-- If implementation reveals a new decision, record it here or in Beads as execution work, not in a side spec.
+- If implementation reveals a new decision, record it here or in Agora as execution work, not in a side spec.
 - Historical docs may remain ignored locally for archaeology only.
 
 Forbidden drift:
@@ -502,22 +505,22 @@ Do not claim pass without running relevant command and seeing pass.
 
 ## Active Work Selection
 
-Use Beads for work tracking.
+Use Agora for Step 1 work tracking.
 
 Before selecting work:
 
 ```bash
-bd ready --json
+node packages/agora/dist/cli.js board --json
 ```
 
-If Beads server is down, report that and continue only with explicitly requested non-Beads work.
+Beads is on the backburner. Existing Beads code may remain until replaced, but new Step 1 proof work must route through Agora.
 
 Current next work after this spec:
 
-1. Finish or revert in-flight adapter-contract hardening based on tests.
-2. Run deterministic verification.
-3. Run full seeded React todo proof with Pi.
-4. If Pi fails by adapter-specific contract breach, implement Codex adapter instead of more Pi harness patching.
+1. Integrate Agora as Aegis task truth through the existing generic tracker boundary.
+2. Convert seeded React todo mock-run from Beads seeding to Agora seeding with equivalent graph semantics.
+3. Prove Pi drains the Agora-seeded graph after Copilot usage reset.
+4. If Pi fails by adapter-specific contract breach, use Codex adapter without changing tracker semantics.
 
 ## Superseded Files
 
