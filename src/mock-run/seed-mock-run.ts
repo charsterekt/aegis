@@ -31,7 +31,8 @@ export interface SeedMockRunResult {
 export const MOCK_RUN_LABOR_BASE_PATH = ".aegis/labors";
 const MOCK_RUN_CODEX_MODEL_REFERENCE = "openai-codex:gpt-5.4-mini";
 const MOCK_RUN_PI_MODEL_REFERENCE = "github-copilot:gpt-5.4-mini";
-const MOCK_RUN_THINKING_LEVEL = "medium";
+const MOCK_RUN_DEFAULT_THINKING_LEVEL = "medium";
+const MOCK_RUN_CODEX_THINKING_LEVEL = "low";
 const MOCK_RUN_STUCK_WARNING_SECONDS = 420;
 const MOCK_RUN_STUCK_KILL_SECONDS = 1_200;
 
@@ -104,6 +105,9 @@ export function buildMockRunConfig(options?: {
   const runtime = options?.runtime ?? "scripted";
   const modelReference = options?.modelReference
     ?? (runtime === "pi" ? MOCK_RUN_PI_MODEL_REFERENCE : MOCK_RUN_CODEX_MODEL_REFERENCE);
+  const thinkingLevel = runtime === "codex"
+    ? MOCK_RUN_CODEX_THINKING_LEVEL
+    : MOCK_RUN_DEFAULT_THINKING_LEVEL;
 
   if (runtime === "pi" && !modelReference.startsWith("github-copilot:")) {
     throw new Error(`Pi mock proof must use GitHub Copilot provider, got ${modelReference}.`);
@@ -113,7 +117,7 @@ export function buildMockRunConfig(options?: {
     ...DEFAULT_AEGIS_CONFIG,
     runtime,
     models: createCasteConfig(() => modelReference),
-    thinking: createCasteConfig(() => MOCK_RUN_THINKING_LEVEL),
+    thinking: createCasteConfig(() => thinkingLevel),
     thresholds: {
       ...DEFAULT_AEGIS_CONFIG.thresholds,
       stuck_warning_seconds: MOCK_RUN_STUCK_WARNING_SECONDS,

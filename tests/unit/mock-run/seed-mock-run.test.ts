@@ -86,7 +86,7 @@ describe("buildMockRunConfig", () => {
     expect(config.runtime).toBe("codex");
     for (const caste of CASTE_CONFIG_KEYS) {
       expect(config.models[caste]).toBe("openai-codex:gpt-5.4-mini");
-      expect(config.thinking[caste]).toBe("medium");
+      expect(config.thinking[caste]).toBe("low");
     }
     expect(config.labor.base_path).toBe(MOCK_RUN_LABOR_BASE_PATH);
   });

@@ -109,6 +109,41 @@ function hasEvidence(proposal: MutationProposal): boolean {
   return proposal.scopeEvidence.some((entry) => entry.trim().length > 0);
 }
 
+function normalizeScopeFile(candidate: string) {
+  return candidate.replace(/\\/g, "/").replace(/^\.\//, "").trim().toLowerCase();
+}
+
+function extractMentionedFileNames(text: string) {
+  const matches = text.match(/[A-Za-z0-9@._/-]+\.[A-Za-z0-9._-]+/g) ?? [];
+  return matches.map((entry) => normalizeScopeFile(entry));
+}
+
+function shouldRequeueMissingOwnedFileProposal(input: ApplyMutationProposalInput) {
+  const { proposal, record } = input;
+  if (
+    proposal.originCaste !== "titan"
+    || !proposal.proposalType.startsWith("create_")
+    || !record.fileScope
+    || record.fileScope.files.length === 0
+  ) {
+    return false;
+  }
+
+  const text = [
+    proposal.summary,
+    proposal.suggestedTitle ?? "",
+    proposal.suggestedDescription ?? "",
+    ...proposal.scopeEvidence,
+  ].join("\n").toLowerCase();
+  if (!/\b(absent|missing|not present|no matches|does not contain|not found|returned false)\b/.test(text)) {
+    return false;
+  }
+
+  const owned = new Set(record.fileScope.files.map((entry) => normalizeScopeFile(entry)));
+  const mentionedOwnedFiles = extractMentionedFileNames(text).filter((entry) => owned.has(entry));
+  return mentionedOwnedFiles.length > 0;
+}
+
 function isOpenBlocker(blocker: ExistingBlocker): boolean {
   return blocker.status === undefined || blocker.status === "open" || blocker.status === "blocked";
 }
@@ -370,6 +405,10 @@ export async function applyMutationProposal(
   }
 
   if (input.proposal.proposalType === "requeue_parent") {
+    return requeue(input);
+  }
+
+  if (shouldRequeueMissingOwnedFileProposal(input)) {
     return requeue(input);
   }
 

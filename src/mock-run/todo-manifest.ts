@@ -45,6 +45,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     title: "[foundation] Install dependencies",
     description: [
       "Install React runtime, Vite/TypeScript toolchain, animation libs, UI utility packages, and deterministic dev/build/preview npm scripts.",
+      "Create package.json and package-lock.json from scratch if they do not exist; missing owned manifest files are local work, not blockers.",
       "Do not require build or preview checks to pass in this lane; scaffold and tooling lanes own those files.",
       "Do not create blockers for scaffold or tooling files already represented by downstream seeded setup issues.",
     ].join("\n"),
@@ -259,7 +260,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     priority: 1,
     queueRole: "executable",
     parentKey: "ui",
-    blocks: ["ui.contract"],
+    blocks: ["setup.gate", "core.gate", "ui.contract"],
     labels: ["mock-run", "ui", "lane_a"],
   },
   {
@@ -280,7 +281,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     priority: 1,
     queueRole: "executable",
     parentKey: "ui",
-    blocks: ["ui.contract"],
+    blocks: ["setup.gate", "core.gate", "ui.contract"],
     labels: ["mock-run", "ui", "lane_b"],
   },
   {
@@ -292,7 +293,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     priority: 1,
     queueRole: "executable",
     parentKey: "ui",
-    blocks: ["ui.contract"],
+    blocks: ["setup.gate", "core.gate", "ui.contract"],
     labels: ["mock-run", "ui", "lane_c", "a11y"],
   },
   {
@@ -362,7 +363,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     priority: 1,
     queueRole: "executable",
     parentKey: "motion",
-    blocks: ["motion.contract"],
+    blocks: ["ui.gate", "motion.contract"],
     labels: ["mock-run", "motion", "lane_a"],
   },
   {
@@ -374,7 +375,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     priority: 1,
     queueRole: "executable",
     parentKey: "motion",
-    blocks: ["motion.contract"],
+    blocks: ["ui.gate", "motion.contract"],
     labels: ["mock-run", "motion", "lane_b"],
   },
   {
@@ -389,7 +390,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     priority: 1,
     queueRole: "executable",
     parentKey: "motion",
-    blocks: ["motion.contract"],
+    blocks: ["ui.gate", "motion.contract"],
     labels: ["mock-run", "motion", "lane_c"],
   },
   {
@@ -450,13 +451,16 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   {
     key: "release.localhost",
     title: "[release] Localhost run flow",
-    description: "Wire deterministic localhost run flow and production build validation commands.",
+    description: [
+      "Wire deterministic localhost run flow and production build validation commands.",
+      "At this point the app gates are complete; inspect existing package/vite files before changing owned run configuration.",
+    ].join("\n"),
     fileScope: ["package.json", "vite.config.ts"],
     issueType: "task",
     priority: 1,
     queueRole: "executable",
     parentKey: "release",
-    blocks: ["release.contract"],
+    blocks: ["setup.gate", "core.gate", "ui.gate", "motion.gate", "release.contract"],
     labels: ["mock-run", "release", "lane_a"],
   },
   {
@@ -471,7 +475,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     priority: 1,
     queueRole: "executable",
     parentKey: "release",
-    blocks: ["release.contract"],
+    blocks: ["setup.gate", "core.gate", "ui.gate", "motion.gate", "release.contract"],
     labels: ["mock-run", "release", "lane_b"],
   },
   {
@@ -483,7 +487,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     priority: 1,
     queueRole: "executable",
     parentKey: "release",
-    blocks: ["release.contract"],
+    blocks: ["setup.gate", "core.gate", "ui.gate", "motion.gate", "release.contract"],
     labels: ["mock-run", "release", "lane_c"],
   },
   {

@@ -88,6 +88,28 @@ describe("TODO_MOCK_RUN_ISSUES", () => {
     expect(scaffold.description).not.toContain("npm scripts");
   });
 
+  it("keeps product implementation ordered before release verification", () => {
+    const byKey = new Map(TODO_MOCK_RUN_ISSUES.map((issue) => [issue.key, issue]));
+
+    for (const key of ["ui.layout", "ui.components", "ui.accessibility"]) {
+      expect(byKey.get(key)?.blocks).toEqual(expect.arrayContaining(["setup.gate", "core.gate", "ui.contract"]));
+    }
+
+    for (const key of ["motion.item-animations", "motion.reorder-feedback", "motion.visual-theme"]) {
+      expect(byKey.get(key)?.blocks).toEqual(expect.arrayContaining(["ui.gate", "motion.contract"]));
+    }
+
+    for (const key of ["release.localhost", "release.verification", "release.docs"]) {
+      expect(byKey.get(key)?.blocks).toEqual(expect.arrayContaining([
+        "setup.gate",
+        "core.gate",
+        "ui.gate",
+        "motion.gate",
+        "release.contract",
+      ]));
+    }
+  });
+
   it("keeps product UI requirements free of orchestration vocabulary", () => {
     const forbiddenProductTerms = [
       "React + TypeScript App Shell",
