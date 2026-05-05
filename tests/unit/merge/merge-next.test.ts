@@ -280,6 +280,68 @@ describe("runMergeNext", () => {
     expect(result.detail).toContain("root-leak.txt");
   });
 
+  it("waits instead of escalating when active Titan work owns dirty root files", async () => {
+    const root = createTempRoot();
+    writeFileSync(
+      path.join(root, ".aegis", "config.json"),
+      `${JSON.stringify({
+        ...DEFAULT_AEGIS_CONFIG,
+        runtime: "pi",
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    initializeGitRepository(root);
+
+    runGit(root, ["checkout", "-b", "aegis/aegis-903"]);
+    writeFileSync(path.join(root, "README.md"), "merge me\n", "utf8");
+    runGit(root, ["add", "README.md"]);
+    runGit(root, ["commit", "-m", "candidate change"]);
+    runGit(root, ["checkout", "main"]);
+
+    const mergeRecord = createRecord("aegis-903", "queued_for_merge");
+    const activeRecord = {
+      ...createRecord("aegis-active", "implementing"),
+      runningAgent: {
+        caste: "titan" as const,
+        sessionId: "session-active",
+        startedAt: "2026-04-14T12:00:00.000Z",
+      },
+      fileScope: { files: ["active-owned.txt"] },
+    };
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-903": mergeRecord,
+        "aegis-active": activeRecord,
+      },
+    });
+    saveMergeQueueState(root, {
+      schemaVersion: 1,
+      items: [createQueueItem("aegis-903")],
+    });
+    writeFileSync(path.join(root, "active-owned.txt"), "dirty but owned by active titan\n", "utf8");
+
+    const result = await runMergeNext(root, {
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-903")),
+      },
+      now: "2026-04-14T12:30:00.000Z",
+    });
+
+    expect(result).toMatchObject({
+      action: "merge_next",
+      status: "requeued",
+      issueId: "aegis-903",
+      stage: "queued_for_merge",
+    });
+    expect(result.detail).toContain("waiting for active scoped work");
+    const queueItem = loadMergeQueueState(root).items[0]!;
+    expect(queueItem.status).toBe("queued");
+    expect(queueItem.attempts).toBe(0);
+    expect(loadDispatchState(root).records["aegis-903"]?.stage).toBe("queued_for_merge");
+  });
+
   it("uses scripted merge outcomes when a scripted merge plan override is provided under pi runtime", async () => {
     const root = createTempRoot();
     writeFileSync(

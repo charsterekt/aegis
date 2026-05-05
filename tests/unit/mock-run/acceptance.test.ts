@@ -14,6 +14,7 @@ import {
   collectMockAcceptanceSurface,
   assertMockAcceptanceSurface,
   waitForMockAcceptanceProgress,
+  assertFinalProductQuality,
   type MockAcceptanceSurface,
 } from "../../../src/mock-run/acceptance.js";
 
@@ -684,6 +685,30 @@ describe("collectMockAcceptanceSurface", () => {
       "npm.cmd test",
       "npm.cmd run smoke",
     ]);
+  });
+
+  it("rejects visible proof scaffolding in the generated product", async () => {
+    const root = createTempRoot();
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({
+        scripts: {
+          preview: "vite preview",
+        },
+        dependencies: {},
+      }),
+      "utf8",
+    );
+
+    await expect(assertFinalProductQuality(root, {
+      loadPageText: async () => [
+        "React + TypeScript App Shell",
+        "Workspace",
+        "Motion proof",
+        "Motion gate",
+        "Next steps",
+      ].join("\n"),
+    })).rejects.toThrow("Generated app leaks orchestration vocabulary");
   });
 
   it("accepts the Janus integration-blocker proof path when the queue item is failed", () => {

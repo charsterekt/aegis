@@ -3,8 +3,8 @@ import type { MockRunManifest } from "./types.js";
 export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   {
     key: "todo-webapp.program",
-    title: "Fancy animated React todo webapp program",
-    description: "Program epic for building a localhost React animated todo application from an empty repository.",
+    title: "Polished animated todo app program",
+    description: "Program epic for building a polished localhost React todo application from an empty repository.",
     issueType: "epic",
     priority: 1,
     queueRole: "coordination",
@@ -14,8 +14,8 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "setup",
-    title: "Setup slice",
-    description: "Coordination epic for workspace bootstrap, toolchain, and deterministic starter contract.",
+    title: "Foundation slice",
+    description: "Coordination epic for project bootstrap, toolchain, and deterministic product foundation.",
     issueType: "epic",
     priority: 1,
     queueRole: "coordination",
@@ -25,8 +25,13 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "setup.contract",
-    title: "[setup] Contract seed",
-    description: "Lock architecture contract for empty repo -> React app scaffolding, dependency install, and local run targets.",
+    title: "[foundation] Product foundation brief",
+    description: [
+      "Write the product foundation brief for an animated React todo app.",
+      "The generated app must feel like a finished todo product, not a framework starter.",
+      "Visible UI must focus on adding, filtering, completing, deleting, and animating todos.",
+      "Ban visible orchestration words from the product: gate, proof, lane, mounted, contract, shell, workspace, snapshot.",
+    ].join("\n"),
     fileScope: ["docs/setup-contract.md"],
     issueType: "task",
     priority: 1,
@@ -37,7 +42,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "setup.dependencies",
-    title: "[setup] Install core dependencies",
+    title: "[foundation] Install dependencies",
     description: [
       "Install React runtime, Vite/TypeScript toolchain, animation libs, UI utility packages, and deterministic dev/build/preview npm scripts.",
       "Do not require build or preview checks to pass in this lane; scaffold and tooling lanes own those files.",
@@ -53,9 +58,11 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "setup.scaffold",
-    title: "[setup] Scaffold app shell",
+    title: "[foundation] Scaffold product app",
     description: [
-      "Scaffold React + TypeScript localhost app shell and baseline source tree.",
+      "Scaffold a React + TypeScript localhost product app and baseline source tree.",
+      "The first rendered screen must be a todo app, not a framework starter page.",
+      "Use app title copy such as Animated Todo, Flow Todo, or Focus Todos; do not show framework, proof, or project-internal wording.",
       "Do not require build or preview checks to pass in this lane; tooling lane owns TypeScript/Vite config files.",
       "Do not create blockers for tooling files already represented by the downstream setup.tooling issue.",
     ].join("\n"),
@@ -102,8 +109,8 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "setup.gate",
-    title: "[setup] Gate",
-    description: "Validate scaffold, deps, and tooling completion before feature implementation begins.",
+    title: "[foundation] Integration check",
+    description: "Validate foundation, dependencies, and tooling completion before feature implementation begins. Write internal notes only in docs; do not add visible product UI copy.",
     fileScope: [
       "docs/setup-gate.md",
       "docs/setup-contract.md",
@@ -219,8 +226,13 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "ui.contract",
-    title: "[ui] Contract seed",
-    description: "Define component boundaries and interaction contract for todo entry, list, filters, and counters.",
+    title: "[ui] Product interaction brief",
+    description: [
+      "Define component boundaries and product interaction requirements for a Todo app.",
+      "The first viewport must clearly look like a polished todo application: product heading, todo input, list or empty state, filters, and counters.",
+      "Ban visible orchestration words from UI copy: gate, proof, lane, mounted, contract, shell, workspace, snapshot.",
+      "Keep implementation docs internal; users should only see todo-product language.",
+    ].join("\n"),
     fileScope: ["docs/ui-contract.md"],
     issueType: "task",
     priority: 1,
@@ -231,8 +243,13 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "ui.layout",
-    title: "[ui] Lane A",
-    description: "Build app shell layout, responsive container, and semantic landmark structure.",
+    title: "[ui] Product layout",
+    description: [
+      "Build the main product layout, responsive container, and semantic landmark structure.",
+      "Use balanced spacing, clear sections, and wrapping that works at desktop and mobile widths.",
+      "Keep the todo input and visible list/empty state near the top of the first viewport.",
+      "Do not include setup, framework starter, or internal proof sections in the rendered UI.",
+    ].join("\n"),
     fileScope: [
       "src/App.tsx",
       "src/components/AppShell.tsx",
@@ -247,8 +264,12 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "ui.components",
-    title: "[ui] Lane B",
-    description: "Implement todo list/item and input/filter components bound to core store commands.",
+    title: "[ui] Todo controls",
+    description: [
+      "Implement todo list/item and input/filter components bound to core store commands.",
+      "Todo items must be easy to scan, with complete and delete actions aligned and spaced as a cohesive product UI.",
+      "Empty, active, and completed states must read as user-facing todo app states.",
+    ].join("\n"),
     fileScope: [
       "src/components/TodoInput.tsx",
       "src/components/TodoList.tsx",
@@ -264,8 +285,8 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "ui.accessibility",
-    title: "[ui] Lane C",
-    description: "Add keyboard affordances, focus states, aria annotations, and screen-reader labels.",
+    title: "[ui] Accessibility polish",
+    description: "Add keyboard affordances, visible focus states, aria annotations, and screen-reader labels for the todo product.",
     fileScope: ["src/components/A11yStatus.tsx", "src/accessibility/keyboard.ts"],
     issueType: "task",
     priority: 1,
@@ -276,8 +297,12 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "ui.gate",
-    title: "[ui] Gate",
-    description: "Prove UI structure, component behavior, and accessibility before motion polish.",
+    title: "[ui] Product integration check",
+    description: [
+      "Integrate UI structure, component behavior, and accessibility before motion polish.",
+      "Remove visible internal scaffolding copy and keep the product centered on todo management.",
+      "The screen must not show gate/proof/lane/shell/workspace/contract language.",
+    ].join("\n"),
     fileScope: [
       "docs/ui-gate.md",
       "docs/ui-contract.md",
@@ -311,8 +336,12 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "motion.contract",
-    title: "[motion] Contract seed",
-    description: "Define animation choreography, reduced-motion fallback, and visual polish acceptance criteria.",
+    title: "[motion] Animation brief",
+    description: [
+      "Define animation choreography, reduced-motion fallback, and visual polish acceptance criteria.",
+      "Animations must be observable add, complete, delete transitions on real todo items.",
+      "Do not add separate demo panels or proof controls; motion belongs in the todo workflow.",
+    ].join("\n"),
     fileScope: ["docs/motion-contract.md"],
     issueType: "task",
     priority: 1,
@@ -323,7 +352,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "motion.item-animations",
-    title: "[motion] Lane A",
+    title: "[motion] Todo item transitions",
     description: [
       "Implement animated entry/exit/complete transitions for todo items.",
       "If exporting both a React component and an imperative DOM helper, keep React children typed/rendered as ReactNode inside JSX; only the DOM helper may append real DOM Nodes.",
@@ -338,8 +367,8 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "motion.reorder-feedback",
-    title: "[motion] Lane B",
-    description: "Implement reorder drag feedback and smooth list reflow motion.",
+    title: "[motion] List reflow feedback",
+    description: "Implement smooth list reflow feedback for todo add/remove/filter changes without separate demo controls.",
     fileScope: ["src/motion/reorderMotion.ts", "src/components/ReorderFeedback.tsx"],
     issueType: "task",
     priority: 1,
@@ -350,8 +379,11 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "motion.visual-theme",
-    title: "[motion] Lane C",
-    description: "Implement themed gradients, shadows, and typography polish for fancy localhost presentation.",
+    title: "[motion] Visual polish",
+    description: [
+      "Implement refined color, shadows, typography, spacing, and density for a finished localhost todo product.",
+      "Avoid one-note palettes and avoid decorative proof sections.",
+    ].join("\n"),
     fileScope: ["src/styles/theme.css", "src/styles/theme.ts"],
     issueType: "task",
     priority: 1,
@@ -362,8 +394,12 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "motion.gate",
-    title: "[motion] Gate",
-    description: "Prove animation and polish lanes are complete and stable.",
+    title: "[motion] Product animation check",
+    description: [
+      "Integrate animation and polish work into the real todo workflow.",
+      "The app must show no visible orchestration vocabulary and no separate motion demo area.",
+      "Todo add, completion, deletion, and filtering must remain usable after animation integration.",
+    ].join("\n"),
     fileScope: [
       "docs/motion-gate.md",
       "docs/motion-contract.md",
@@ -398,8 +434,11 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "release.contract",
-    title: "[release] Contract seed",
-    description: "Define done criteria for finished localhost app including run command, build check, and smoke steps.",
+    title: "[release] Acceptance brief",
+    description: [
+      "Define done criteria for the finished localhost todo app including run command, build check, smoke steps, and product-quality checks.",
+      "Acceptance must fail if visible UI contains orchestration vocabulary or framework starter copy.",
+    ].join("\n"),
     fileScope: ["docs/release-contract.md"],
     issueType: "task",
     priority: 1,
@@ -410,7 +449,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "release.localhost",
-    title: "[release] Lane A",
+    title: "[release] Localhost run flow",
     description: "Wire deterministic localhost run flow and production build validation commands.",
     fileScope: ["package.json", "vite.config.ts"],
     issueType: "task",
@@ -422,8 +461,11 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "release.verification",
-    title: "[release] Lane B",
-    description: "Add integration smoke checks proving todo flows and animation fallbacks under local run.",
+    title: "[release] Browser verification",
+    description: [
+      "Add integration smoke checks proving todo flows and animation fallbacks under local run.",
+      "Use Playwright to assert todo input/list/filter behavior, first-viewport product focus, and absence of visible orchestration vocabulary.",
+    ].join("\n"),
     fileScope: ["tests/smoke/todo-flow.test.ts", "tests/smoke/reduced-motion.test.ts"],
     issueType: "task",
     priority: 1,
@@ -434,7 +476,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "release.docs",
-    title: "[release] Lane C",
+    title: "[release] Runbook",
     description: "Write concise README runbook documenting setup, commands, and localhost app behavior.",
     fileScope: ["README.md"],
     issueType: "task",
@@ -446,8 +488,12 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
   {
     key: "release.gate",
-    title: "[release] Gate",
-    description: "Final proof gate: localhost app finished, documented, and reproducibly runnable.",
+    title: "[release] Final product acceptance",
+    description: [
+      "Final acceptance: localhost app finished, documented, reproducibly runnable, and product-quality checked.",
+      "Use Playwright/browser checks to prove the first viewport is the todo app, add/complete/delete/filter work, and no visible orchestration vocabulary remains.",
+      "The final product must look like a cohesive animated todo app, not a collection of proof artifacts.",
+    ].join("\n"),
     fileScope: [
       "docs/release-gate.md",
       "docs/release-contract.md",

@@ -2,6 +2,8 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { createServer } from "node:net";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import { CASTE_CONFIG_KEYS, type CasteConfigKey } from "../config/caste-config.js";
@@ -28,6 +30,10 @@ type MockCommandRunner = (
   args: string[],
   options?: RunMockCommandOptions,
 ) => Promise<unknown>;
+
+export interface FinalProductQualityOptions {
+  loadPageText?: (root: string) => Promise<string>;
+}
 
 interface TrackerLike {
   getIssue(id: string, root?: string): Promise<AegisIssue>;
@@ -340,6 +346,136 @@ async function runFinalAppCommand(root: string, args: string[]): Promise<MockAcc
   };
 }
 
+const FORBIDDEN_PRODUCT_UI_TERMS = [
+  "React + TypeScript App Shell",
+  "Workspace",
+  "Motion proof",
+  "Motion gate",
+  "Motion lane",
+  "lane mounted",
+  "proof lane",
+  "setup shell",
+  "Stability snapshot",
+  "UI gate",
+  "Next steps",
+] as const;
+
+async function findAvailablePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to allocate local preview port.")));
+        return;
+      }
+      const { port } = address;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+async function waitForPreview(baseUrl: string) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    try {
+      const response = await fetch(baseUrl);
+      if (response.ok) {
+        return;
+      }
+    } catch {
+      // Keep polling until the preview server is ready.
+    }
+    await sleep(250);
+  }
+  throw new Error(`Generated app preview did not become ready at ${baseUrl}.`);
+}
+
+async function loadFinalAppPageText(root: string): Promise<string> {
+  const port = await findAvailablePort();
+  const baseUrl = `http://127.0.0.1:${port}/`;
+  const preview = spawn(process.execPath, [
+    path.join(root, "node_modules", "vite", "bin", "vite.js"),
+    "preview",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    String(port),
+    "--strictPort",
+  ], {
+    cwd: root,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+
+  try {
+    await waitForPreview(baseUrl);
+    const requireFromApp = createRequire(path.join(root, "package.json"));
+    const { chromium } = requireFromApp("playwright") as {
+      chromium: {
+        launch: () => Promise<{
+          newPage: (options: { viewport: { width: number; height: number } }) => Promise<any>;
+          close: () => Promise<void>;
+        }>;
+      };
+    };
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+      const pageErrors: string[] = [];
+      page.on("pageerror", (error: Error) => pageErrors.push(error.message));
+      page.on("console", (message: { type: () => string; text: () => string }) => {
+        if (message.type() === "error") {
+          pageErrors.push(message.text());
+        }
+      });
+      await page.goto(baseUrl, { waitUntil: "networkidle" });
+      const bodyText = await page.locator("body").innerText();
+
+      const todoHeading = page.getByRole("heading", { name: /todo/i }).first();
+      if (!(await todoHeading.isVisible())) {
+        throw new Error("Generated app does not show a todo heading.");
+      }
+      const headingBox = await todoHeading.boundingBox();
+      if (!headingBox || headingBox.y > 260) {
+        throw new Error("Generated app does not put the todo product in the first viewport.");
+      }
+
+      const input = page.getByRole("textbox").first();
+      await input.fill("Plan launch");
+      await page.getByRole("button", { name: /add/i }).first().click();
+      if (!(await page.getByText("Plan launch", { exact: true }).isVisible())) {
+        throw new Error("Generated app does not add and show a todo item.");
+      }
+      if (pageErrors.length > 0) {
+        throw new Error(`Generated app emitted browser errors: ${pageErrors.join("; ")}`);
+      }
+
+      return bodyText;
+    } finally {
+      await browser.close();
+    }
+  } finally {
+    preview.kill("SIGTERM");
+  }
+}
+
+export async function assertFinalProductQuality(
+  root: string,
+  options: FinalProductQualityOptions = {},
+): Promise<void> {
+  const pageText = await (options.loadPageText ?? loadFinalAppPageText)(root);
+  const lowerText = pageText.toLowerCase();
+  const leakedTerms = FORBIDDEN_PRODUCT_UI_TERMS.filter((term) =>
+    lowerText.includes(term.toLowerCase()));
+  if (leakedTerms.length > 0) {
+    throw new Error(`Generated app leaks orchestration vocabulary: ${leakedTerms.join(", ")}.`);
+  }
+  if (!lowerText.includes("todo")) {
+    throw new Error("Generated app does not present itself as a todo app.");
+  }
+}
+
 export async function verifyFinalApp(root: string): Promise<MockAcceptanceFinalAppVerification> {
   if (!existsSync(path.join(root, "package.json"))) {
     const verification = {
@@ -362,6 +498,7 @@ export async function verifyFinalApp(root: string): Promise<MockAcceptanceFinalA
   for (const args of commandArgs) {
     commands.push(await runFinalAppCommand(root, args));
   }
+  await assertFinalProductQuality(root);
 
   const verification = {
     status: "passed" as const,

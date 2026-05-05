@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 
 import { loadConfig } from "../config/load-config.js";
-import { captureGitProofPair, summarizeOperationalDirtyFiles } from "../core/git-proof.js";
+import { captureGitProofPair, listOperationalDirtyFiles, summarizeOperationalDirtyFiles } from "../core/git-proof.js";
 import {
   loadDispatchState,
   replaceDispatchRecord,
@@ -278,6 +278,33 @@ function updateDispatchStage(
   return nextState.records[issueId]!;
 }
 
+function normalizeScopePath(candidate: string) {
+  return candidate.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+}
+
+function findActiveTitanDirtyOwners(
+  dispatchState: ReturnType<typeof loadDispatchState>,
+  dirtyFiles: string[],
+) {
+  if (dirtyFiles.length === 0) {
+    return null;
+  }
+
+  const ownerByFile = new Map<string, string>();
+  for (const dirtyFile of dirtyFiles.map((entry) => normalizeScopePath(entry))) {
+    const owner = Object.values(dispatchState.records).find((record) =>
+      record.runningAgent?.caste === "titan"
+      && record.fileScope !== null
+      && record.fileScope.files.map((entry) => normalizeScopePath(entry)).includes(dirtyFile));
+    if (!owner) {
+      return null;
+    }
+    ownerByFile.set(dirtyFile, owner.issueId);
+  }
+
+  return ownerByFile;
+}
+
 export async function runMergeNext(
   root: string,
   options: RunMergeNextOptions = {},
@@ -300,6 +327,23 @@ export async function runMergeNext(
     throw new Error(`Merge queue item ${queueItem.queueItemId} has no dispatch record.`);
   }
   assertDispatchRecordStage(dispatchRecord, "queued_for_merge");
+
+  const rootWorkspace = captureGitProofPair(root).before;
+  const dirtyFiles = listOperationalDirtyFiles(rootWorkspace);
+  const activeDirtyOwners = findActiveTitanDirtyOwners(dispatchState, dirtyFiles);
+  if (activeDirtyOwners) {
+    const ownerSummary = [...activeDirtyOwners.entries()]
+      .map(([file, owner]) => `${file}:${owner}`)
+      .join(", ");
+    return {
+      action: "merge_next",
+      status: "requeued",
+      issueId: queueItem.issueId,
+      queueItemId: queueItem.queueItemId,
+      stage: "queued_for_merge",
+      detail: `Merge waiting for active scoped work to finish before requiring a clean root: ${ownerSummary}.`,
+    };
+  }
 
   const executor = options.executor ?? createDefaultExecutor(root);
   const tracker = options.tracker ?? createDefaultTracker();

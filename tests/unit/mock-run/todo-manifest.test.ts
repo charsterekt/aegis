@@ -88,6 +88,41 @@ describe("TODO_MOCK_RUN_ISSUES", () => {
     expect(scaffold.description).not.toContain("npm scripts");
   });
 
+  it("keeps product UI requirements free of orchestration vocabulary", () => {
+    const forbiddenProductTerms = [
+      "React + TypeScript App Shell",
+      "Workspace",
+      "Motion gate",
+      "Motion proof",
+      "lane mounted",
+      "proof lane",
+      "setup shell",
+    ];
+    const productIssues = TODO_MOCK_RUN_ISSUES.filter((issue) =>
+      ["setup.scaffold", "ui.contract", "ui.layout", "ui.components", "motion.contract", "motion.gate", "release.gate"]
+        .includes(issue.key),
+    );
+
+    for (const issue of productIssues) {
+      for (const term of forbiddenProductTerms) {
+        expect(issue.description, `${issue.key} leaked ${term}`).not.toContain(term);
+      }
+    }
+  });
+
+  it("requires a product-first todo app rather than proof scaffolding", () => {
+    const uiContract = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "ui.contract")!;
+    const motionContract = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "motion.contract")!;
+    const releaseGate = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "release.gate")!;
+
+    expect(uiContract.description).toContain("first viewport");
+    expect(uiContract.description).toContain("Ban visible orchestration words");
+    expect(uiContract.description).toContain("Todo app");
+    expect(motionContract.description).toContain("observable add, complete, delete transitions");
+    expect(releaseGate.description).toContain("no visible orchestration vocabulary");
+    expect(releaseGate.description).toContain("Playwright");
+  });
+
   it("lists blockers before dependents for deterministic seeding", () => {
     const seen = new Set<string>();
 
