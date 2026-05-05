@@ -891,6 +891,9 @@ describe("runCasteCommand", () => {
       ],
     });
     expect(createClarificationIssue).toHaveBeenCalledTimes(1);
+    expect(createClarificationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      fileScope: undefined,
+    }), root);
     expect(linkBlockingIssue).toHaveBeenCalledWith({
       blockingIssueId: "aegis-clarify-1",
       blockedIssueId: "aegis-125",
@@ -905,6 +908,73 @@ describe("runCasteCommand", () => {
           sessionId: "session-1",
         },
       });
+  });
+
+  it("creates Titan blocker children with file scope extracted from proposal text", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-scope-child": {
+          issueId: "aegis-scope-child",
+          stage: "scouted",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-scope-child.json"),
+          sentinelVerdictRef: null,
+          fileScope: { files: ["docs/core-contract.md"] },
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    const runtimeRun = vi.fn().mockResolvedValueOnce(createTitanSessionResult(JSON.stringify({
+      outcome: "failure",
+      summary: "store lane is missing",
+      files_changed: [],
+      tests_and_checks_run: ["Checked src/state/todo-store.ts absence."],
+      known_risks: [],
+      follow_up_work: [],
+      mutation_proposal: {
+        proposal_type: "create_out_of_scope_blocker",
+        summary: "The store lane must create `src/state/todo-store.ts` before this task can proceed.",
+        suggested_title: "Add src/state/todo-store.ts",
+        suggested_description: "Create `src/state/todo-store.ts` and `tests/state/todo-store.test.ts`.",
+        scope_evidence: [
+          "Current owned scope only includes docs/core-contract.md.",
+          "The current workspace has no `src/state/` directory and no `src/state/todo-store.ts`.",
+        ],
+      },
+    }), "session-scope-child"));
+    const createBlockerIssue = vi.fn(async () => "aegis-scope-blocker");
+
+    await runCasteCommand({
+      root,
+      action: "implement",
+      issueId: "aegis-scope-child",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-scope-child")),
+        createIssue: createBlockerIssue,
+        linkBlockingIssue: vi.fn(async () => undefined),
+      },
+      runtime: {
+        run: runtimeRun,
+      },
+      resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => ".aegis/labors",
+      ensureLabor: vi.fn(),
+    });
+
+    expect(createBlockerIssue).toHaveBeenCalledWith(expect.objectContaining({
+      fileScope: [
+        "src/state/todo-store.ts",
+        "tests/state/todo-store.test.ts",
+      ],
+    }), root);
   });
 
   it("does not advance implementation when Titan runtime session failed", async () => {

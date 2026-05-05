@@ -193,12 +193,33 @@ function extractScopeFilesFromEvidence(entries: string[]) {
   const candidates = entries.flatMap((entry) => {
     const trimmed = entry.trim();
     const requiredFilesPrefix = trimmed.match(/^Required files=(.+)$/i);
-    const value = requiredFilesPrefix?.[1] ?? trimmed;
-    return value.split(",");
+    if (requiredFilesPrefix?.[1]) {
+      return requiredFilesPrefix[1].split(",");
+    }
+
+    if (!/\b(add|create|implement|missing|absent|required|requires|needs|include|includes|no)\b/i.test(trimmed)) {
+      return [];
+    }
+
+    return [...trimmed.matchAll(/`([^`]+)`/g)].map((match) => match[1] ?? "");
   });
   return candidates
     .map((entry) => normalizeScopeFile(entry))
     .filter((entry) => /^[\w@./-]+\.[\w.-]+$/.test(entry));
+}
+
+function extractScopeFilesFromProposalText(input: {
+  summary: string;
+  suggestedTitle?: string;
+  suggestedDescription?: string;
+  scopeEvidence: string[];
+}) {
+  return extractScopeFilesFromEvidence([
+    input.summary,
+    input.suggestedTitle ?? "",
+    input.suggestedDescription ?? "",
+    ...input.scopeEvidence,
+  ]);
 }
 
 function hasNewScopeFiles(current: { files: string[] } | null, expanded: { files: string[] }) {
@@ -557,7 +578,12 @@ function buildTitanPolicyProposal(
     suggestedDescription: proposal?.suggested_description,
     dependencyType: "blocks",
     scopeEvidence: proposal?.scope_evidence ?? [],
-    fileScope: normalizeFileScope(extractScopeFilesFromEvidence(proposal?.scope_evidence ?? []))?.files,
+    fileScope: normalizeFileScope(extractScopeFilesFromProposalText({
+      summary,
+      suggestedTitle: proposal?.suggested_title,
+      suggestedDescription: proposal?.suggested_description,
+      scopeEvidence: proposal?.scope_evidence ?? [],
+    }))?.files,
     fingerprint: buildFindingFingerprint(issueId, `${proposal?.proposal_type ?? "clarification"}:${summary}`),
   };
 }
@@ -577,7 +603,12 @@ function buildJanusPolicyProposal(
     suggestedDescription: proposal.suggested_description,
     dependencyType: "blocks",
     scopeEvidence: proposal.scope_evidence,
-    fileScope: normalizeFileScope(extractScopeFilesFromEvidence(proposal.scope_evidence))?.files,
+    fileScope: normalizeFileScope(extractScopeFilesFromProposalText({
+      summary: proposal.summary,
+      suggestedTitle: proposal.suggested_title,
+      suggestedDescription: proposal.suggested_description,
+      scopeEvidence: proposal.scope_evidence,
+    }))?.files,
     fingerprint: buildFindingFingerprint(issueId, `${proposal.proposal_type}:${proposal.summary}`),
   };
 }
