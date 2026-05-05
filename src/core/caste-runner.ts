@@ -937,6 +937,44 @@ function validateTitanChangedFilesScope(
   return null;
 }
 
+function isOperationalRootPath(candidate: string) {
+  return candidate !== ".aegis"
+    && !candidate.startsWith(".aegis/")
+    && candidate !== ".agora"
+    && !candidate.startsWith(".agora/");
+}
+
+function listNewOperationalRootDirtyFiles(proofPair: {
+  before: ReturnType<typeof captureGitProofPair>["before"];
+  after: ReturnType<typeof captureGitProofPair>["after"];
+}) {
+  const before = new Set((proofPair.before?.changedFiles ?? []).map((entry) => normalizeScopeFile(entry)));
+  return (proofPair.after?.changedFiles ?? [])
+    .map((entry) => normalizeScopeFile(entry))
+    .filter((entry) => isOperationalRootPath(entry) && !before.has(entry));
+}
+
+function cleanupRejectedTitanRootDrift(root: string, proofPair: {
+  before: ReturnType<typeof captureGitProofPair>["before"];
+  after: ReturnType<typeof captureGitProofPair>["after"];
+}) {
+  const dirtyFiles = listNewOperationalRootDirtyFiles(proofPair);
+  if (dirtyFiles.length === 0) {
+    return;
+  }
+
+  spawnSync("git", ["restore", "--staged", "--worktree", "--", ...dirtyFiles], {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  spawnSync("git", ["clean", "-f", "--", ...dirtyFiles], {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+}
+
 function persistSessionArtifact(
   root: string,
   action: RuntimeCasteAction,
@@ -1417,6 +1455,7 @@ async function runImplement(
     requiresIntegrationRework,
   });
   if (validationError) {
+    cleanupRejectedTitanRootDrift(input.root, completedRootGitProof);
     throw new Error(validationError);
   }
   if (artifact.mutation_proposal) {

@@ -135,7 +135,7 @@ function shouldRequeueMissingOwnedFileProposal(input: ApplyMutationProposalInput
     proposal.suggestedDescription ?? "",
     ...proposal.scopeEvidence,
   ].join("\n").toLowerCase();
-  if (!/\b(absent|missing|not present|no matches|does not contain|not found|returned false)\b/.test(text)) {
+  if (!/\b(absent|missing|not present|no matches|does not contain|does not exist|doesn't exist|not found|returned false)\b/.test(text)) {
     return false;
   }
 

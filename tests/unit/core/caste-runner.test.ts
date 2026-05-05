@@ -1776,6 +1776,7 @@ describe("runCasteCommand", () => {
     };
 
     expect(state.records["aegis-236"]?.stage).toBe("scouted");
+    expect(runGit(root, ["status", "--short", "--", "root-leak.txt"]).trim()).toBe("");
   });
 
   it("rejects Titan success when the project root head changes during implementation", async () => {
