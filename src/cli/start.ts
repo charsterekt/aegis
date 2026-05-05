@@ -94,7 +94,7 @@ export interface StartCommandContract {
 }
 
 export interface StartRuntimeController {
-  stop(reason?: "manual" | "signal" | "shutdown"): Promise<void>;
+  stop(reason?: "manual" | "signal" | "shutdown" | "provider_usage_limit"): Promise<void>;
 }
 
 export interface StartResult {
@@ -352,14 +352,21 @@ function toRunningRuntimeState(
 
 function toStoppedRuntimeState(
   runningState: RuntimeStateRecord,
-  stopReason: "manual" | "signal" | "shutdown",
+  stopReason: "manual" | "signal" | "shutdown" | "provider_usage_limit",
 ): RuntimeStateRecord {
   return {
     ...runningState,
     server_state: "stopped",
+    mode: stopReason === "provider_usage_limit" ? "paused" : runningState.mode,
     stopped_at: new Date().toISOString(),
     last_stop_reason: stopReason,
   };
+}
+
+function hasProviderUsageLimitFailure(root: string) {
+  return Object.values(loadDispatchState(root).records)
+    .some((record) => record.stage === "failed_operational"
+      && record.operationalFailureKind === "provider_usage_limit");
 }
 
 function registerLifecycleSignalHandlers(stop: () => Promise<void>) {
@@ -650,6 +657,10 @@ export async function startAegis(
     cycleInFlight = true;
     try {
       await runDaemonCycle(repoRoot);
+      if (hasProviderUsageLimitFailure(repoRoot)) {
+        await runtime.stop("provider_usage_limit");
+        return;
+      }
       await runMergeCommand(repoRoot, "next");
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);

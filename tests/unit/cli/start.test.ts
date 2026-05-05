@@ -125,6 +125,75 @@ describe("startAegis daemon loop", () => {
     await result.runtime.stop();
   });
 
+  it("pauses the daemon after a provider usage limit failure", async () => {
+    vi.useFakeTimers();
+    const root = createTempRoot();
+    initProject(root);
+
+    const configPath = path.join(root, ".aegis", "config.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8")) as {
+      runtime: string;
+      thresholds: { poll_interval_seconds: number };
+    };
+    writeFileSync(
+      configPath,
+      `${JSON.stringify({
+        ...config,
+        runtime: "scripted",
+        thresholds: {
+          ...config.thresholds,
+          poll_interval_seconds: 1,
+        },
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const runDaemonCycle = vi.fn(async () => {
+      saveDispatchState(root, {
+        schemaVersion: 1,
+        records: {
+          "ISSUE-QUOTA": {
+            issueId: "ISSUE-QUOTA",
+            stage: "failed_operational",
+            runningAgent: null,
+            oracleAssessmentRef: null,
+            titanHandoffRef: null,
+            sentinelVerdictRef: null,
+            fileScope: null,
+            operationalFailureKind: "provider_usage_limit",
+            failureCount: 1,
+            consecutiveFailures: 3,
+            failureWindowStartMs: 1,
+            cooldownUntil: "2026-04-29T20:06:00.000Z",
+            sessionProvenanceId: String(process.pid),
+            updatedAt: "2026-04-29T20:01:00.000Z",
+          },
+        },
+      });
+    });
+    const startModule = await import("../../../src/cli/start.js");
+
+    await startModule.startAegis(root, {}, {
+      verifyTracker: () => undefined,
+      verifyGitRepo: () => undefined,
+      probeBeadsCli: () => ({
+        ok: true,
+        detail: "Beads CLI is available.",
+      }),
+      registerSignalHandlers: false,
+      runDaemonCycle,
+    });
+
+    expect(readRuntimeState(root)).toMatchObject({
+      server_state: "stopped",
+      mode: "paused",
+      last_stop_reason: "provider_usage_limit",
+    });
+
+    await vi.advanceTimersByTimeAsync(1_100);
+    expect(runDaemonCycle).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps daemon merge pass active across Janus requeue and fail-closed outcomes", async () => {
     vi.useFakeTimers();
     const root = createTempRoot();
