@@ -216,6 +216,61 @@ export function replaceDispatchRecord(
   };
 }
 
+function resolveStoppedStage(record: DispatchRecord): DispatchStage {
+  if (record.stage === "scouting") {
+    return "pending";
+  }
+
+  if (record.stage === "implementing") {
+    return "scouted";
+  }
+
+  if (record.stage === "reviewing") {
+    return "implemented";
+  }
+
+  if (record.stage === "merging" || record.stage === "resolving_integration") {
+    return "queued_for_merge";
+  }
+
+  return record.stage;
+}
+
+export function releaseStoppedRunningRecords(
+  state: DispatchState,
+  sessionProvenanceId: string,
+  timestamp = new Date().toISOString(),
+): DispatchState {
+  let changed = false;
+  const records = Object.fromEntries(
+    Object.entries(state.records).map(([issueId, record]) => {
+      if (!record.runningAgent) {
+        return [issueId, { ...record }];
+      }
+
+      changed = true;
+      return [issueId, {
+        ...record,
+        stage: resolveStoppedStage(record),
+        runningAgent: null,
+        cooldownUntil: null,
+        sessionProvenanceId,
+        updatedAt: timestamp,
+      }];
+    }),
+  );
+
+  return changed
+    ? {
+        schemaVersion: state.schemaVersion,
+        records,
+      }
+    : {
+        schemaVersion: state.schemaVersion,
+        records,
+      };
+}
+
 export function activeTitanScopes(state: DispatchState): Array<{ issueId: string; files: string[] }> {
   const result: Array<{ issueId: string; files: string[] }> = [];
   for (const record of Object.values(state.records)) {

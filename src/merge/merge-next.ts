@@ -12,9 +12,9 @@ import { assertDispatchRecordStage } from "../core/stage-invariants.js";
 import { runCasteCommand } from "../core/caste-runner.js";
 import { createCasteRuntime } from "../runtime/create-caste-runtime.js";
 import type { CasteRuntime } from "../runtime/caste-runtime.js";
-import { BeadsTrackerClient } from "../tracker/beads-tracker.js";
 import type { AegisIssue } from "../tracker/issue-model.js";
 import type { TrackerClient } from "../tracker/tracker.js";
+import { createTrackerClient } from "../tracker/create-tracker.js";
 import {
   findNextQueuedItem,
   loadMergeQueueState,
@@ -254,7 +254,7 @@ function createDefaultExecutor(root: string): MergeExecutor {
 }
 
 function createDefaultTracker(): TrackerLike {
-  return new BeadsTrackerClient();
+  return createTrackerClient() as TrackerLike;
 }
 
 function createDefaultRuntime(root: string, issueId: string): CasteRuntime {

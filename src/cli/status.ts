@@ -1,7 +1,8 @@
 import { isProcessRunning, readRuntimeState } from "./runtime-state.js";
 import { loadDispatchState } from "../core/dispatch-state.js";
 import { hasExhaustedOperationalRetries } from "../core/failure-policy.js";
-import { BeadsTrackerClient } from "../tracker/beads-tracker.js";
+import { createTrackerClient } from "../tracker/create-tracker.js";
+import type { TrackerClient } from "../tracker/tracker.js";
 import { recoverStaleRuntimeState } from "./runtime-recovery.js";
 
 export const STATUS_COMMAND_NAME = "status";
@@ -29,7 +30,7 @@ export interface StatusCommandContract {
 }
 
 export interface GetAegisStatusOptions {
-  tracker?: Pick<BeadsTrackerClient, "listReadyIssues">;
+  tracker?: Pick<TrackerClient, "listReadyIssues">;
   isProcessRunning?: (pid: number) => boolean;
   recoveryProvenanceId?: string;
   now?: string;
@@ -114,7 +115,7 @@ export async function getAegisStatus(
       (record) => isActiveDispatchRecord(record),
     ).length
     : 0;
-  const tracker = options.tracker ?? new BeadsTrackerClient();
+  const tracker = options.tracker ?? createTrackerClient();
   let queueDepth = 0;
 
   try {

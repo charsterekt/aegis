@@ -1,12 +1,14 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
+import { AgoraStore, type AgoraKind } from "../../packages/agora/dist/index.js";
 import { createCasteConfig } from "../config/caste-config.js";
 import { DEFAULT_AEGIS_CONFIG } from "../config/defaults.js";
 import { initProject } from "../config/init-project.js";
 import { resolveProjectRelativePath } from "../config/load-config.js";
+import { AgoraTrackerClient } from "../tracker/agora-tracker.js";
 import { resolveDefaultMockWorkspaceRoot } from "./mock-paths.js";
 import { TODO_MOCK_RUN_MANIFEST } from "./todo-manifest.js";
 import type { MockRunIssueDefinition } from "./types.js";
@@ -15,6 +17,8 @@ export interface SeedMockRunOptions {
   workspaceRoot?: string;
   repoName?: string;
   beadsPrefix?: string;
+  runtime?: "pi" | "scripted" | "codex";
+  modelReference?: string;
 }
 
 export interface SeedMockRunResult {
@@ -24,27 +28,12 @@ export interface SeedMockRunResult {
   initialReadyKeys: string[];
 }
 
-export interface MockRunBdSupport {
-  supported: boolean;
-  reason: string;
-}
-
 export const MOCK_RUN_LABOR_BASE_PATH = ".aegis/labors";
-const MOCK_RUN_MODEL_REFERENCE = "openai-codex:gpt-5.4-mini";
+const MOCK_RUN_CODEX_MODEL_REFERENCE = "openai-codex:gpt-5.4-mini";
+const MOCK_RUN_PI_MODEL_REFERENCE = "github-copilot:gpt-5.4-mini";
 const MOCK_RUN_THINKING_LEVEL = "medium";
-const MOCK_RUN_STUCK_WARNING_SECONDS = 240;
-const MOCK_RUN_STUCK_KILL_SECONDS = 600;
-
-interface BdIssueRecord {
-  id: string;
-  title: string;
-}
-
-interface BdInitHelpProbeResult {
-  found: boolean;
-  status: number | null;
-  output: string;
-}
+const MOCK_RUN_STUCK_WARNING_SECONDS = 420;
+const MOCK_RUN_STUCK_KILL_SECONDS = 1_200;
 
 function sleepMs(milliseconds: number) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
@@ -80,81 +69,6 @@ function run(command: string, args: string[], cwd: string): string {
   }).trim();
 }
 
-function runGlobalBd(args: string[]): string {
-  return run("bd", args, process.cwd());
-}
-
-function defaultBdInitHelpProbe(): BdInitHelpProbeResult {
-  const result = spawnSync("bd", ["init", "--help"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
-
-  const errorCode =
-    result.error && "code" in result.error ? String(result.error.code) : null;
-
-  if (errorCode === "ENOENT") {
-    return {
-      found: false,
-      status: null,
-      output: "",
-    };
-  }
-
-  return {
-    found: !result.error,
-    status: result.status ?? null,
-    output: `${result.stdout ?? ""}${result.stderr ?? ""}`,
-  };
-}
-
-export function getMockRunBdSupport(
-  probe: () => BdInitHelpProbeResult = defaultBdInitHelpProbe,
-): MockRunBdSupport {
-  const result = probe();
-
-  if (!result.found) {
-    return {
-      supported: false,
-      reason: "bd CLI not found on PATH",
-    };
-  }
-
-  if (result.status !== 0) {
-    return {
-      supported: false,
-      reason: "bd init --help failed",
-    };
-  }
-
-  const missingFlags = ["--shared-server", "--skip-agents"].filter(
-    (flag) => !result.output.includes(flag),
-  );
-
-  if (missingFlags.length > 0) {
-    return {
-      supported: false,
-      reason: `bd CLI is missing required init flags: ${missingFlags.join(", ")}`,
-    };
-  }
-
-  return {
-    supported: true,
-    reason: "compatible",
-  };
-}
-
-function parseBdIssue(raw: string): BdIssueRecord {
-  const parsed = JSON.parse(raw) as BdIssueRecord | BdIssueRecord[];
-  return Array.isArray(parsed) ? parsed[0]! : parsed;
-}
-
-function parseBdReady(raw: string): BdIssueRecord[] {
-  const parsed = JSON.parse(raw) as BdIssueRecord[];
-  return Array.isArray(parsed) ? parsed : [];
-}
-
 function normalizeMockScopeFile(candidate: string) {
   return candidate.replace(/\\/g, "/").replace(/^\.\//, "").trim();
 }
@@ -177,20 +91,28 @@ export function formatMockRunIssueDescription(issue: MockRunIssueDefinition) {
 }
 
 function createDatabaseName(prefix: string) {
-  return `${prefix}-${Date.now().toString(36)}`;
+  void prefix;
+  return "agora";
 }
 
 export function buildMockRunConfig(options?: {
   uncapped?: boolean;
-  runtime?: "pi" | "scripted";
+  runtime?: "pi" | "scripted" | "codex";
+  modelReference?: string;
 }) {
   const uncapped = options?.uncapped ?? true;
   const runtime = options?.runtime ?? "scripted";
+  const modelReference = options?.modelReference
+    ?? (runtime === "pi" ? MOCK_RUN_PI_MODEL_REFERENCE : MOCK_RUN_CODEX_MODEL_REFERENCE);
+
+  if (runtime === "pi" && !modelReference.startsWith("github-copilot:")) {
+    throw new Error(`Pi mock proof must use GitHub Copilot provider, got ${modelReference}.`);
+  }
 
   const baseConfig = {
     ...DEFAULT_AEGIS_CONFIG,
     runtime,
-    models: createCasteConfig(() => MOCK_RUN_MODEL_REFERENCE),
+    models: createCasteConfig(() => modelReference),
     thinking: createCasteConfig(() => MOCK_RUN_THINKING_LEVEL),
     thresholds: {
       ...DEFAULT_AEGIS_CONFIG.thresholds,
@@ -234,52 +156,57 @@ function assertExpectedReadyQueue(actualKeys: string[], expectedKeys: readonly s
   }
 }
 
-function createIssue(
-  repoRoot: string,
+function toAgoraKind(issue: MockRunIssueDefinition): AgoraKind {
+  if (issue.queueRole === "coordination") {
+    return "task";
+  }
+
+  return issue.issueType === "task" ? "task" : "feature";
+}
+
+function seedAgoraIssue(
+  store: AgoraStore,
   issue: MockRunIssueDefinition,
   issueIdByKey: Record<string, string>,
 ): string {
-  const args = [
-    "create",
-    "--title",
-    issue.title,
-    "--description",
-    formatMockRunIssueDescription(issue),
-    "--type",
-    issue.issueType,
-    "--priority",
-    String(issue.priority),
-    "--labels",
-    issue.labels.join(","),
-    "--json",
+  const blockedBy = issue.blocks.map((key) => {
+    const blockerId = issueIdByKey[key];
+    if (!blockerId) {
+      throw new Error(`Mock issue "${issue.key}" depends on unknown key "${key}".`);
+    }
+
+    return blockerId;
+  });
+  const parent = issue.parentKey ? issueIdByKey[issue.parentKey] ?? null : null;
+  if (issue.parentKey && !parent) {
+    throw new Error(`Mock issue "${issue.key}" parent "${issue.parentKey}" is unknown.`);
+  }
+  const labels = [
+    ...issue.labels,
+    `key:${issue.key}`,
+    `priority:${issue.priority}`,
+    `role:${issue.queueRole}`,
   ];
-
-  if (issue.parentKey) {
-    args.splice(args.length - 1, 0, "--parent", issueIdByKey[issue.parentKey]!);
-  }
-
-  const created = parseBdIssue(run("bd", args, repoRoot));
-  issueIdByKey[issue.key] = created.id;
-
-  for (const blockerKey of issue.blocks) {
-    run("bd", ["link", created.id, issueIdByKey[blockerKey]!, "--type", "blocks"], repoRoot);
-  }
-
-  if (issue.queueRole === "coordination") {
-    run("bd", ["update", created.id, "--status", "blocked", "--json"], repoRoot);
-  }
-
-  return created.id;
+  const ticket = store.createTicket({
+    title: issue.title,
+    body: formatMockRunIssueDescription(issue),
+    kind: toAgoraKind(issue),
+    column: issue.queueRole === "coordination"
+      ? "backlog"
+      : blockedBy.length === 0
+        ? "ready"
+        : "blocked",
+    parent,
+    blockedBy,
+    scope: issue.fileScope ?? [],
+    labels,
+    actor: "seed",
+  });
+  issueIdByKey[issue.key] = ticket.id;
+  return ticket.id;
 }
 
 export async function seedMockRun(options: SeedMockRunOptions = {}): Promise<SeedMockRunResult> {
-  const bdSupport = getMockRunBdSupport();
-  if (!bdSupport.supported) {
-    throw new Error(
-      `seedMockRun requires a compatible bd CLI with --shared-server and --skip-agents support: ${bdSupport.reason}`,
-    );
-  }
-
   const workspaceRoot = path.resolve(options.workspaceRoot ?? resolveDefaultMockWorkspaceRoot());
   const repoName = options.repoName ?? TODO_MOCK_RUN_MANIFEST.repoName;
   const beadsPrefix = options.beadsPrefix ?? TODO_MOCK_RUN_MANIFEST.beadsPrefix;
@@ -292,27 +219,12 @@ export async function seedMockRun(options: SeedMockRunOptions = {}): Promise<See
   run("git", ["init"], repoRoot);
   run("git", ["config", "user.email", "mock-run@aegis.local"], repoRoot);
   run("git", ["config", "user.name", "Aegis Mock Run"], repoRoot);
-  runGlobalBd(["dolt", "start"]);
-  run(
-    "bd",
-    [
-      "init",
-      "-p",
-      beadsPrefix,
-      "--server",
-      "--shared-server",
-      "--server-port",
-      "3308",
-      "--database",
-      databaseName,
-      "--skip-hooks",
-      "--skip-agents",
-    ],
-    repoRoot,
-  );
   initProject(repoRoot);
 
-  const mockRunConfig = buildMockRunConfig();
+  const mockRunConfig = buildMockRunConfig({
+    runtime: options.runtime,
+    modelReference: options.modelReference,
+  });
 
   writeFileSync(
     resolveProjectRelativePath(repoRoot, ".aegis/config.json"),
@@ -321,15 +233,18 @@ export async function seedMockRun(options: SeedMockRunOptions = {}): Promise<See
   );
 
   const issueIdByKey: Record<string, string> = {};
+  const store = new AgoraStore({ root: repoRoot });
+  store.init("seed");
   for (const issue of TODO_MOCK_RUN_MANIFEST.issues) {
-    createIssue(repoRoot, issue, issueIdByKey);
+    seedAgoraIssue(store, issue, issueIdByKey);
   }
 
   run("git", ["add", "--all"], repoRoot);
   run("git", ["commit", "-m", "mock baseline"], repoRoot);
   run("git", ["branch", "-M", "main"], repoRoot);
 
-  const initialReady = parseBdReady(run("bd", ["ready", "--json"], repoRoot));
+  const tracker = new AgoraTrackerClient();
+  const initialReady = await tracker.listReadyIssues(repoRoot);
   const initialReadyKeys = initialReady.map((readyIssue) => {
     const match = Object.entries(issueIdByKey).find(([, issueId]) => issueId === readyIssue.id);
     return match?.[0] ?? readyIssue.id;
@@ -353,7 +268,14 @@ function isDirectExecution(entryPoint = process.argv[1]): boolean {
 }
 
 if (isDirectExecution()) {
-  seedMockRun().then(
+  const runtime = process.env.AEGIS_MOCK_RUN_RUNTIME;
+  const modelReference = process.env.AEGIS_MOCK_RUN_MODEL_REFERENCE;
+  seedMockRun({
+    runtime: runtime === "pi" || runtime === "scripted" || runtime === "codex"
+      ? runtime
+      : undefined,
+    modelReference,
+  }).then(
     (result) => {
       console.log(`Mock repo seeded at ${result.repoRoot}`);
     },

@@ -9,6 +9,7 @@ import { runCasteCommand as defaultRunCasteCommand } from "../core/caste-runner.
 import { runDaemonCycle as defaultRunDaemonCycle, runLoopPhase } from "../core/loop-runner.js";
 import {
   loadDispatchState,
+  releaseStoppedRunningRecords,
   reconcileDispatchState,
   saveDispatchState,
 } from "../core/dispatch-state.js";
@@ -17,7 +18,7 @@ import {
   RUNTIME_STATE_FILES,
   type AegisConfig,
 } from "../config/schema.js";
-import { BeadsTrackerClient } from "../tracker/beads-tracker.js";
+import { createTrackerClient } from "../tracker/create-tracker.js";
 import {
   clearRuntimeCommandArtifacts,
   clearRuntimeCommandRequest,
@@ -156,38 +157,9 @@ function toErrorMessage(error: unknown) {
 }
 
 function probeBeadsCli(): StartupPreflightProbeResult {
-  const trackerProbe = spawnSync("bd", ["--help"], {
-    encoding: "utf8",
-    windowsHide: true,
-  });
-  const errorCode =
-    trackerProbe.error && "code" in trackerProbe.error
-      ? String(trackerProbe.error.code)
-      : null;
-
-  if (errorCode === "ENOENT") {
-    return {
-      ok: false,
-      detail: "Beads CLI was not found. Install or fix `bd` before starting Aegis.",
-      fix: "install the `bd` CLI and ensure it is available on PATH",
-    };
-  }
-
-  if (trackerProbe.status !== 0) {
-    const detail = (trackerProbe.stderr ?? trackerProbe.stdout ?? "").trim();
-
-    return {
-      ok: false,
-      detail: detail.length > 0
-        ? `Beads CLI did not execute cleanly. Details: ${detail}`
-        : "Beads CLI did not execute cleanly.",
-      fix: "run `bd --help` and fix the local Beads installation before starting Aegis",
-    };
-  }
-
   return {
     ok: true,
-    detail: "Beads CLI is available.",
+    detail: "Agora tracker backend is available.",
   };
 }
 
@@ -195,6 +167,14 @@ function probeBeadsRepository(
   root: string,
   probe: TrackerProbe = runTrackerProbe,
 ): StartupPreflightProbeResult {
+  if (process.env.AEGIS_TRACKER_BACKEND !== "beads" && probe === runTrackerProbe) {
+    void probe;
+    return {
+      ok: true,
+      detail: "Agora tracker is available for this repository.",
+    };
+  }
+
   const trackerProbe = probe(root);
   const errorCode =
     trackerProbe.error && "code" in trackerProbe.error
@@ -443,7 +423,7 @@ export async function startAegis(
     const probe = probeBeadsRepository(candidateRoot);
 
     if (!probe.ok) {
-      throw new Error(probe.detail ?? "Beads repository check failed.");
+      throw new Error(probe.detail ?? "Tracker repository check failed.");
     }
   });
   const verifyGitRepo = options.verifyGitRepo ?? (() => {
@@ -463,13 +443,13 @@ export async function startAegis(
         verifyTracker(repoRoot);
         return {
           ok: true,
-          detail: "Beads tracker is initialized.",
+          detail: "Tracker repository is initialized.",
         };
       } catch (error) {
         return {
           ok: false,
           detail: toErrorMessage(error),
-          fix: "run `bd init` or `bd onboard` in this repository",
+          fix: "initialize the configured tracker for this repository",
         };
       }
     },
@@ -517,7 +497,7 @@ export async function startAegis(
       root: candidateRoot,
       action,
       issueId,
-      tracker: new BeadsTrackerClient(),
+      tracker: createTrackerClient(),
       runtime: createCasteRuntime(loadConfig(candidateRoot).runtime, {}, {
         root: candidateRoot,
         issueId,
@@ -570,6 +550,13 @@ export async function startAegis(
           `Daemon stopped: ${reason}.`,
         );
       }
+      saveDispatchState(
+        repoRoot,
+        releaseStoppedRunningRecords(
+          loadDispatchState(repoRoot),
+          String(process.pid),
+        ),
+      );
       runningState = toStoppedRuntimeState(runningState, reason);
       writeRuntimeState(runningState, repoRoot);
       appendDaemonLog(repoRoot, `[daemon][stop] reason=${reason}`);

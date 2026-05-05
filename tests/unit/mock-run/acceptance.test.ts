@@ -49,6 +49,35 @@ afterEach(() => {
   }
 });
 
+function createFinalAppVerification() {
+  return {
+    status: "passed" as const,
+    verifiedAt: "2026-04-16T00:10:00.000Z",
+    commands: [
+      {
+        command: "npm.cmd run lint",
+        exitCode: 0,
+        durationMs: 10,
+      },
+      {
+        command: "npm.cmd run build",
+        exitCode: 0,
+        durationMs: 20,
+      },
+      {
+        command: "npm.cmd test",
+        exitCode: 0,
+        durationMs: 30,
+      },
+      {
+        command: "npm.cmd run smoke",
+        exitCode: 0,
+        durationMs: 40,
+      },
+    ],
+  };
+}
+
 describe("runMockAcceptance", () => {
   it("drives seeded mock-run through daemon auto mode and ready-queue waiting", async () => {
     const sequence: string[] = [];
@@ -73,7 +102,16 @@ describe("runMockAcceptance", () => {
       sequence.push(args.slice(2).join(" "));
       commandEnvSnapshots.push(process.env.AEGIS_SCRIPTED_MERGE_PLAN);
     });
+    const verifyFinalApp = vi.fn(async () => {
+      sequence.push("verify app");
+      return createFinalAppVerification();
+    });
     const surfaceCollector = vi.fn(async (): Promise<MockAcceptanceSurface> => ({
+      config: {
+        runtime: "scripted",
+        models: DEFAULT_AEGIS_CONFIG.models,
+        fingerprint: "test-fingerprint",
+      },
       runtimeState: {
         schema_version: 1 as const,
         pid: 4242,
@@ -187,6 +225,7 @@ describe("runMockAcceptance", () => {
           recommendedNextAction: null,
         },
       },
+      finalAppVerification: createFinalAppVerification(),
     }));
 
     await runMockAcceptance({
@@ -195,6 +234,7 @@ describe("runMockAcceptance", () => {
       runMockCommand,
       collectMockAcceptanceSurface: surfaceCollector,
       waitForMockAcceptanceProgress: waitForProgress,
+      verifyFinalApp,
       now: "2026-04-16T00:00:00.000Z",
     });
 
@@ -209,61 +249,9 @@ describe("runMockAcceptance", () => {
       "wait",
       "stop",
       "status",
+      "verify app",
     ]);
-    expect(commandEnvSnapshots).toEqual([
-      JSON.stringify({
-        rules: [
-          {
-            issueId: "issue-janus",
-            candidateBranch: "aegis/issue-janus",
-            outcomes: [
-              { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-              { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-              { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-            ],
-          },
-        ],
-      }),
-      JSON.stringify({
-        rules: [
-          {
-            issueId: "issue-janus",
-            candidateBranch: "aegis/issue-janus",
-            outcomes: [
-              { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-              { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-              { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-            ],
-          },
-        ],
-      }),
-      JSON.stringify({
-        rules: [
-          {
-            issueId: "issue-janus",
-            candidateBranch: "aegis/issue-janus",
-            outcomes: [
-              { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-              { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-              { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-            ],
-          },
-        ],
-      }),
-      JSON.stringify({
-        rules: [
-          {
-            issueId: "issue-janus",
-            candidateBranch: "aegis/issue-janus",
-            outcomes: [
-              { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-              { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-              { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-            ],
-          },
-        ],
-      }),
-    ]);
+    expect(commandEnvSnapshots).toEqual([undefined, undefined, undefined, undefined]);
     expect(waitForProgress).toHaveBeenCalledWith("/repo", {
       happyIssueId: "issue-happy",
       janusIssueId: "issue-janus",
@@ -273,6 +261,7 @@ describe("runMockAcceptance", () => {
       janusIssueId: "issue-janus",
       tracker: expect.any(Object),
     });
+    expect(verifyFinalApp).toHaveBeenCalledWith("/repo");
   });
 });
 
@@ -642,6 +631,11 @@ describe("collectMockAcceptanceSurface", () => {
       action: "finalize_session",
       outcome: "scouted",
     });
+    writeFileSync(
+      path.join(root, ".aegis", "final-app-verification.json"),
+      `${JSON.stringify(createFinalAppVerification(), null, 2)}\n`,
+      "utf8",
+    );
 
     const surface = await collectMockAcceptanceSurface(root, {
       happyIssueId: "issue-happy",
@@ -662,6 +656,8 @@ describe("collectMockAcceptanceSurface", () => {
       },
     });
 
+    expect(surface.config.runtime).toBe("scripted");
+    expect(surface.config.fingerprint).toHaveLength(16);
     expect(surface.runtimeState.server_state).toBe("stopped");
     expect(surface.dispatch.happy.stage).toBe("complete");
     expect(surface.dispatch.happy.oracleAssessmentRef).toBe(".aegis/oracle/issue-happy.json");
@@ -682,10 +678,21 @@ describe("collectMockAcceptanceSurface", () => {
     expect(surface.labor.janus.janusArtifactExists).toBe(true);
     expect(surface.labor.janus.preservedLaborPathExists).toBe(true);
     expect(surface.labor.janus.recommendedNextAction).toBe("requeue_parent");
+    expect(surface.finalAppVerification.commands.map((command) => command.command)).toEqual([
+      "npm.cmd run lint",
+      "npm.cmd run build",
+      "npm.cmd test",
+      "npm.cmd run smoke",
+    ]);
   });
 
   it("accepts the Janus integration-blocker proof path when the queue item is failed", () => {
     const surface: MockAcceptanceSurface = {
+      config: {
+        runtime: "scripted",
+        models: DEFAULT_AEGIS_CONFIG.models,
+        fingerprint: "test-fingerprint",
+      },
       runtimeState: {
         schema_version: 1,
         pid: 4242,
@@ -799,8 +806,129 @@ describe("collectMockAcceptanceSurface", () => {
           recommendedNextAction: "create_integration_blocker",
         },
       },
+      finalAppVerification: createFinalAppVerification(),
     };
 
     expect(() => assertMockAcceptanceSurface(surface)).not.toThrow();
+  });
+
+  it("rejects Pi proof surfaces that use Codex provider model refs", () => {
+    const surface: MockAcceptanceSurface = {
+      config: {
+        runtime: "pi",
+        models: DEFAULT_AEGIS_CONFIG.models,
+        fingerprint: "test-fingerprint",
+      },
+      runtimeState: {
+        schema_version: 1,
+        pid: 4242,
+        server_state: "stopped",
+        mode: "auto",
+        started_at: "2026-04-16T00:00:00.000Z",
+        stopped_at: "2026-04-16T00:10:00.000Z",
+        last_stop_reason: "manual stop",
+      },
+      dispatch: {
+        happy: {
+          stage: "complete",
+          oracleAssessmentRef: ".aegis/oracle/issue-happy.json",
+          titanHandoffRef: ".aegis/titan/issue-happy.json",
+          sentinelVerdictRef: ".aegis/sentinel/issue-happy.json",
+          janusArtifactRef: null,
+        },
+        janus: {
+          stage: "complete",
+          oracleAssessmentRef: ".aegis/oracle/issue-janus.json",
+          titanHandoffRef: ".aegis/titan/issue-janus.json",
+          sentinelVerdictRef: ".aegis/sentinel/issue-janus.json",
+          janusArtifactRef: ".aegis/janus/issue-janus.json",
+        },
+      },
+      mergeQueue: {
+        happy: {
+          status: "merged",
+          attempts: 0,
+          janusInvocations: 0,
+          lastTier: "T1",
+        },
+        janus: {
+          status: "merged",
+          attempts: 3,
+          janusInvocations: 1,
+          lastTier: "T3",
+        },
+      },
+      trackerIssues: {
+        happy: {
+          id: "issue-happy",
+          title: "Happy",
+          status: "closed",
+        },
+        janus: {
+          id: "issue-janus",
+          title: "Janus",
+          status: "closed",
+        },
+      },
+      phaseLogs: [
+        {
+          phase: "poll",
+          issueId: "_all",
+          action: "poll_ready_work",
+          outcome: "ok",
+          detail: "issue-happy,issue-janus",
+          timestamp: "2026-04-16T00:00:00.000Z",
+        },
+        {
+          phase: "dispatch",
+          issueId: "issue-happy",
+          action: "launch_oracle",
+          outcome: "running",
+          detail: null,
+          timestamp: "2026-04-16T00:00:01.000Z",
+        },
+        {
+          phase: "monitor",
+          issueId: "issue-happy",
+          action: "watch_session",
+          outcome: "ok",
+          detail: null,
+          timestamp: "2026-04-16T00:00:02.000Z",
+        },
+        {
+          phase: "reap",
+          issueId: "issue-happy",
+          action: "finalize_session",
+          outcome: "complete",
+          detail: null,
+          timestamp: "2026-04-16T00:00:03.000Z",
+        },
+      ],
+      labor: {
+        happy: {
+          queueLaborPath: ".aegis/labors/labor-issue-happy",
+          queueLaborPathExists: true,
+          preservedLaborPath: null,
+          preservedLaborPathExists: false,
+          janusArtifactRef: null,
+          janusArtifactExists: false,
+          recommendedNextAction: null,
+        },
+        janus: {
+          queueLaborPath: ".aegis/labors/labor-issue-janus",
+          queueLaborPathExists: true,
+          preservedLaborPath: "/repo/.aegis/labors/labor-issue-janus",
+          preservedLaborPathExists: true,
+          janusArtifactRef: ".aegis/janus/issue-janus.json",
+          janusArtifactExists: true,
+          recommendedNextAction: null,
+        },
+      },
+      finalAppVerification: createFinalAppVerification(),
+    };
+
+    expect(() => assertMockAcceptanceSurface(surface)).toThrow(
+      "Pi proof must use GitHub Copilot model refs",
+    );
   });
 });

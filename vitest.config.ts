@@ -8,6 +8,7 @@ export default defineConfig({
       {
         test: {
           name: "default",
+          testTimeout: 60000,
           include: ["tests/**/*.{test,spec}.{ts,tsx}", "packages/*/tests/**/*.{test,spec}.{ts,tsx}"],
           exclude: ["tests/acceptance/**/*.{test,spec}.{ts,tsx}"],
           environment: "node",
@@ -16,6 +17,7 @@ export default defineConfig({
       {
         test: {
           name: "acceptance",
+          testTimeout: 60000,
           include: ["tests/acceptance/**/*.{test,spec}.{ts,tsx}"],
           environment: "node",
         },

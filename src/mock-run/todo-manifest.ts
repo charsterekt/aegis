@@ -148,7 +148,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     priority: 1,
     queueRole: "executable",
     parentKey: "core",
-    blocks: ["setup.gate"],
+    blocks: [],
     labels: ["mock-run", "core", "contract"],
   },
   {
@@ -226,7 +226,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     priority: 1,
     queueRole: "executable",
     parentKey: "ui",
-    blocks: ["core.gate"],
+    blocks: [],
     labels: ["mock-run", "ui", "contract"],
   },
   {
@@ -318,13 +318,16 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     priority: 1,
     queueRole: "executable",
     parentKey: "motion",
-    blocks: ["ui.gate"],
+    blocks: [],
     labels: ["mock-run", "motion", "contract"],
   },
   {
     key: "motion.item-animations",
     title: "[motion] Lane A",
-    description: "Implement animated entry/exit/complete transitions for todo items.",
+    description: [
+      "Implement animated entry/exit/complete transitions for todo items.",
+      "If exporting both a React component and an imperative DOM helper, keep React children typed/rendered as ReactNode inside JSX; only the DOM helper may append real DOM Nodes.",
+    ].join("\n"),
     fileScope: ["src/motion/itemMotion.ts", "src/components/AnimatedTodoItem.tsx"],
     issueType: "task",
     priority: 1,
@@ -402,7 +405,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     priority: 1,
     queueRole: "executable",
     parentKey: "release",
-    blocks: ["motion.gate"],
+    blocks: [],
     labels: ["mock-run", "release", "contract"],
   },
   {
@@ -464,7 +467,13 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
   },
 ];
 
-export const TODO_READY_QUEUE_EXPECTATION = ["setup.contract"] as const;
+export const TODO_READY_QUEUE_EXPECTATION = [
+  "setup.contract",
+  "core.contract",
+  "ui.contract",
+  "motion.contract",
+  "release.contract",
+] as const;
 
 export const TODO_MOCK_RUN_MANIFEST: MockRunManifest = {
   repoName: "aegis-mock-run",

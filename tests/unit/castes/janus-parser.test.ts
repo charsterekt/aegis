@@ -55,20 +55,26 @@ describe("parseJanusResolutionArtifact", () => {
     });
   });
 
-  it("rejects old recommendedNextAction control field", () => {
-    expect(() =>
+  it("translates legacy recommendedNextAction requeue into a mutation proposal", () => {
+    expect(
       parseJanusResolutionArtifact(JSON.stringify({
         originatingIssueId: "aegis-123",
         queueItemId: "queue-1",
         preservedLaborPath: "labor",
-        conflictSummary: "resolved",
+        conflictSummary: "resolved in parent scope",
         resolutionStrategy: "strategy",
-        filesTouched: [],
+        filesTouched: ["src/App.tsx"],
         validationsRun: [],
         residualRisks: [],
-        recommendedNextAction: "requeue",
+        recommendedNextAction: "Commit owned-file resolution and requeue parent.",
       })),
-    ).toThrow(/unexpected field/i);
+    ).toMatchObject({
+      mutation_proposal: {
+        proposal_type: "requeue_parent",
+        summary: "resolved in parent scope",
+        scope_evidence: ["src/App.tsx"],
+      },
+    });
   });
 
   it("rejects unexpected keys", () => {

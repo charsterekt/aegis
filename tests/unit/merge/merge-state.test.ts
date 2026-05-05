@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   emptyMergeQueueState,
+  enqueueMergeCandidate,
   loadMergeQueueState,
   saveMergeQueueState,
 } from "../../../src/merge/merge-state.js";
@@ -45,6 +46,44 @@ describe("merge queue state", () => {
     )).toEqual({
       schemaVersion: 1,
       items: [],
+    });
+  });
+
+  it("resets retry state when a failed issue is re-enqueued after implementation rework", () => {
+    const state = {
+      schemaVersion: 1 as const,
+      items: [
+        {
+          queueItemId: "queue-AG-0016",
+          issueId: "AG-0016",
+          candidateBranch: "aegis/AG-0016",
+          targetBranch: "main",
+          laborPath: ".aegis/labors/AG-0016",
+          status: "failed" as const,
+          attempts: 11,
+          janusInvocations: 1,
+          lastTier: "T3" as const,
+          lastError: "merge conflict",
+          enqueuedAt: "2026-05-02T22:16:47.291Z",
+          updatedAt: "2026-05-02T22:25:55.674Z",
+        },
+      ],
+    };
+
+    const queued = enqueueMergeCandidate(state, {
+      issueId: "AG-0016",
+      candidateBranch: "aegis/AG-0016",
+      targetBranch: "main",
+      laborPath: ".aegis/labors/AG-0016",
+      now: "2026-05-02T22:30:00.000Z",
+    });
+
+    expect(queued.item).toMatchObject({
+      status: "queued",
+      attempts: 0,
+      janusInvocations: 0,
+      lastTier: null,
+      lastError: null,
     });
   });
 });

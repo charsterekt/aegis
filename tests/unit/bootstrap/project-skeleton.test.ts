@@ -49,14 +49,14 @@ describe("S00 project skeleton contract", () => {
     expect(packageJson.bin.aegis).toBe("dist/index.js");
     expect(packageJson.files).toEqual(["dist"]);
     expect(packageJson.workspaces).toBeUndefined();
-    expect(scripts.build).toBe("npm run build:node && npm run build:agora");
+    expect(scripts.build).toBe("npm run build:agora && npm run build:node");
     expect(scripts["build:node"]).toContain("tsc --project tsconfig.json");
     expect(scripts["build:agora"]).toContain("tsc --project packages/agora/tsconfig.json");
     expect(scripts.dev).toBe("tsx src/index.ts");
     expect(scripts.start).toBe("node dist/index.js");
-    expect(scripts.test).toBe("vitest run --config vitest.config.ts --project default");
+    expect(scripts.test).toBe("npm run build:agora && vitest run --config vitest.config.ts --project default");
     expect(scripts["test:acceptance"]).toBe("vitest run --config vitest.config.ts --project acceptance");
-    expect(scripts.lint).toBe("tsc --project tsconfig.tests.json --noEmit && tsc --project packages/agora/tsconfig.json --noEmit");
+    expect(scripts.lint).toBe("npm run build:agora && tsc --project tsconfig.tests.json --noEmit && tsc --project packages/agora/tsconfig.json --noEmit");
     expect(scripts["build:olympus"]).toBeUndefined();
     expect(scripts["build:all"]).toBeUndefined();
     expect(scripts.prepack).toBe("npm run build");

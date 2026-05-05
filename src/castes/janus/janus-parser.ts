@@ -30,6 +30,7 @@ const JANUS_ARTIFACT_KEYS = new Set([
   "validationsRun",
   "residualRisks",
   "mutation_proposal",
+  "recommendedNextAction",
 ]);
 
 function assertPlainObject(value: unknown): Record<string, unknown> {
@@ -97,6 +98,25 @@ function assertJanusMutationProposal(value: unknown): JanusMutationProposal {
   return proposal;
 }
 
+function legacyRecommendedActionToMutationProposal(obj: Record<string, unknown>): JanusMutationProposal | null {
+  if (!("recommendedNextAction" in obj) || "mutation_proposal" in obj) {
+    return null;
+  }
+
+  const action = assertString(obj["recommendedNextAction"], "recommendedNextAction").toLowerCase();
+  if (!action.includes("requeue") && !action.includes("re-run") && !action.includes("rerun")) {
+    throw new Error(
+      "Janus legacy recommendedNextAction can only be translated when it recommends requeue_parent.",
+    );
+  }
+
+  return {
+    proposal_type: "requeue_parent",
+    summary: assertString(obj["conflictSummary"], "conflictSummary"),
+    scope_evidence: assertStringArray(obj["filesTouched"], "filesTouched"),
+  };
+}
+
 export function parseJanusResolutionArtifact(raw: string): JanusResolutionArtifact {
   const parsed = JSON.parse(raw) as unknown;
   const obj = assertPlainObject(parsed);
@@ -116,11 +136,16 @@ export function parseJanusResolutionArtifact(raw: string): JanusResolutionArtifa
     "filesTouched",
     "validationsRun",
     "residualRisks",
-    "mutation_proposal",
   ]) {
     if (!(field in obj)) {
       throw new Error(`Janus resolution artifact is missing required field '${field}'.`);
     }
+  }
+  const mutationProposal = "mutation_proposal" in obj
+    ? assertJanusMutationProposal(obj["mutation_proposal"])
+    : legacyRecommendedActionToMutationProposal(obj);
+  if (!mutationProposal) {
+    throw new Error("Janus resolution artifact is missing required field 'mutation_proposal'.");
   }
 
   return {
@@ -132,6 +157,6 @@ export function parseJanusResolutionArtifact(raw: string): JanusResolutionArtifa
     filesTouched: assertStringArray(obj["filesTouched"], "filesTouched"),
     validationsRun: assertStringArray(obj["validationsRun"], "validationsRun"),
     residualRisks: assertStringArray(obj["residualRisks"], "residualRisks"),
-    mutation_proposal: assertJanusMutationProposal(obj["mutation_proposal"]),
+    mutation_proposal: mutationProposal,
   };
 }

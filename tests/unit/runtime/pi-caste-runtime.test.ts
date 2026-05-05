@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -487,7 +487,7 @@ describe("PiCasteRuntime", () => {
     expect(result.error).toBe("Pi sentinel session timed out after 5ms.");
   });
 
-  it("defaults oracle sessions to a five-minute timeout budget", async () => {
+  it("defaults oracle sessions to a ten-minute timeout budget", async () => {
     vi.useFakeTimers();
     try {
       mockedAgent.session.prompt.mockImplementation(async () => {
@@ -508,11 +508,42 @@ describe("PiCasteRuntime", () => {
         prompt: "Scout default-timeout",
       });
 
-      await vi.advanceTimersByTimeAsync(300_000);
+      await vi.advanceTimersByTimeAsync(600_000);
       const result = await resultPromise;
 
       expect(result.status).toBe("failed");
-      expect(result.error).toBe("Pi oracle session timed out after 300000ms.");
+      expect(result.error).toBe("Pi oracle session timed out after 600000ms.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("defaults titan sessions to a fifteen-minute timeout budget", async () => {
+    vi.useFakeTimers();
+    try {
+      mockedAgent.session.prompt.mockImplementation(async () => {
+        // Simulate provider/session hang: no events emitted.
+      });
+
+      const runtime = new PiCasteRuntime({
+        titan: createModelConfig("titan"),
+      }, {
+        timeoutRetryCount: 0,
+      });
+
+      const resultPromise = runtime.run({
+        caste: "titan",
+        issueId: "aegis-default-titan-timeout",
+        root: "repo",
+        workingDirectory: "repo",
+        prompt: "Implement default-timeout",
+      });
+
+      await vi.advanceTimersByTimeAsync(900_000);
+      const result = await resultPromise;
+
+      expect(result.status).toBe("failed");
+      expect(result.error).toBe("Pi titan session timed out after 900000ms.");
     } finally {
       vi.useRealTimers();
     }
@@ -992,6 +1023,62 @@ describe("PiCasteRuntime", () => {
       );
     } finally {
       rmSync(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("forces hidden Titan bash execution to stay in the labor working directory", async () => {
+    const fixture = CONTRACT_FIXTURES.find((candidate) => candidate.caste === "titan");
+    if (!fixture) {
+      throw new Error("Missing titan fixture.");
+    }
+
+    const root = mkdtempSync(path.join(tmpdir(), "aegis-pi-root-"));
+    const workingDirectory = path.join(root, ".aegis", "labors", "AG-0004");
+    mkdirSync(workingDirectory, { recursive: true });
+    try {
+      configureToolSuccess(fixture);
+      const runtime = createSingleCasteRuntime("titan");
+
+      await runtime.run({
+        caste: "titan",
+        issueId: "AG-0004",
+        root,
+        workingDirectory,
+        prompt: "Allowed file scope: package.json, package-lock.json",
+      });
+
+      const bashToolCall = mockedAgent.createBashTool.mock.calls.at(-1) as
+        | [string, unknown]
+        | undefined;
+      const bashToolOptions = bashToolCall?.[1] as
+        | {
+          operations?: {
+            exec?: (
+              command: string,
+              cwd: string,
+              options: {
+                onData: (chunk: Buffer) => void;
+                signal?: AbortSignal;
+                timeout?: number;
+                env?: NodeJS.ProcessEnv;
+              },
+            ) => Promise<{ exitCode: number | null }>;
+          };
+        }
+        | undefined;
+      const result = await bashToolOptions?.operations?.exec?.(
+        process.platform === "win32" ? "cd > cwd.txt" : "pwd > cwd.txt",
+        root,
+        {
+          onData: () => undefined,
+        },
+      );
+
+      expect(result?.exitCode).toBe(0);
+      expect(readFileSync(path.join(workingDirectory, "cwd.txt"), "utf8").trim()).toBe(workingDirectory);
+      expect(existsSync(path.join(root, "cwd.txt"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

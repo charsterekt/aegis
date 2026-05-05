@@ -52,12 +52,12 @@ type PiCodingAgentModule = typeof import("@mariozechner/pi-coding-agent");
 const require = createRequire(import.meta.url);
 let childProcessPatched = false;
 let piCodingAgentModulePromise: Promise<PiCodingAgentModule> | null = null;
-const DEFAULT_PI_SESSION_TIMEOUT_MS = 60_000;
+const DEFAULT_PI_SESSION_TIMEOUT_MS = 600_000;
 const DEFAULT_PI_SESSION_TIMEOUT_BY_CASTE: Record<CasteName, number> = {
-  oracle: 300_000,
-  titan: 180_000,
-  sentinel: 180_000,
-  janus: 180_000,
+  oracle: 600_000,
+  titan: 900_000,
+  sentinel: 900_000,
+  janus: 900_000,
 };
 const DEFAULT_PI_TIMEOUT_RETRY_COUNT = 1;
 const DEFAULT_PI_TIMEOUT_RETRY_DELAY_MS = 1_000;
@@ -319,12 +319,22 @@ export function terminateWorkspaceProcesses(
   }
 }
 
-function createHiddenShellBashOperations(): BashOperations {
+function resolveSafeShellCwd(cwd: string, workingDirectory: string) {
+  return isWithinWorkingDirectory(cwd, workingDirectory)
+    ? cwd
+    : workingDirectory;
+}
+
+function createHiddenShellBashOperations(workingDirectory: string): BashOperations {
   return {
     exec: (command, cwd, { onData, signal, timeout, env }) =>
       new Promise((resolve, reject) => {
         const { shell, args } = resolveShellInvocation(command);
-        const child = spawn(shell, args, buildHiddenShellSpawnOptions(cwd, env));
+        const child = spawn(
+          shell,
+          args,
+          buildHiddenShellSpawnOptions(resolveSafeShellCwd(cwd, workingDirectory), env),
+        );
 
         let timeoutHandle: NodeJS.Timeout | undefined;
         let timedOut = false;
@@ -399,13 +409,11 @@ function createHiddenShellBashOperations(): BashOperations {
   };
 }
 
-const HIDDEN_BASH_TOOL_OPTIONS = {
-  operations: createHiddenShellBashOperations(),
-};
-
-const HIDDEN_SHELL_TOOL_OPTIONS = {
-  bash: HIDDEN_BASH_TOOL_OPTIONS,
-};
+function createHiddenBashToolOptions(workingDirectory: string) {
+  return {
+    operations: createHiddenShellBashOperations(workingDirectory),
+  };
+}
 
 const HIDDEN_FIND_OPERATIONS: FindOperations = {
   exists: (absolutePath) => existsSync(absolutePath),
@@ -794,7 +802,7 @@ function resolveTools(
     return [
       wrapTitanFileTool(piCodingAgent.createReadTool(workingDirectory), workingDirectory),
       wrapTitanBashTool(
-        piCodingAgent.createBashTool(workingDirectory, HIDDEN_BASH_TOOL_OPTIONS),
+        piCodingAgent.createBashTool(workingDirectory, createHiddenBashToolOptions(workingDirectory)),
         workingDirectory,
         allowedFileScope,
       ),

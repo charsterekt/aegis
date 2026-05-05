@@ -22,6 +22,7 @@ export interface MutationProposal {
   suggestedDescription?: string;
   dependencyType?: "blocks";
   scopeEvidence: string[];
+  fileScope?: string[];
   fingerprint: string;
 }
 
@@ -42,6 +43,19 @@ export interface ApplyMutationProposalInput {
   now: string;
   existingBlockers?: ExistingBlocker[];
   mode?: "auto" | "manual";
+}
+
+export interface ApplyScopeExpansionInput {
+  root: string;
+  tracker: Pick<TrackerClient, "updateIssueScope">;
+  issueId: string;
+  originCaste: MutationProposalOrigin;
+  findingKind: string;
+  summary: string;
+  previousScope: string[];
+  expandedScope: string[];
+  fingerprint: string;
+  now: string;
 }
 
 export type PolicyRejectionReason =
@@ -287,6 +301,7 @@ function buildCreateIssueInput(proposal: MutationProposal): TrackerCreateIssueIn
       "Scope evidence:",
       ...proposal.scopeEvidence.map((entry) => `- ${entry}`),
     ].join("\n"),
+    fileScope: proposal.fileScope,
   };
 }
 
@@ -370,4 +385,52 @@ export async function applyMutationProposal(
   }, input.root);
 
   return accept(input, "accepted", childIssueId);
+}
+
+export async function applyScopeExpansion(
+  input: ApplyScopeExpansionInput,
+): Promise<{
+  outcome: "expanded";
+  parentStage: "rework_required";
+  fileScope: { files: string[] };
+  policyArtifactRef: string;
+}> {
+  if (!input.tracker.updateIssueScope) {
+    throw new Error("Tracker cannot update issue scope.");
+  }
+
+  await input.tracker.updateIssueScope({
+    issueId: input.issueId,
+    fileScope: input.expandedScope,
+    reason: `Aegis expanded scope from ${input.originCaste} typed finding ${input.fingerprint}.`,
+  }, input.root);
+
+  const policyArtifactRefValue = persistPolicyArtifact(
+    input.root,
+    path.join(
+      ".aegis",
+      "policy",
+      `${sanitizeArtifactPart(input.issueId)}--${sanitizeArtifactPart(input.fingerprint)}--scope-expanded.json`,
+    ),
+    {
+      schemaVersion: 1,
+      outcome: "scope_expanded",
+      originIssueId: input.issueId,
+      originCaste: input.originCaste,
+      findingKind: input.findingKind,
+      fingerprint: input.fingerprint,
+      summary: input.summary,
+      previousScope: input.previousScope,
+      expandedScope: input.expandedScope,
+      parentStage: "rework_required",
+      createdAt: input.now,
+    },
+  );
+
+  return {
+    outcome: "expanded",
+    parentStage: "rework_required",
+    fileScope: { files: input.expandedScope },
+    policyArtifactRef: policyArtifactRefValue,
+  };
 }
