@@ -768,19 +768,6 @@ export async function collectMockAcceptanceSurface(
 }
 
 export function assertMockAcceptanceSurface(surface: MockAcceptanceSurface) {
-  if (surface.config.runtime === "pi") {
-    const nonCopilotModels = CASTE_CONFIG_KEYS
-      .map((caste) => [caste, surface.config.models[caste]] as const)
-      .filter(([, modelRef]) => !modelRef.startsWith("github-copilot:"));
-    if (nonCopilotModels.length > 0) {
-      throw new Error(
-        `Pi proof must use GitHub Copilot model refs: ${nonCopilotModels
-          .map(([caste, modelRef]) => `${caste}=${modelRef}`)
-          .join(", ")}.`,
-      );
-    }
-  }
-
   if (surface.runtimeState.server_state !== "stopped") {
     throw new Error(`Expected mock-run runtime to be stopped, got ${surface.runtimeState.server_state}.`);
   }

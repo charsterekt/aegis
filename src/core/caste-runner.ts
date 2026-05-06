@@ -353,6 +353,56 @@ function readTitanChangedFiles(root: string, artifactRef: string | null | undefi
   }
 }
 
+function readTitanReviewContext(root: string, artifactRef: string | null | undefined) {
+  if (!artifactRef) {
+    return [];
+  }
+
+  const artifactPath = path.join(root, artifactRef);
+  if (!existsSync(artifactPath)) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(artifactPath, "utf8")) as Record<string, unknown>;
+    const lines: string[] = ["Candidate Titan artifact summary:"];
+    const outcome = parsed["outcome"];
+    const summary = parsed["summary"];
+    const filesChanged = parsed["files_changed"];
+    const checks = parsed["tests_and_checks_run"];
+    const risks = parsed["known_risks"];
+
+    if (typeof outcome === "string") {
+      lines.push(`Outcome: ${outcome}`);
+    }
+    if (typeof summary === "string" && summary.trim().length > 0) {
+      lines.push(`Summary: ${summary.trim()}`);
+    }
+    if (Array.isArray(filesChanged)) {
+      const files = filesChanged.filter((entry): entry is string => typeof entry === "string");
+      if (files.length > 0) {
+        lines.push(`Files changed: ${files.join(", ")}`);
+      }
+    }
+    if (Array.isArray(checks)) {
+      const checkLines = checks.filter((entry): entry is string => typeof entry === "string");
+      if (checkLines.length > 0) {
+        lines.push(`Checks: ${checkLines.join("; ")}`);
+      }
+    }
+    if (Array.isArray(risks)) {
+      const riskLines = risks.filter((entry): entry is string => typeof entry === "string");
+      if (riskLines.length > 0) {
+        lines.push(`Known risks: ${riskLines.join("; ")}`);
+      }
+    }
+
+    return lines.length > 1 ? lines : [];
+  } catch {
+    return [];
+  }
+}
+
 function isGateLikeIssue(issue: AegisIssue) {
   const labels = new Set(issue.labels.map((label) => label.toLowerCase()));
   return labels.has("gate") || labels.has("release") || labels.has("integration");
@@ -476,6 +526,8 @@ function buildTitanPrompt(
     "Preserve existing Aegis/Beads operational files and ignore rules. Do not modify .aegis/, .beads/, or remove their existing .gitignore coverage.",
     ...WINDOWS_TERMINAL_GUARD,
     "Do not run long-running dev, preview, watcher, or server commands. They block the adapter session and will be treated as an operational failure.",
+    "Oracle suggested checks are advisory; skip checks that require files or package manifests outside the allowed file scope.",
+    "If a terminal command is rejected by the Aegis guard, do not retry variants of the same rejected command. Continue with in-scope edits and report the skipped check or guard rejection in tests_and_checks_run or known_risks.",
     "When you make implementation edits, stage and commit all intended changes in the labor worktree before you call the final artifact tool so the candidate branch head advances.",
     "Use git add/git commit explicitly when files_changed is non-empty.",
     "Do not leave required implementation changes uncommitted.",
@@ -509,6 +561,7 @@ function buildSentinelPrompt(
   issue: AegisIssue,
   options?: {
     fileScope?: { files: string[] } | null;
+    titanReviewContext?: string[];
     emissionMode?: RunCasteCommandInput["artifactEmissionMode"];
   },
 ) {
@@ -529,6 +582,9 @@ function buildSentinelPrompt(
       : []),
     "Return binary control verdict pass or fail_blocking.",
     ...WINDOWS_TERMINAL_GUARD,
+    "Sentinel is review-only. Do not edit files, repair defects, or complete missing work.",
+    "If the candidate is incomplete, truncated, missing owned content, or otherwise fails the issue contract, emit fail_blocking with route=rework_owner.",
+    ...(options?.titanReviewContext?.length ? options.titanReviewContext : []),
     "Blocking findings must only cover original issue contract, regressions in touched scope, or required out-of-scope blockers.",
     "blockingFindings must be typed objects with fields: finding_kind, summary, required_files, owner_issue, route.",
     "Allowed finding_kind: contract_gap, regression, out_of_scope_blocker, integration_blocker.",
@@ -1601,6 +1657,7 @@ async function runReview(
     ),
     prompt: buildSentinelPrompt(issue, {
       fileScope: record.fileScope,
+      titanReviewContext: readTitanReviewContext(input.root, record.titanHandoffRef),
       emissionMode: input.artifactEmissionMode,
     }),
   } satisfies CasteRunInput;

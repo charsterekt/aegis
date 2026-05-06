@@ -72,11 +72,17 @@ describe("buildMockRunConfig", () => {
     expect(config.thresholds.stuck_kill_seconds).toBe(1200);
   });
 
-  it("rejects Pi proof config that points at the Codex provider", () => {
-    expect(() => buildMockRunConfig({
+  it("allows explicit local Pi provider overrides without changing adapter semantics", () => {
+    const config = buildMockRunConfig({
       runtime: "pi",
-      modelReference: "openai-codex:gpt-5.4-mini",
-    })).toThrow("Pi mock proof must use GitHub Copilot provider, got openai-codex:gpt-5.4-mini.");
+      modelReference: "local-qwen:qwen3.6-35b-a3b",
+    });
+
+    expect(config.runtime).toBe("pi");
+    for (const caste of CASTE_CONFIG_KEYS) {
+      expect(config.models[caste]).toBe("local-qwen:qwen3.6-35b-a3b");
+      expect(config.thinking[caste]).toBe("medium");
+    }
   });
 
   it("allows explicit codex override without changing model config", () => {

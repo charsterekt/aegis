@@ -20,6 +20,31 @@ describe("parseTitanArtifact", () => {
     });
   });
 
+  it("normalizes quoted outcome and proposal enums from weak local tool callers", () => {
+    expect(
+      parseTitanArtifact(JSON.stringify({
+        outcome: "\"clarification\"",
+        summary: "needs product answer",
+        files_changed: [],
+        tests_and_checks_run: [],
+        known_risks: ["blocked on ambiguity"],
+        follow_up_work: [],
+        mutation_proposal: {
+          proposal_type: "\"create_clarification_blocker\"",
+          summary: "Need acceptance rule.",
+          suggested_title: "Clarify acceptance rule",
+          suggested_description: "Parent cannot proceed until acceptance rule is explicit.",
+          scope_evidence: ["Issue asks for policy but omits gate condition."],
+        },
+      })),
+    ).toMatchObject({
+      outcome: "clarification",
+      mutation_proposal: {
+        proposal_type: "create_clarification_blocker",
+      },
+    });
+  });
+
   it("parses a valid already-satisfied artifact", () => {
     expect(
       parseTitanArtifact(JSON.stringify({

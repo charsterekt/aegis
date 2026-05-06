@@ -56,14 +56,23 @@ function assertStringArray(value: unknown, key: string): string[] {
   return value.slice();
 }
 
+function normalizeQuotedEnum(value: unknown) {
+  if (typeof value === "string" && /^"[a-z_]+"$/.test(value)) {
+    return value.slice(1, -1);
+  }
+
+  return value;
+}
+
 function assertFindingKind(value: unknown): SentinelFindingKind {
+  const normalizedValue = normalizeQuotedEnum(value);
   if (
-    value === "contract_gap"
-    || value === "regression"
-    || value === "out_of_scope_blocker"
-    || value === "integration_blocker"
+    normalizedValue === "contract_gap"
+    || normalizedValue === "regression"
+    || normalizedValue === "out_of_scope_blocker"
+    || normalizedValue === "integration_blocker"
   ) {
-    return value;
+    return normalizedValue;
   }
 
   throw new Error(
@@ -72,8 +81,9 @@ function assertFindingKind(value: unknown): SentinelFindingKind {
 }
 
 function assertFindingRoute(value: unknown): SentinelFindingRoute {
-  if (value === "rework_owner" || value === "create_blocker") {
-    return value;
+  const normalizedValue = normalizeQuotedEnum(value);
+  if (normalizedValue === "rework_owner" || normalizedValue === "create_blocker") {
+    return normalizedValue;
   }
 
   throw new Error("Sentinel verdict field 'blockingFindings.route' must be one of rework_owner or create_blocker.");
@@ -143,8 +153,9 @@ function normalizeContractChecks(value: unknown): string[] {
 }
 
 function assertVerdict(value: unknown): SentinelVerdictValue {
-  if (value === "pass" || value === "fail_blocking") {
-    return value;
+  const normalizedValue = normalizeQuotedEnum(value);
+  if (normalizedValue === "pass" || normalizedValue === "fail_blocking") {
+    return normalizedValue;
   }
 
   throw new Error("Sentinel verdict field 'verdict' must be one of 'pass' or 'fail_blocking'.");

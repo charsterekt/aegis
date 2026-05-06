@@ -837,7 +837,7 @@ describe("collectMockAcceptanceSurface", () => {
     expect(() => assertMockAcceptanceSurface(surface)).not.toThrow();
   });
 
-  it("rejects Pi proof surfaces that use Codex provider model refs", () => {
+  it("does not special-case Pi proof providers in acceptance", () => {
     const surface: MockAcceptanceSurface = {
       config: {
         runtime: "pi",
@@ -952,8 +952,6 @@ describe("collectMockAcceptanceSurface", () => {
       finalAppVerification: createFinalAppVerification(),
     };
 
-    expect(() => assertMockAcceptanceSurface(surface)).toThrow(
-      "Pi proof must use GitHub Copilot model refs",
-    );
+    expect(() => assertMockAcceptanceSurface(surface)).not.toThrow();
   });
 });

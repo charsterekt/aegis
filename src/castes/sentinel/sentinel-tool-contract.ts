@@ -12,7 +12,12 @@ const sentinelStructuredContract = createStructuredToolContract<SentinelVerdict>
     "Finalize review by returning contract JSON with keys verdict, reviewSummary, typed blockingFindings, advisories, touchedFiles, contractChecks.",
   parameters: Type.Object(
     {
-      verdict: Type.Union([Type.Literal("pass"), Type.Literal("fail_blocking")]),
+      verdict: Type.Union([
+        Type.Literal("pass"),
+        Type.Literal("fail_blocking"),
+        Type.Literal("\"pass\""),
+        Type.Literal("\"fail_blocking\""),
+      ]),
       reviewSummary: Type.String(),
       blockingFindings: Type.Array(Type.Object(
         {
@@ -21,6 +26,10 @@ const sentinelStructuredContract = createStructuredToolContract<SentinelVerdict>
             Type.Literal("regression"),
             Type.Literal("out_of_scope_blocker"),
             Type.Literal("integration_blocker"),
+            Type.Literal("\"contract_gap\""),
+            Type.Literal("\"regression\""),
+            Type.Literal("\"out_of_scope_blocker\""),
+            Type.Literal("\"integration_blocker\""),
           ]),
           summary: Type.String(),
           required_files: Type.Array(Type.String()),
@@ -28,6 +37,8 @@ const sentinelStructuredContract = createStructuredToolContract<SentinelVerdict>
           route: Type.Union([
             Type.Literal("rework_owner"),
             Type.Literal("create_blocker"),
+            Type.Literal("\"rework_owner\""),
+            Type.Literal("\"create_blocker\""),
           ]),
         },
         {

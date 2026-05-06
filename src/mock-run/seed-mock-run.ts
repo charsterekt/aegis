@@ -109,10 +109,6 @@ export function buildMockRunConfig(options?: {
     ? MOCK_RUN_CODEX_THINKING_LEVEL
     : MOCK_RUN_DEFAULT_THINKING_LEVEL;
 
-  if (runtime === "pi" && !modelReference.startsWith("github-copilot:")) {
-    throw new Error(`Pi mock proof must use GitHub Copilot provider, got ${modelReference}.`);
-  }
-
   const baseConfig = {
     ...DEFAULT_AEGIS_CONFIG,
     runtime,

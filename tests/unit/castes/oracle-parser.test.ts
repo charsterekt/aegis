@@ -49,6 +49,18 @@ describe("parseOracleAssessment", () => {
     ).toEqual(["docs/setup-contract.md"]);
   });
 
+  it("normalizes quoted complexity values from weak local tool callers", () => {
+    expect(
+      parseOracleAssessment(JSON.stringify({
+        files_affected: ["docs/ui-contract.md"],
+        estimated_complexity: "\"moderate\"",
+        risks: [],
+        suggested_checks: [],
+        scope_notes: [],
+      })).estimated_complexity,
+    ).toBe("moderate");
+  });
+
   it("rejects unexpected keys", () => {
     expect(() =>
       parseOracleAssessment(JSON.stringify({

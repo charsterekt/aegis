@@ -52,6 +52,31 @@ describe("parseSentinelVerdict", () => {
     });
   });
 
+  it("normalizes quoted enum values from weak local tool callers", () => {
+    expect(
+      parseSentinelVerdict(JSON.stringify({
+        verdict: "\"fail_blocking\"",
+        reviewSummary: "contract broken",
+        blockingFindings: [{
+          finding_kind: "\"contract_gap\"",
+          summary: "missing required test",
+          required_files: ["tests/unit/core/example.test.ts"],
+          owner_issue: "aegis-123",
+          route: "\"rework_owner\"",
+        }],
+        advisories: [],
+        touchedFiles: ["src/index.ts"],
+        contractChecks: ["required tests run"],
+      })),
+    ).toMatchObject({
+      verdict: "fail_blocking",
+      blockingFindings: [{
+        finding_kind: "contract_gap",
+        route: "rework_owner",
+      }],
+    });
+  });
+
   it("rejects legacy string blocking findings", () => {
     expect(() =>
       parseSentinelVerdict(JSON.stringify({

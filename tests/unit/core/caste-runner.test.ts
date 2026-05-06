@@ -1429,6 +1429,8 @@ describe("runCasteCommand", () => {
     expect(prompt).toContain("run package-manager commands as npm.cmd");
     expect(prompt).toContain("Do not use GUI/open/start/invoke-item/Start-Process");
     expect(prompt).toContain("Do not run long-running dev, preview, watcher, or server commands.");
+    expect(prompt).toContain("Oracle suggested checks are advisory; skip checks that require files or package manifests outside the allowed file scope.");
+    expect(prompt).toContain("If a terminal command is rejected by the Aegis guard, do not retry variants of the same rejected command.");
     expect(prompt).toContain("Guard optional file reads and probes so missing paths do not exit nonzero");
     expect(prompt).toContain("PowerShell `rg` no-match exits 1 and fails the adapter");
     expect(prompt).toContain("Inspect the current worktree before trusting prior feedback");
@@ -2328,6 +2330,12 @@ describe("runCasteCommand", () => {
       family: "titan",
       issueId: "aegis-json-review",
       artifact: {
+        outcome: "success",
+        summary: "Created the product foundation brief.",
+        files_changed: ["docs/setup-contract.md"],
+        tests_and_checks_run: ["checked banned words"],
+        known_risks: ["none"],
+        follow_up_work: [],
         labor_path: root,
         candidate_branch: "main",
         base_branch: "main",
@@ -2393,6 +2401,12 @@ describe("runCasteCommand", () => {
     expect(sentinelPrompt).toContain("Return the final artifact as the JSON object itself");
     expect(sentinelPrompt).toContain("Allowed file scope: docs/setup-contract.md");
     expect(sentinelPrompt).toContain("Current allowed file scope is authoritative for this review.");
+    expect(sentinelPrompt).toContain("Sentinel is review-only. Do not edit files, repair defects, or complete missing work.");
+    expect(sentinelPrompt).toContain("If the candidate is incomplete, truncated, missing owned content, or otherwise fails the issue contract, emit fail_blocking with route=rework_owner.");
+    expect(sentinelPrompt).toContain("Candidate Titan artifact summary:");
+    expect(sentinelPrompt).toContain("Outcome: success");
+    expect(sentinelPrompt).toContain("Files changed: docs/setup-contract.md");
+    expect(sentinelPrompt).toContain("Checks: checked banned words");
   });
 
   it("includes Sentinel blocking feedback in Titan rework prompts", async () => {

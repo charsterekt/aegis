@@ -17,6 +17,7 @@ import {
   ORACLE_EMIT_ASSESSMENT_TOOL_NAME,
   stringifyOracleAssessment,
 } from "../castes/oracle/oracle-tool-contract.js";
+import { parseOracleAssessment } from "../castes/oracle/oracle-parser.js";
 import {
   createTitanEmitArtifactTool,
   enforceTitanToolPayloadContract,
@@ -24,6 +25,7 @@ import {
   stringifyTitanArtifact,
   TITAN_EMIT_ARTIFACT_TOOL_NAME,
 } from "../castes/titan/titan-tool-contract.js";
+import { parseTitanArtifact } from "../castes/titan/titan-parser.js";
 import {
   createSentinelEmitVerdictTool,
   enforceSentinelToolPayloadContract,
@@ -31,6 +33,7 @@ import {
   SENTINEL_EMIT_VERDICT_TOOL_NAME,
   stringifySentinelVerdict,
 } from "../castes/sentinel/sentinel-tool-contract.js";
+import { parseSentinelVerdict } from "../castes/sentinel/sentinel-parser.js";
 import {
   createJanusEmitResolutionTool,
   enforceJanusToolPayloadContract,
@@ -38,6 +41,7 @@ import {
   JANUS_EMIT_RESOLUTION_TOOL_NAME,
   stringifyJanusResolutionArtifact,
 } from "../castes/janus/janus-tool-contract.js";
+import { parseJanusResolutionArtifact } from "../castes/janus/janus-parser.js";
 import type {
   CasteName,
   CasteRunInput,
@@ -422,7 +426,15 @@ const HIDDEN_FIND_OPERATIONS: FindOperations = {
       cwd,
       dot: true,
       absolute: true,
-      ignore: options.ignore,
+      ignore: [
+        ...(Array.isArray(options.ignore) ? options.ignore : []),
+        ".aegis/**",
+        ".agora/**",
+        ".git/**",
+        "**/.aegis/**",
+        "**/.agora/**",
+        "**/.git/**",
+      ],
     }).slice(0, options.limit),
 };
 
@@ -497,6 +509,20 @@ function assertPathWithinAllowedFileScope(
   throw new Error(
     `${toolName} path is outside allowed file scope: ${normalizedCandidate}`,
   );
+}
+
+function assertPathDoesNotTargetControlPlane(
+  candidate: string,
+  workingDirectory: string,
+  toolName: string,
+) {
+  const normalizedCandidate = normalizeScopedPath(candidate, workingDirectory);
+  const firstSegment = normalizedCandidate.split("/")[0];
+  if (firstSegment === ".aegis" || firstSegment === ".agora" || firstSegment === ".git") {
+    throw new Error(
+      `${toolName} path targets Aegis control plane: ${normalizedCandidate}`,
+    );
+  }
 }
 
 function isPathAllowedByScope(normalizedCandidate: string, allowedFileScope: string[]) {
@@ -762,6 +788,72 @@ function wrapTitanFileTool<TTool extends { name: string; execute: (...args: any[
   };
 }
 
+function wrapReadonlyCasteFileTool<TTool extends { name: string; execute: (...args: any[]) => any }>(
+  tool: TTool,
+  workingDirectory: string,
+) {
+  return {
+    ...tool,
+    async execute(toolCallId: string, params: { path?: string }, signal: AbortSignal | undefined, onUpdate: unknown) {
+      let normalizedParams = params;
+      if (typeof params?.path === "string") {
+        assertPathWithinWorkingDirectory(params.path, workingDirectory, tool.name);
+        assertPathDoesNotTargetControlPlane(params.path, workingDirectory, tool.name);
+        normalizedParams = {
+          ...params,
+          path: resolvePathWithinWorkingDirectory(params.path, workingDirectory),
+        };
+      }
+
+      const result = await tool.execute(toolCallId, normalizedParams, signal, onUpdate);
+      return tool.name === "ls" || tool.name === "find"
+        ? filterControlPlaneEntriesFromToolResult(result)
+        : result;
+    },
+  };
+}
+
+function filterControlPlaneEntriesFromToolResult(result: unknown) {
+  if (!result || typeof result !== "object" || !("content" in result)) {
+    return result;
+  }
+
+  const record = result as { content?: unknown };
+  if (!Array.isArray(record.content)) {
+    return result;
+  }
+
+  return {
+    ...result,
+    content: record.content.map((entry) => {
+      if (
+        !entry
+        || typeof entry !== "object"
+        || (entry as { type?: unknown }).type !== "text"
+        || typeof (entry as { text?: unknown }).text !== "string"
+      ) {
+        return entry;
+      }
+
+      return {
+        ...entry,
+        text: (entry as { text: string }).text
+          .split(/\r?\n/)
+          .filter((line) => {
+            const normalized = line.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+            return normalized !== ".aegis"
+              && normalized !== ".aegis/"
+              && normalized !== ".agora"
+              && normalized !== ".agora/"
+              && normalized !== ".git"
+              && normalized !== ".git/";
+          })
+          .join("\n"),
+      };
+    }),
+  };
+}
+
 function wrapTitanBashTool<TTool extends { execute: (...args: any[]) => any }>(
   tool: TTool,
   workingDirectory: string,
@@ -817,11 +909,18 @@ function resolveTools(
     ];
   }
 
+  if (caste === "sentinel") {
+    return [];
+  }
+
   return [
-    piCodingAgent.createReadTool(workingDirectory),
-    piCodingAgent.createFindTool(workingDirectory, { operations: HIDDEN_FIND_OPERATIONS }),
-    piCodingAgent.createLsTool(workingDirectory),
-    piCodingAgent.createGrepTool(workingDirectory),
+    wrapReadonlyCasteFileTool(piCodingAgent.createReadTool(workingDirectory), workingDirectory),
+    wrapReadonlyCasteFileTool(
+      piCodingAgent.createFindTool(workingDirectory, { operations: HIDDEN_FIND_OPERATIONS }),
+      workingDirectory,
+    ),
+    wrapReadonlyCasteFileTool(piCodingAgent.createLsTool(workingDirectory), workingDirectory),
+    wrapReadonlyCasteFileTool(piCodingAgent.createGrepTool(workingDirectory), workingDirectory),
   ];
 }
 
@@ -830,6 +929,7 @@ interface CasteToolContract {
   toolName: string;
   createTool: () => ToolDefinition;
   enforcePayloadContract: (payload: unknown) => unknown | undefined;
+  parseText: (raw: string) => string | null;
   extractStructuredOutput: (event: AgentSessionEvent) => string | null;
 }
 
@@ -839,6 +939,13 @@ const CASTE_TOOL_CONTRACTS: Record<CasteName, CasteToolContract> = {
     toolName: ORACLE_EMIT_ASSESSMENT_TOOL_NAME,
     createTool: createOracleEmitAssessmentTool,
     enforcePayloadContract: enforceOracleToolPayloadContract,
+    parseText(raw) {
+      try {
+        return stringifyOracleAssessment(parseOracleAssessment(raw));
+      } catch {
+        return null;
+      }
+    },
     extractStructuredOutput(event) {
       const assessment = extractOracleAssessmentFromToolEvent(event);
       return assessment ? stringifyOracleAssessment(assessment) : null;
@@ -849,6 +956,13 @@ const CASTE_TOOL_CONTRACTS: Record<CasteName, CasteToolContract> = {
     toolName: TITAN_EMIT_ARTIFACT_TOOL_NAME,
     createTool: createTitanEmitArtifactTool,
     enforcePayloadContract: enforceTitanToolPayloadContract,
+    parseText(raw) {
+      try {
+        return stringifyTitanArtifact(parseTitanArtifact(raw));
+      } catch {
+        return null;
+      }
+    },
     extractStructuredOutput(event) {
       const artifact = extractTitanArtifactFromToolEvent(event);
       return artifact ? stringifyTitanArtifact(artifact) : null;
@@ -859,6 +973,13 @@ const CASTE_TOOL_CONTRACTS: Record<CasteName, CasteToolContract> = {
     toolName: SENTINEL_EMIT_VERDICT_TOOL_NAME,
     createTool: createSentinelEmitVerdictTool,
     enforcePayloadContract: enforceSentinelToolPayloadContract,
+    parseText(raw) {
+      try {
+        return stringifySentinelVerdict(parseSentinelVerdict(raw));
+      } catch {
+        return null;
+      }
+    },
     extractStructuredOutput(event) {
       const verdict = extractSentinelVerdictFromToolEvent(event);
       return verdict ? stringifySentinelVerdict(verdict) : null;
@@ -869,6 +990,13 @@ const CASTE_TOOL_CONTRACTS: Record<CasteName, CasteToolContract> = {
     toolName: JANUS_EMIT_RESOLUTION_TOOL_NAME,
     createTool: createJanusEmitResolutionTool,
     enforcePayloadContract: enforceJanusToolPayloadContract,
+    parseText(raw) {
+      try {
+        return stringifyJanusResolutionArtifact(parseJanusResolutionArtifact(raw));
+      } catch {
+        return null;
+      }
+    },
     extractStructuredOutput(event) {
       const artifact = extractJanusResolutionFromToolEvent(event);
       return artifact ? stringifyJanusResolutionArtifact(artifact) : null;
@@ -1055,6 +1183,7 @@ export class PiCasteRuntime implements CasteRuntime {
     const toolContract = CASTE_TOOL_CONTRACTS[input.caste];
     const baseTools = resolveTools(piCodingAgent, input.caste, input.workingDirectory, input.prompt);
     const customTools = resolveCustomTools(input.caste);
+    const registeredTools = [...baseTools, ...customTools];
     const activeToolNames = [...new Set([
       ...baseTools.map((tool) => tool.name),
       ...customTools.map((tool) => tool.name),
@@ -1065,7 +1194,7 @@ export class PiCasteRuntime implements CasteRuntime {
       model: modelConfig.model,
       thinkingLevel: modelConfig.thinkingLevel,
       tools: baseTools,
-      customTools,
+      customTools: registeredTools,
       resourceLoader,
     });
     session.setActiveToolsByName(activeToolNames);
@@ -1153,6 +1282,15 @@ export class PiCasteRuntime implements CasteRuntime {
             }
 
             if (structuredOutput) {
+              settle(() => {
+                resolve();
+              });
+              return;
+            }
+
+            const parsedTextOutput = toolContract.parseText(messages.at(-1) ?? "");
+            if (parsedTextOutput) {
+              structuredOutput = parsedTextOutput;
               settle(() => {
                 resolve();
               });
