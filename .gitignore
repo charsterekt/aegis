@@ -1,8 +1,3 @@
-
-# Dolt database files (added by bd init)
-.dolt/
-*.db
-
 # Aegis
 .aegis/config.json
 .aegis/dispatch-state.json
@@ -47,5 +42,3 @@ docs/enhancement-spec-2026.md
 docs/superpowers/specs/
 docs/superpowers/plans/
 
-# Beads / Dolt files (added by bd init)
-.beads-credential-key

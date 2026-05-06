@@ -6,8 +6,6 @@ import { createTrackerClient, resolveTrackerBackend } from "../../../src/tracker
 describe("createTrackerClient", () => {
   it("always resolves the Agora tracker backend", () => {
     expect(resolveTrackerBackend()).toBe("agora");
-    expect(resolveTrackerBackend("legacy")).toBe("agora");
-    expect(resolveTrackerBackend("unknown")).toBe("agora");
   });
 
   it("creates an Agora tracker client", () => {

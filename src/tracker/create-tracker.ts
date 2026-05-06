@@ -7,12 +7,10 @@ export type DefaultTrackerClient = TrackerClient & {
   getIssue(id: string, root?: string): Promise<AegisIssue>;
 };
 
-export function resolveTrackerBackend(value = process.env.AEGIS_TRACKER_BACKEND): TrackerBackend {
-  void value;
+export function resolveTrackerBackend(): TrackerBackend {
   return "agora";
 }
 
-export function createTrackerClient(backend: TrackerBackend = resolveTrackerBackend()): DefaultTrackerClient {
-  void backend;
+export function createTrackerClient(): DefaultTrackerClient {
   return new AgoraTrackerClient();
 }
