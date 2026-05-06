@@ -10,15 +10,12 @@ import {
   resolveCommittedChangedFiles,
   summarizeOperationalStatusDrift,
 } from "./git-proof.js";
+import { normalizeScopeFile } from "../shared/file-scope.js";
 
 type GitProofPair = {
   before: ReturnType<typeof captureGitProofPair>["before"];
   after: ReturnType<typeof captureGitProofPair>["after"];
 };
-
-function normalizeScopeFile(candidate: string) {
-  return candidate.replace(/\\/g, "/").replace(/^\.\//, "").trim();
-}
 
 function isPolicyCreatedBlockerDescription(description: string) {
   return description.includes("Policy proposal:")
