@@ -6,6 +6,7 @@ import { parseSentinelVerdict } from "../castes/sentinel/sentinel-parser.js";
 import { parseTitanArtifact } from "../castes/titan/titan-parser.js";
 import { loadConfig } from "../config/load-config.js";
 import { createTrackerClient } from "../tracker/create-tracker.js";
+import { hasNewScope, normalizeFileScope, normalizeScopeFile } from "../shared/file-scope.js";
 import { applyScopeExpansion } from "./control-plane-policy.js";
 import { loadDispatchState, saveDispatchState, type DispatchState } from "./dispatch-state.js";
 import { writePhaseLog } from "./phase-log.js";
@@ -368,20 +369,6 @@ function recoverFailedTitanRecord(root: string, issueId: string, timestamp: stri
   return true;
 }
 
-function normalizeScopeFile(candidate: string) {
-  return candidate.replace(/\\/g, "/").replace(/^\.\//, "").trim();
-}
-
-function normalizeFileScope(files: string[]) {
-  const normalized = [...new Set(
-    files
-      .map((entry) => normalizeScopeFile(entry))
-      .filter((entry) => entry.length > 0),
-  )].sort();
-
-  return normalized.length > 0 ? { files: normalized } : null;
-}
-
 function isPolicyCreatedBlockerDescription(description: string | null | undefined) {
   return typeof description === "string"
     && description.includes("Policy proposal:")
@@ -427,11 +414,6 @@ function fingerprintScopeExpansion(issueId: string, finding: {
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48) || "scope-expansion";
-}
-
-function hasNewScope(current: string[], expanded: string[]) {
-  const currentSet = new Set(current.map((entry) => normalizeScopeFile(entry)));
-  return expanded.some((entry) => !currentSet.has(normalizeScopeFile(entry)));
 }
 
 function extractGitStatusPath(line: string) {

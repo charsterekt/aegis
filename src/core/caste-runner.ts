@@ -52,6 +52,12 @@ import {
 import { calculateFailureCooldown, resolveFailureWindowStartMs } from "./failure-policy.js";
 import { buildFailureSteeringPromptLines } from "./failure-steering.js";
 import type { TrackerClient } from "../tracker/tracker.js";
+import {
+  hasNewScope,
+  hasScopeIntersection,
+  normalizeFileScope,
+  normalizeScopeFile,
+} from "../shared/file-scope.js";
 
 interface TrackerLike extends Pick<TrackerClient, "closeIssue" | "createIssue" | "linkBlockingIssue" | "updateIssueScope"> {
   getIssue(id: string, root?: string): Promise<AegisIssue>;
@@ -181,20 +187,6 @@ function extractDeclaredFileScope(description: string): string[] {
     .filter((entry) => entry.length > 0);
 }
 
-function normalizeScopeFile(candidate: string) {
-  return candidate.replace(/\\/g, "/").replace(/^\.\//, "").trim();
-}
-
-function normalizeFileScope(files: string[]) {
-  const normalized = [...new Set(
-    files
-      .map((entry) => normalizeScopeFile(entry))
-      .filter((entry) => entry.length > 0),
-  )].sort();
-
-  return normalized.length > 0 ? { files: normalized } : null;
-}
-
 function mergeFileScope(left: { files: string[] } | null, right: string[]) {
   return normalizeFileScope([
     ...(left?.files ?? []),
@@ -233,11 +225,6 @@ function extractScopeFilesFromProposalText(input: {
     input.suggestedDescription ?? "",
     ...input.scopeEvidence,
   ]);
-}
-
-function hasNewScopeFiles(current: { files: string[] } | null, expanded: { files: string[] }) {
-  const currentSet = new Set((current?.files ?? []).map((entry) => normalizeScopeFile(entry)));
-  return expanded.files.some((entry) => !currentSet.has(normalizeScopeFile(entry)));
 }
 
 const AEGIS_CASTE_SESSION_GUARD = [
@@ -419,11 +406,6 @@ function readTitanReviewContext(root: string, artifactRef: string | null | undef
 function isGateLikeIssue(issue: AegisIssue) {
   const labels = new Set(issue.labels.map((label) => label.toLowerCase()));
   return labels.has("gate") || labels.has("release") || labels.has("integration");
-}
-
-function hasScopeIntersection(left: string[], right: string[]) {
-  const rightSet = new Set(right.map((entry) => normalizeScopeFile(entry)));
-  return left.map((entry) => normalizeScopeFile(entry)).some((entry) => rightSet.has(entry));
 }
 
 function isAmbientCrossScopeFinding(input: {
@@ -1652,7 +1634,7 @@ async function runReview(
   if (blockerFinding) {
     const isPolicyCreatedBlocker = isPolicyCreatedBlockerDescription(issue.description ?? "");
     const expandedFileScope = mergeFileScope(record.fileScope, blockerFinding.required_files);
-    if (isPolicyCreatedBlocker && expandedFileScope && hasNewScopeFiles(record.fileScope, expandedFileScope)) {
+    if (isPolicyCreatedBlocker && expandedFileScope && hasNewScope(record.fileScope?.files ?? [], expandedFileScope.files)) {
       const previousScope = record.fileScope?.files
         ?? issue.fileScope
         ?? extractDeclaredFileScope(issue.description ?? "");
