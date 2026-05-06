@@ -78,7 +78,6 @@ Not proven:
 - Full seeded animated React todo graph drain with a real adapter.
 - Stable live adapter contract across long, concurrent, model-backed runs.
 - Working app proof from the seeded graph.
-- Per-agent session terminal visibility.
 - Olympus.
 
 Current implementation posture:
@@ -117,33 +116,11 @@ Exit gate:
 
 Valid direct root adoption is allowed only when Aegis proves the root was clean before and after, the root head advanced linearly, the committed diff exactly matches the Titan artifact and file scope, and Sentinel still gates the adopted candidate.
 
-### Step 2: Per-Agent Session Terminals
+### Step 2: Olympus
 
 Goal:
 
-- Operator can watch each live agent session without spelunking raw transcripts.
-
-Scope:
-
-- per-agent terminal/session panes
-- session lifecycle visibility
-- live command/tool stream where adapter supports it
-- abort/stop surface
-- transcript links
-
-Non-goal:
-
-- Olympus product UI polish.
-
-Exit gate:
-
-- During seeded proof, operator can identify each active agent, issue, labor path, model, session id, and current activity from terminal-visible surfaces.
-
-### Step 3: Olympus
-
-Goal:
-
-- Visualize what already works.
+- Visualize and supervise what already works from Aegis truth planes.
 
 Scope:
 
@@ -152,10 +129,12 @@ Scope:
 - merge queue state
 - logs/artifacts links
 - controls that route through deterministic orchestrator commands
+- editable `.aegis/config.json` settings through deterministic config writes
 
 Non-goal:
 
 - Making Olympus a separate truth plane.
+- Replacing terminal/scripted proof commands as correctness authority.
 
 Exit gate:
 
