@@ -14,7 +14,7 @@ import { parseSentinelVerdict, type SentinelFinding } from "../castes/sentinel/s
 import { SENTINEL_EMIT_VERDICT_TOOL_NAME } from "../castes/sentinel/sentinel-tool-contract.js";
 import { parseJanusResolutionArtifact } from "../castes/janus/janus-parser.js";
 import { JANUS_EMIT_RESOLUTION_TOOL_NAME } from "../castes/janus/janus-tool-contract.js";
-import { planLaborCreation, prepareLaborWorktree, type LaborCreationPlan } from "../labor/create-labor.js";
+import { buildLaborBranchName, planLaborCreation, prepareLaborWorktree, type LaborCreationPlan } from "../labor/create-labor.js";
 import type { RuntimeCasteAction } from "../cli/runtime-command.js";
 import type { AegisIssue } from "../tracker/issue-model.js";
 import type { CasteRunInput, CasteRuntime, CasteSessionResult } from "../runtime/caste-runtime.js";
@@ -863,7 +863,9 @@ function validateTitanSessionOutcome(input: {
     input.artifact.outcome === "success"
     && hasDurableGitProof
     && !isVerifiedPolicyNoopSuccess
-    && !hasAdvancedGitHead(input.candidateProofPair, input.candidateBranch)
+    && !(input.adoptedRootCommit
+      ? hasChangedHead(input.candidateProofPair)
+      : hasAdvancedGitHead(input.candidateProofPair, input.candidateBranch))
   ) {
     return `Titan implementation for ${input.issueId} did not advance candidate branch ${input.candidateBranch}.`;
   }
@@ -961,16 +963,60 @@ function resolveRootCommitAdoption(input: {
     return null;
   }
 
-  const candidateBranch = input.rootProofPair.after?.branch;
   const baseBranch = input.rootProofPair.before?.branch;
-  if (!candidateBranch || !baseBranch) {
+  const adoptedHeadCommit = input.rootProofPair.after?.headCommit;
+  if (!baseBranch || !adoptedHeadCommit) {
     return null;
   }
 
   return {
-    candidateBranch,
+    adoptedHeadCommit,
     baseBranch,
   };
+}
+
+function runGit(root: string, args: string[]) {
+  return spawnSync("git", args, {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+}
+
+function formatGitResult(result: ReturnType<typeof runGit>) {
+  return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+}
+
+function buildAdoptedRootBranchName(issueId: string) {
+  return buildLaborBranchName(`adopted/${issueId}`).replace("aegis/adopted-", "aegis/adopted/");
+}
+
+function materializeAdoptedRootCandidate(input: {
+  issueId: string;
+  root: string;
+  adoptedHeadCommit: string;
+}) {
+  const candidateBranch = buildAdoptedRootBranchName(input.issueId);
+  const createBranch = runGit(input.root, [
+    "branch",
+    "-f",
+    candidateBranch,
+    input.adoptedHeadCommit,
+  ]);
+  if (createBranch.status !== 0) {
+    throw new Error(
+      `Failed to create adopted root candidate branch ${candidateBranch} for ${input.issueId}. ${formatGitResult(createBranch)}`,
+    );
+  }
+
+  const verifyBranch = runGit(input.root, ["rev-parse", "--verify", candidateBranch]);
+  if (verifyBranch.status !== 0 || verifyBranch.stdout.trim() !== input.adoptedHeadCommit) {
+    throw new Error(
+      `Failed to verify adopted root candidate branch ${candidateBranch} for ${input.issueId}. ${formatGitResult(verifyBranch)}`,
+    );
+  }
+
+  return candidateBranch;
 }
 
 function isPathInside(basePath: string, candidatePath: string) {
@@ -1516,7 +1562,13 @@ async function runImplement(
   });
   const candidateWorkingDirectory = rootAdoption ? input.root : labor.laborPath;
   const candidateProofPair = rootAdoption ? completedRootGitProof : completedGitProof;
-  const candidateBranch = rootAdoption?.candidateBranch ?? labor.branchName;
+  const candidateBranch = rootAdoption
+    ? materializeAdoptedRootCandidate({
+      issueId: issue.id,
+      root: input.root,
+      adoptedHeadCommit: rootAdoption.adoptedHeadCommit,
+    })
+    : labor.branchName;
   const candidateBaseBranch = rootAdoption?.baseBranch ?? labor.baseBranch;
   const artifact = {
     ...baseArtifact,

@@ -1908,7 +1908,7 @@ describe("runCasteCommand", () => {
     })).rejects.toThrow("changed the project root HEAD");
   });
 
-  it("adopts a clean in-scope root commit when Titan commits the root instead of labor", async () => {
+  it("adopts a clean in-scope root commit as an explicit candidate branch", async () => {
     const root = createTempRoot();
     saveDispatchState(root, {
       schemaVersion: 1,
@@ -1973,6 +1973,8 @@ describe("runCasteCommand", () => {
       labor_path: string;
       adoption?: { mode: string };
     };
+    const adoptedHead = runGit(root, ["rev-parse", "aegis/adopted/aegis-root-adopt"]).trim();
+    const mainHead = runGit(root, ["rev-parse", "main"]).trim();
 
     expect(result).toMatchObject({
       action: "implement",
@@ -1980,13 +1982,14 @@ describe("runCasteCommand", () => {
       stage: "implemented",
     });
     expect(artifact).toMatchObject({
-      candidate_branch: "main",
+      candidate_branch: "aegis/adopted/aegis-root-adopt",
       base_branch: "main",
       labor_path: root,
       adoption: {
         mode: "root_commit",
       },
     });
+    expect(adoptedHead).toBe(mainHead);
   });
 
   it("tells resumed Titan work that the blocking child already closed", async () => {

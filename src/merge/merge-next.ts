@@ -202,6 +202,13 @@ class GitMergeExecutor implements MergeExecutor {
       };
     }
 
+    if (item.candidateBranch === item.targetBranch) {
+      return {
+        outcome: "stale_branch",
+        detail: `Candidate branch ${item.candidateBranch} matches target branch ${item.targetBranch}; refusing no-op self-merge.`,
+      };
+    }
+
     const targetProbe = runGit(root, ["rev-parse", "--verify", item.targetBranch]);
     if (targetProbe.status !== 0) {
       return {

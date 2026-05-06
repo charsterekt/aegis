@@ -35,6 +35,13 @@ describe("TODO_MOCK_RUN_ISSUES", () => {
     }
   });
 
+  it("pins foundation tooling so partial app checks can run before smoke tests exist", () => {
+    const foundation = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "foundation.app")!;
+
+    expect(foundation.description).toContain("eslint-plugin-react-hooks");
+    expect(foundation.description).toContain("test script must pass when no test files exist");
+  });
+
   it("retains a Janus integration lane in the drained product proof", () => {
     const janusIssue = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "janus.integration")!;
 

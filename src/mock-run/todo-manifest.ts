@@ -18,6 +18,8 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     description: [
       "Create a Vite React TypeScript app foundation for a polished animated todo product.",
       "Install runtime, dev, test, animation, and Playwright dependencies with deterministic npm scripts: dev, build, lint, test, smoke, preview.",
+      "If lint config extends React Hooks rules, package.json must include eslint-plugin-react-hooks so npm run lint works after npm install.",
+      "The test script must pass when no test files exist yet, because later seeded issues add focused tests.",
       "Create source entry files and config files from scratch when absent.",
       "The product being built is a Todo app; visible UI must not show framework starter copy or orchestration vocabulary.",
       "Do not create blockers for product source files owned by later seeded issues.",

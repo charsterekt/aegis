@@ -17,6 +17,10 @@ import {
 } from "../../../src/runtime/pi-caste-runtime.js";
 
 type MockListener = (event: any) => void;
+type MockToolResult = {
+  content: Array<{ type: string; text: string }>;
+  isError: boolean;
+};
 
 interface ContractFixture {
   caste: CasteName;
@@ -108,7 +112,7 @@ const mockedAgent = vi.hoisted(() => {
   const createTool = (name: string) => ({
     name,
     parameters: {},
-    execute: vi.fn(async () => ({
+    execute: vi.fn(async (): Promise<MockToolResult> => ({
       content: [],
       isError: false,
     })),

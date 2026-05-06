@@ -240,6 +240,45 @@ describe("runMergeNext", () => {
     expect(readFileSync(path.join(root, "README.md"), "utf8")).toContain("phase-i merge change");
   });
 
+  it("requeues instead of marking merged when candidate and target are the same branch", async () => {
+    const root = createTempRoot();
+    writeFileSync(
+      path.join(root, ".aegis", "config.json"),
+      `${JSON.stringify({
+        ...DEFAULT_AEGIS_CONFIG,
+        runtime: "pi",
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    initializeGitRepository(root);
+    writeState(root, "aegis-same-branch");
+    saveMergeQueueState(root, {
+      schemaVersion: 1,
+      items: [{
+        ...createQueueItem("aegis-same-branch"),
+        candidateBranch: "main",
+        targetBranch: "main",
+      }],
+    });
+
+    const result = await runMergeNext(root, {
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-same-branch")),
+      },
+      now: "2026-04-14T12:30:00.000Z",
+    });
+
+    expect(result).toMatchObject({
+      action: "merge_next",
+      status: "requeued",
+      issueId: "aegis-same-branch",
+      tier: "T2",
+      stage: "queued_for_merge",
+    });
+    expect(result.detail).toContain("Candidate branch main matches target branch main");
+  });
+
   it("fail-closes merge execution when the repo root has non-Aegis dirty files", async () => {
     const root = createTempRoot();
     writeFileSync(
