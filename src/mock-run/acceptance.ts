@@ -21,8 +21,8 @@ import { isProcessRunning } from "../cli/runtime-state.js";
 import { AgoraStore, type AgoraColumn, type AgoraTicket } from "../../packages/agora/dist/index.js";
 import { renameWithRetries } from "../shared/atomic-write.js";
 
-const HAPPY_PATH_ISSUE_KEY = "setup.contract";
-const JANUS_ISSUE_KEY = "setup.scaffold";
+const HAPPY_PATH_ISSUE_KEY = "foundation.app";
+const JANUS_ISSUE_KEY = "janus.integration";
 const MOCK_ACCEPTANCE_TIMEOUT_MS = 300_000;
 const MOCK_ACCEPTANCE_POLL_MS = 250;
 

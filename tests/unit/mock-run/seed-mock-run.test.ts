@@ -126,19 +126,31 @@ describe("seedMockRun", () => {
         scope: string[];
       }>;
     };
-    const setupDeps = snapshot.tickets[result.issueIdByKey["setup.dependencies"]!]!;
-    expect(setupDeps.blockedBy).toEqual([result.issueIdByKey["setup.contract"]]);
-    expect(setupDeps.labels).toEqual(expect.arrayContaining([
+    const uiComponents = snapshot.tickets[result.issueIdByKey["ui.components"]!]!;
+    expect(uiComponents.blockedBy).toEqual([
+      result.issueIdByKey["foundation.app"],
+      result.issueIdByKey["core.todo"],
+    ]);
+    expect(uiComponents.labels).toEqual(expect.arrayContaining([
       "mock-run",
-      "setup",
-      "lane_b",
-      "deps",
+      "ui",
+      "product",
+      "lane_c",
       "role:executable",
       "priority:1",
-      "key:setup.dependencies",
+      "key:ui.components",
     ]));
-    expect(setupDeps.scope).toEqual(["package-lock.json", "package.json"]);
-    expect(snapshot.tickets[result.issueIdByKey["setup"]!]?.parent).toBe(result.issueIdByKey["todo-webapp.program"]);
+    expect(uiComponents.scope).toEqual([
+      "src/accessibility/keyboard.ts",
+      "src/components/A11yStatus.tsx",
+      "src/components/AppShell.css",
+      "src/components/AppShell.tsx",
+      "src/components/TodoFilters.tsx",
+      "src/components/TodoInput.tsx",
+      "src/components/TodoItem.tsx",
+      "src/components/TodoList.tsx",
+    ]);
+    expect(snapshot.tickets[result.issueIdByKey["foundation.app"]!]?.parent).toBe(result.issueIdByKey["todo-webapp.program"]);
   });
 
   it("preserves parallel Oracle and post-scout Titan readiness through Agora", async () => {

@@ -93,10 +93,10 @@ describe("runMockAcceptance", () => {
         repoRoot: "/repo",
         databaseName: "mock-db",
         issueIdByKey: {
-          "setup.contract": "issue-happy",
-          "setup.scaffold": "issue-janus",
+          "foundation.app": "issue-happy",
+          "janus.integration": "issue-janus",
         },
-        initialReadyKeys: ["setup.contract"],
+        initialReadyKeys: ["foundation.app"],
       };
     });
     const runMockCommand = vi.fn(async (args: string[]) => {
