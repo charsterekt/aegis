@@ -16,7 +16,6 @@ import type { MockRunIssueDefinition } from "./types.js";
 export interface SeedMockRunOptions {
   workspaceRoot?: string;
   repoName?: string;
-  beadsPrefix?: string;
   runtime?: "pi" | "scripted" | "codex";
   modelReference?: string;
 }
@@ -89,11 +88,6 @@ export function formatMockRunIssueDescription(issue: MockRunIssueDefinition) {
     `Aegis file ownership: ${files.join(", ")}`,
     "Only edit these owned files. If required work is outside this scope, emit a blocking mutation proposal instead of editing sibling-lane files.",
   ].join("\n");
-}
-
-function createDatabaseName(prefix: string) {
-  void prefix;
-  return "agora";
 }
 
 export function buildMockRunConfig(options?: {
@@ -209,9 +203,8 @@ function seedAgoraIssue(
 export async function seedMockRun(options: SeedMockRunOptions = {}): Promise<SeedMockRunResult> {
   const workspaceRoot = path.resolve(options.workspaceRoot ?? resolveDefaultMockWorkspaceRoot());
   const repoName = options.repoName ?? TODO_MOCK_RUN_MANIFEST.repoName;
-  const beadsPrefix = options.beadsPrefix ?? TODO_MOCK_RUN_MANIFEST.beadsPrefix;
   const repoRoot = path.join(workspaceRoot, repoName);
-  const databaseName = createDatabaseName(beadsPrefix);
+  const databaseName = "agora";
 
   removeDirectoryWithRetries(repoRoot);
   mkdirSync(repoRoot, { recursive: true });

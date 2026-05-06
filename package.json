@@ -34,7 +34,7 @@
     "swarm",
     "orchestrator",
     "pi",
-    "beads"
+    "agora"
   ],
   "license": "MIT",
   "dependencies": {

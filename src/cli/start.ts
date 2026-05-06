@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { execFile, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -106,22 +106,13 @@ export interface StartResult {
 export interface StartCommandOptions {
   verifyTracker?: (root: string) => void;
   verifyGitRepo?: () => void;
-  probeBeadsCli?: () => StartupPreflightProbeResult;
+  probeTrackerBackend?: (root: string) => StartupPreflightProbeResult;
   verifyModelRefs?: (config: AegisConfig) => StartupPreflightProbeResult;
   registerSignalHandlers?: boolean;
   runDaemonCycle?: (root: string) => Promise<void>;
   runCasteCommand?: (root: string, action: RuntimeCasteAction, issueId: string) => Promise<unknown>;
   runMergeCommand?: (root: string, action: RuntimeMergeAction) => Promise<unknown>;
 }
-
-export interface TrackerProbeResult {
-  status: number | null;
-  stdout: string;
-  stderr: string;
-  error?: NodeJS.ErrnoException | null;
-}
-
-export type TrackerProbe = (root: string) => TrackerProbeResult;
 
 function parseStartOverrides(argv: readonly string[]): StartCommandOverrides {
   if (argv.length > 0) {
@@ -133,21 +124,6 @@ function parseStartOverrides(argv: readonly string[]): StartCommandOverrides {
 
 export { parseStartOverrides };
 
-function runTrackerProbe(root: string): TrackerProbeResult {
-  const trackerProbe = spawnSync("bd", ["ready", "--json"], {
-    cwd: root,
-    encoding: "utf8",
-    windowsHide: true,
-  });
-
-  return {
-    status: trackerProbe.status,
-    stdout: trackerProbe.stdout ?? "",
-    stderr: trackerProbe.stderr ?? "",
-    error: trackerProbe.error ?? null,
-  };
-}
-
 function toErrorMessage(error: unknown) {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
@@ -156,71 +132,20 @@ function toErrorMessage(error: unknown) {
   return String(error);
 }
 
-function probeBeadsCli(): StartupPreflightProbeResult {
+function probeAgoraTrackerBackend(_root: string): StartupPreflightProbeResult {
   return {
     ok: true,
     detail: "Agora tracker backend is available.",
   };
 }
 
-function probeBeadsRepository(
-  root: string,
-  probe: TrackerProbe = runTrackerProbe,
-): StartupPreflightProbeResult {
-  if (process.env.AEGIS_TRACKER_BACKEND !== "beads" && probe === runTrackerProbe) {
-    void probe;
-    return {
-      ok: true,
-      detail: "Agora tracker is available for this repository.",
-    };
-  }
-
-  const trackerProbe = probe(root);
-  const errorCode =
-    trackerProbe.error && "code" in trackerProbe.error
-      ? String(trackerProbe.error.code)
-      : null;
-
-  if (errorCode === "ENOENT") {
-    return {
-      ok: false,
-      detail: "Beads CLI was not found. Install or fix `bd` before starting Aegis.",
-      fix: "install the `bd` CLI and ensure it is available on PATH",
-    };
-  }
-
-  if (trackerProbe.status !== 0) {
-    const detail = (trackerProbe.stderr || trackerProbe.stdout).trim();
-    const suffix = detail.length > 0 ? ` Details: ${detail}` : "";
-
-    return {
-      ok: false,
-      detail:
-        "Beads tracker is not initialized or healthy for this repository. Run `bd init` (or `bd onboard`) before starting Aegis."
-        + suffix,
-      fix: "run `bd init` or `bd onboard` in this repository",
-    };
-  }
-
-  return {
-    ok: true,
-    detail: "Beads tracker is initialized.",
-  };
-}
-
 export function verifyTrackerRepository(
   root: string,
-  probe: TrackerProbe = runTrackerProbe,
-  probeCli: () => StartupPreflightProbeResult = probeBeadsCli,
+  probe: (root: string) => StartupPreflightProbeResult = probeAgoraTrackerBackend,
 ) {
-  const cliProbe = probeCli();
-  if (!cliProbe.ok) {
-    throw new Error(cliProbe.detail ?? "Beads CLI check failed.");
-  }
-
-  const repoProbe = probeBeadsRepository(root, probe);
+  const repoProbe = probe(root);
   if (!repoProbe.ok) {
-    throw new Error(repoProbe.detail ?? "Beads repository check failed.");
+    throw new Error(repoProbe.detail ?? "Tracker backend check failed.");
   }
 }
 
@@ -427,7 +352,7 @@ export async function startAegis(
 ): Promise<StartResult> {
   const repoRoot = path.resolve(root);
   const verifyTracker = options.verifyTracker ?? ((candidateRoot: string) => {
-    const probe = probeBeadsRepository(candidateRoot);
+    const probe = probeAgoraTrackerBackend(candidateRoot);
 
     if (!probe.ok) {
       throw new Error(probe.detail ?? "Tracker repository check failed.");
@@ -436,7 +361,7 @@ export async function startAegis(
   const verifyGitRepo = options.verifyGitRepo ?? (() => {
     verifyGitRepository(repoRoot);
   });
-  const beadsCliProbe = options.probeBeadsCli ?? probeBeadsCli;
+  const trackerBackendProbe = options.probeTrackerBackend ?? probeAgoraTrackerBackend;
   const verifyModelRefs = options.verifyModelRefs ?? verifyConfiguredPiModels;
 
   void overrides;
@@ -444,8 +369,11 @@ export async function startAegis(
 
   const preflight = runStartupPreflight(repoRoot, {
     verifyGitRepo,
-    probeBeadsCli: beadsCliProbe,
-    probeBeadsRepo: () => {
+    probeTrackerBackend: () => {
+      const backendProbe = trackerBackendProbe(repoRoot);
+      if (!backendProbe.ok) {
+        return backendProbe;
+      }
       try {
         verifyTracker(repoRoot);
         return {
@@ -686,25 +614,3 @@ export async function startAegis(
   };
 }
 
-export function execBdInRepository(root: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      "bd",
-      args,
-      {
-        cwd: root,
-        encoding: "utf8",
-        maxBuffer: 10 * 1024 * 1024,
-        windowsHide: true,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          const detail = stderr?.trim() ? ` - ${stderr.trim()}` : "";
-          reject(new Error(`bd ${args[0]} failed: ${error.message}${detail}`));
-          return;
-        }
-        resolve(stdout);
-      },
-    );
-  });
-}

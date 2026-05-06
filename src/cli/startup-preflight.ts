@@ -2,8 +2,7 @@ import type { AegisConfig } from "../config/schema.js";
 
 export type StartupPreflightCheckId =
   | "git_repo"
-  | "beads_cli"
-  | "beads_repo"
+  | "tracker_backend"
   | "aegis_config"
   | "runtime_adapter"
   | "runtime_local_config"
@@ -45,8 +44,7 @@ export class StartupPreflightBlockedError extends Error {
 
 export interface StartupPreflightDependencies {
   verifyGitRepo: () => void;
-  probeBeadsCli: () => StartupPreflightProbeResult;
-  probeBeadsRepo: () => StartupPreflightProbeResult;
+  probeTrackerBackend: () => StartupPreflightProbeResult;
   loadConfig: () => AegisConfig;
   verifyRuntimeAdapter: (
     config: AegisConfig,
@@ -62,8 +60,7 @@ export interface StartupPreflightDependencies {
 
 const CHECK_ORDER: readonly StartupPreflightCheckId[] = [
   "git_repo",
-  "beads_cli",
-  "beads_repo",
+  "tracker_backend",
   "aegis_config",
   "runtime_adapter",
   "runtime_local_config",
@@ -73,8 +70,7 @@ const CHECK_ORDER: readonly StartupPreflightCheckId[] = [
 
 const CHECK_LABELS: Record<StartupPreflightCheckId, string> = {
   git_repo: "git repo",
-  beads_cli: "beads cli",
-  beads_repo: "beads repo",
+  tracker_backend: "tracker backend",
   aegis_config: "aegis config",
   runtime_adapter: "runtime adapter",
   runtime_local_config: "runtime local config",
@@ -84,8 +80,7 @@ const CHECK_LABELS: Record<StartupPreflightCheckId, string> = {
 
 const PASS_DETAILS: Record<StartupPreflightCheckId, string> = {
   git_repo: "Inside a git worktree.",
-  beads_cli: "Beads CLI is available.",
-  beads_repo: "Beads tracker is initialized.",
+  tracker_backend: "Agora tracker backend is available.",
   aegis_config: "Config loaded.",
   runtime_adapter: "Runtime adapter is supported.",
   runtime_local_config: "Runtime local config is valid.",
@@ -95,8 +90,7 @@ const PASS_DETAILS: Record<StartupPreflightCheckId, string> = {
 
 const FAIL_DETAILS: Record<StartupPreflightCheckId, string> = {
   git_repo: "Git repository check failed.",
-  beads_cli: "Beads CLI check failed.",
-  beads_repo: "Beads repository check failed.",
+  tracker_backend: "Agora tracker backend check failed.",
   aegis_config: "Aegis config check failed.",
   runtime_adapter: "Runtime adapter check failed.",
   runtime_local_config: "Runtime local config check failed.",
@@ -195,14 +189,10 @@ export function runStartupPreflight(
     });
   } catch (error) {
     checks.push(failCheck("git_repo", toThrownMessage(error)));
-    return blockFrom(repoRoot, checks, "beads_cli");
+    return blockFrom(repoRoot, checks, "tracker_backend");
   }
 
-  if (!pushProbeCheck(checks, "beads_cli", deps.probeBeadsCli)) {
-    return blockFrom(repoRoot, checks, "beads_repo");
-  }
-
-  if (!pushProbeCheck(checks, "beads_repo", deps.probeBeadsRepo)) {
+  if (!pushProbeCheck(checks, "tracker_backend", deps.probeTrackerBackend)) {
     return blockFrom(repoRoot, checks, "aegis_config");
   }
 

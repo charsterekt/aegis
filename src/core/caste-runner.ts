@@ -525,7 +525,7 @@ function buildTitanPrompt(
         "Do not create another blocker from this issue; policy-created blockers must terminate with success or failure.",
       ]
       : []),
-    "Preserve existing Aegis/Beads operational files and ignore rules. Do not modify .aegis/, .beads/, or remove their existing .gitignore coverage.",
+    "Preserve existing Aegis operational files and ignore rules. Do not modify .aegis/ or remove its existing .gitignore coverage.",
     ...WINDOWS_TERMINAL_GUARD,
     "Do not run long-running dev, preview, watcher, or server commands. They block the adapter session and will be treated as an operational failure.",
     "Oracle suggested checks are advisory; skip checks that require files or package manifests outside the allowed file scope.",

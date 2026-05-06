@@ -95,8 +95,8 @@ describe("createAgentRuntime(scripted)", () => {
       "utf8",
     );
 
-    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
-      BeadsTrackerClient: class {
+    vi.doMock("../../../src/tracker/create-tracker.js", () => ({
+      createTrackerClient: () => new class {
         async getIssue() {
           return {
             id: "ISSUE-1",
@@ -111,7 +111,7 @@ describe("createAgentRuntime(scripted)", () => {
             labels: [],
           };
         }
-      },
+      }(),
     }));
 
     const { createAgentRuntime } = await import("../../../src/runtime/scripted-agent-runtime.js");

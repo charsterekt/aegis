@@ -197,7 +197,6 @@ export const TODO_READY_QUEUE_EXPECTATION = [
 
 export const TODO_MOCK_RUN_MANIFEST: MockRunManifest = {
   repoName: "aegis-mock-run",
-  beadsPrefix: "aegismockrun",
   issues: TODO_MOCK_RUN_ISSUES,
   expectedInitialReadyKeys: [...TODO_READY_QUEUE_EXPECTATION],
 };
