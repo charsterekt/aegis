@@ -13,6 +13,7 @@ import {
   CodexCasteRuntime,
   commandLineReferencesWorkspace,
   createCodexModelConfigs,
+  isAllowedPlaywrightManagedWorkspaceServer,
   isForbiddenLongRunningWorkspaceCommand,
 } from "../../../src/runtime/codex-caste-runtime.js";
 
@@ -206,6 +207,22 @@ describe("CodexCasteRuntime", () => {
     )).toBe(false);
     expect(isForbiddenLongRunningWorkspaceCommand("npm.cmd run dev -- --host 127.0.0.1")).toBe(true);
     expect(isForbiddenLongRunningWorkspaceCommand("npm.cmd run build")).toBe(false);
+  });
+
+  it("allows Playwright-managed webServer children while still detecting direct dev servers", () => {
+    const parentByPid = new Map([
+      [42, 41],
+      [41, 40],
+    ]);
+    const commandByPid = new Map([
+      [40, "node C:/repo/node_modules/@playwright/test/cli.js test --config playwright.config.ts"],
+      [41, "npm.cmd run dev -- --host 127.0.0.1 --port 4173"],
+      [42, "node C:/repo/node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4173"],
+    ]);
+
+    expect(isAllowedPlaywrightManagedWorkspaceServer(42, parentByPid, commandByPid)).toBe(true);
+    expect(isAllowedPlaywrightManagedWorkspaceServer(41, parentByPid, commandByPid)).toBe(true);
+    expect(isAllowedPlaywrightManagedWorkspaceServer(99, parentByPid, commandByPid)).toBe(false);
   });
 
   it("builds a Windows cleanup script that only kills forbidden workspace processes", () => {

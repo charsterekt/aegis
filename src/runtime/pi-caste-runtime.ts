@@ -909,10 +909,6 @@ function resolveTools(
     ];
   }
 
-  if (caste === "sentinel") {
-    return [];
-  }
-
   return [
     wrapReadonlyCasteFileTool(piCodingAgent.createReadTool(workingDirectory), workingDirectory),
     wrapReadonlyCasteFileTool(

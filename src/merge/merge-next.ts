@@ -276,8 +276,9 @@ function updateDispatchStage(
   now: string,
 ) {
   const state = loadDispatchState(root);
+  const latestRecord = state.records[issueId] ?? record;
   const nextState = replaceDispatchRecord(state, issueId, {
-    ...record,
+    ...latestRecord,
     stage,
     updatedAt: now,
   });

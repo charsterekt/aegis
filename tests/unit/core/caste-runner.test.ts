@@ -363,6 +363,45 @@ describe("runCasteCommand", () => {
     expect(transcript.prompt).toContain("Declared file ownership: docs/setup-contract.md, docs/setup-gate.md");
   });
 
+  it("recovers Oracle diagnostic text as scout context when the final assessment tool is missing", async () => {
+    const root = createTempRoot();
+    saveDispatchState(root, emptyDispatchState());
+    const issue = {
+      ...createIssue("aegis-oracle-recover"),
+      description: [
+        "Implement core state.",
+        "Aegis file ownership: src/domain/todo.ts, src/state/todo-store.ts",
+      ].join("\n"),
+    };
+
+    const result = await runCasteCommand({
+      root,
+      action: "scout",
+      issueId: "aegis-oracle-recover",
+      tracker: {
+        getIssue: vi.fn(async () => issue),
+      },
+      runtime: new ScriptedCasteRuntime({
+        oracle: () => ({
+          output: "The owned files should contain todo domain types and store state.",
+          error: "Oracle tool contract violation: missing 'emit_oracle_assessment' output.",
+        }),
+      }),
+    });
+
+    expect(result).toMatchObject({
+      action: "scout",
+      issueId: "aegis-oracle-recover",
+      stage: "scouted",
+    });
+    const artifact = JSON.parse(
+      readFileSync(path.join(root, ".aegis", "oracle", "aegis-oracle-recover.json"), "utf8"),
+    ) as { files_affected: string[]; risks: string[]; session: { status: string } };
+    expect(artifact.files_affected).toEqual(["src/domain/todo.ts", "src/state/todo-store.ts"]);
+    expect(artifact.risks.join("\n")).toContain("Recovered Oracle scout context");
+    expect(artifact.session.status).toBe("failed");
+  });
+
   it("clears downstream artifact refs when scout rewinds an issue", async () => {
     const root = createTempRoot();
     saveDispatchState(root, {
@@ -2509,9 +2548,130 @@ describe("runCasteCommand", () => {
       resolveLaborBasePath: () => "scratchpad",
     });
 
-    expect(titanPrompt).toContain("Prior Sentinel or Janus feedback:");
+    expect(titanPrompt).toContain("Rework priority from prior Sentinel or Janus feedback:");
     expect(titanPrompt).toContain("src/state/todo-store.ts persists filter state outside the core contract.");
     expect(titanPrompt).toContain("If resolving this feedback requires files outside the allowed file scope, emit a blocking mutation_proposal");
+  });
+
+  it("preserves committed candidate files when Titan reworks Sentinel feedback", async () => {
+    const root = createTempRoot();
+    initializeGitRepository(root);
+
+    const issueId = "aegis-rework-preserve";
+    const laborPath = path.join(root, "scratchpad", issueId);
+    runGit(root, ["worktree", "add", "-b", `aegis/${issueId}`, laborPath, "main"]);
+    mkdirSync(path.join(laborPath, "src", "state"), { recursive: true });
+    writeFileSync(path.join(laborPath, "src", "state", "todo-commands.ts"), "export const partial = true;\n", "utf8");
+    runGit(laborPath, ["add", "src/state/todo-commands.ts"]);
+    runGit(laborPath, ["commit", "-m", "partial candidate"]);
+
+    const sentinelRef = persistArtifact(root, {
+      family: "sentinel",
+      issueId,
+      artifact: {
+        verdict: "fail_blocking",
+        reviewSummary: "todo command tests missing",
+        blockingFindings: [
+          {
+            finding_kind: "contract_gap",
+            summary: "Complete command behavior and tests.",
+            required_files: ["src/state/todo-commands.ts"],
+            owner_issue: issueId,
+            route: "rework_owner",
+          },
+        ],
+        advisories: [],
+        touchedFiles: ["src/state/todo-commands.ts"],
+        contractChecks: ["todo commands complete"],
+      },
+    });
+    persistArtifact(root, {
+      family: "oracle",
+      issueId,
+      artifact: createOracleOutput({
+        files_affected: ["src/state/todo-commands.ts"],
+        suggested_checks: ["npm.cmd test"],
+      }),
+    });
+    persistArtifact(root, {
+      family: "titan",
+      issueId,
+      artifact: {
+        outcome: "success",
+        summary: "partial candidate",
+        files_changed: ["src/state/todo-commands.ts"],
+        tests_and_checks_run: [],
+        known_risks: [],
+        follow_up_work: [],
+        labor_path: path.join("scratchpad", issueId),
+        candidate_branch: `aegis/${issueId}`,
+        base_branch: "main",
+      },
+    });
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        [issueId]: {
+          issueId,
+          stage: "rework_required",
+          runningAgent: null,
+          lastCompletedCaste: "sentinel",
+          blockedByIssueId: null,
+          reviewFeedbackRef: sentinelRef,
+          policyArtifactRef: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", `${issueId}.json`),
+          titanHandoffRef: path.join(".aegis", "titan", `${issueId}.json`),
+          titanClarificationRef: null,
+          sentinelVerdictRef: sentinelRef,
+          janusArtifactRef: null,
+          failureTranscriptRef: null,
+          fileScope: { files: ["src/state/todo-commands.ts"] },
+          failureCount: 1,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    const result = await runCasteCommand({
+      root,
+      action: "implement",
+      issueId,
+      tracker: {
+        getIssue: vi.fn(async () => createIssue(issueId)),
+      },
+      runtime: new ScriptedCasteRuntime({
+        titan: (input) => {
+          const commandPath = path.join(input.workingDirectory, "src", "state", "todo-commands.ts");
+          expect(readFileSync(commandPath, "utf8")).toContain("partial = true");
+          writeFileSync(commandPath, "export const partial = true;\nexport const fixed = true;\n", "utf8");
+          runGit(input.workingDirectory, ["add", "src/state/todo-commands.ts"]);
+          runGit(input.workingDirectory, ["commit", "-m", "complete candidate"]);
+          return {
+            output: JSON.stringify({
+              outcome: "success",
+              summary: "completed rework candidate",
+              files_changed: ["src/state/todo-commands.ts"],
+              tests_and_checks_run: ["npm.cmd test"],
+              known_risks: [],
+              follow_up_work: [],
+            }),
+          };
+        },
+      }),
+      resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => "scratchpad",
+    });
+
+    expect(result).toMatchObject({
+      action: "implement",
+      issueId,
+      stage: "implemented",
+    });
+    expect(readFileSync(path.join(laborPath, "src", "state", "todo-commands.ts"), "utf8")).toContain("fixed = true");
   });
 
   it("injects failure steering into Titan retry prompts", async () => {
@@ -3813,5 +3973,148 @@ describe("runCasteCommand", () => {
       stage: "queued_for_merge",
     });
     expect(reviewWorkingDirectory).toBe(laborPath);
+  });
+
+  it("recovers Sentinel diagnostic defect text as rework when the final verdict tool is missing", async () => {
+    const root = createTempRoot();
+    mkdirSync(path.join(root, ".aegis", "titan"), { recursive: true });
+    writeFileSync(
+      path.join(root, ".aegis", "titan", "aegis-1004.json"),
+      `${JSON.stringify({
+        outcome: "success",
+        summary: "partial todo model",
+        files_changed: ["src/state/todo-commands.ts"],
+        tests_and_checks_run: [],
+        known_risks: [],
+        follow_up_work: [],
+        labor_path: "scratchpad/aegis-1004",
+        candidate_branch: "aegis/aegis-1004",
+        base_branch: "main",
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-1004": {
+          issueId: "aegis-1004",
+          stage: "implemented",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-1004.json"),
+          titanHandoffRef: path.join(".aegis", "titan", "aegis-1004.json"),
+          sentinelVerdictRef: null,
+          fileScope: { files: ["src/state/todo-commands.ts", "src/state/todo-commands.test.ts"] },
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    const result = await runCasteCommand({
+      root,
+      action: "review",
+      issueId: "aegis-1004",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-1004")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        sentinel: () => ({
+          output: "The todo-commands.ts file is truncated and src/state/todo-commands.test.ts is missing.",
+          error: "Sentinel tool contract violation: missing 'emit_sentinel_verdict' output.",
+        }),
+      }),
+    });
+
+    expect(result).toMatchObject({
+      action: "review",
+      issueId: "aegis-1004",
+      stage: "rework_required",
+    });
+
+    const state = loadDispatchState(root);
+    expect(state.records["aegis-1004"]).toMatchObject({
+      stage: "rework_required",
+      reviewFeedbackRef: path.join(".aegis", "sentinel", "aegis-1004.json"),
+    });
+    const artifact = JSON.parse(
+      readFileSync(path.join(root, ".aegis", "sentinel", "aegis-1004.json"), "utf8"),
+    ) as { verdict: string; blockingFindings: Array<{ summary: string; route: string }> };
+    expect(artifact.verdict).toBe("fail_blocking");
+    expect(artifact.blockingFindings[0]?.route).toBe("rework_owner");
+    expect(artifact.blockingFindings[0]?.summary).toContain("truncated");
+  });
+
+  it("recovers Sentinel positive diagnostic text as pass when scoped files exist and the verdict tool is missing", async () => {
+    const root = createTempRoot();
+    const laborPath = path.join(root, "scratchpad", "aegis-1005");
+    mkdirSync(path.join(root, ".aegis", "titan"), { recursive: true });
+    mkdirSync(laborPath, { recursive: true });
+    writeFileSync(path.join(laborPath, "package.json"), "{\"scripts\":{\"build\":\"vite\"}}\n", "utf8");
+    writeFileSync(path.join(laborPath, "index.html"), "<div id=\"root\"></div>\n", "utf8");
+    writeFileSync(
+      path.join(root, ".aegis", "titan", "aegis-1005.json"),
+      `${JSON.stringify({
+        outcome: "success",
+        summary: "foundation files",
+        files_changed: ["package.json", "index.html"],
+        tests_and_checks_run: [],
+        known_risks: [],
+        follow_up_work: [],
+        labor_path: "scratchpad/aegis-1005",
+        candidate_branch: "aegis/aegis-1005",
+        base_branch: "main",
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-1005": {
+          issueId: "aegis-1005",
+          stage: "implemented",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-1005.json"),
+          titanHandoffRef: path.join(".aegis", "titan", "aegis-1005.json"),
+          sentinelVerdictRef: null,
+          fileScope: { files: ["package.json", "index.html"] },
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        },
+      },
+    });
+
+    const result = await runCasteCommand({
+      root,
+      action: "review",
+      issueId: "aegis-1005",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-1005")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        sentinel: () => ({
+          output: "Good, the package manifest and HTML entrypoint are present and valid.",
+          error: "Sentinel tool contract violation: missing 'emit_sentinel_verdict' output.",
+        }),
+      }),
+    });
+
+    expect(result).toMatchObject({
+      action: "review",
+      issueId: "aegis-1005",
+      stage: "queued_for_merge",
+    });
+    const artifact = JSON.parse(
+      readFileSync(path.join(root, ".aegis", "sentinel", "aegis-1005.json"), "utf8"),
+    ) as { verdict: string; blockingFindings: unknown[] };
+    expect(artifact.verdict).toBe("pass");
+    expect(artifact.blockingFindings).toEqual([]);
   });
 });

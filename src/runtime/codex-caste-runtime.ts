@@ -205,6 +205,34 @@ export function isForbiddenLongRunningWorkspaceCommand(commandLine: string) {
     || /\bwebpack\s+serve\b/.test(normalized);
 }
 
+function isPlaywrightTestCommand(commandLine: string) {
+  const normalized = commandLine.replace(/\\/g, "/").replace(/\s+/g, " ").trim().toLowerCase();
+  return /\bplaywright(\.cmd|\.exe|\.js)?\b.*\btest\b/.test(normalized)
+    || /@playwright\/test\b.*\btest\b/.test(normalized);
+}
+
+export function isAllowedPlaywrightManagedWorkspaceServer(
+  processId: number,
+  parentByPid: Map<number, number>,
+  commandByPid: Map<number, string>,
+) {
+  let current = processId;
+  const visited = new Set<number>();
+  for (let depth = 0; depth < 20; depth += 1) {
+    const parent = parentByPid.get(current);
+    if (!parent || visited.has(parent)) {
+      return false;
+    }
+    visited.add(parent);
+    const commandLine = commandByPid.get(parent) ?? "";
+    if (isPlaywrightTestCommand(commandLine)) {
+      return true;
+    }
+    current = parent;
+  }
+  return false;
+}
+
 function findForbiddenWorkspaceProcess(
   workingDirectory: string,
   platform: NodeJS.Platform = process.platform,
@@ -213,7 +241,7 @@ function findForbiddenWorkspaceProcess(
     const script = [
       "$ErrorActionPreference = 'SilentlyContinue'",
       "Get-CimInstance Win32_Process | ForEach-Object {",
-      "  if ($_.CommandLine) { [Console]::Out.WriteLine(([string]$_.ProcessId) + \"`t\" + $_.CommandLine) }",
+      "  if ($_.CommandLine) { [Console]::Out.WriteLine(([string]$_.ProcessId) + \"`t\" + ([string]$_.ParentProcessId) + \"`t\" + $_.CommandLine) }",
       "}",
     ].join("\n");
     const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
@@ -223,15 +251,28 @@ function findForbiddenWorkspaceProcess(
     if (result.status !== 0) {
       return null;
     }
+    const parentByPid = new Map<number, number>();
+    const commandByPid = new Map<number, string>();
+    const snapshots: Array<{ pid: number; commandLine: string }> = [];
     for (const line of result.stdout.split(/\r?\n/)) {
-      const separator = line.indexOf("\t");
-      if (separator === -1) {
+      const [pidText, parentText, commandLine] = line.split("\t", 3);
+      const pid = Number(pidText);
+      const parent = Number(parentText);
+      if (!Number.isFinite(pid) || !commandLine) {
         continue;
       }
-      const commandLine = line.slice(separator + 1);
+      if (Number.isFinite(parent)) {
+        parentByPid.set(pid, parent);
+      }
+      commandByPid.set(pid, commandLine);
+      snapshots.push({ pid, commandLine });
+    }
+    for (const snapshot of snapshots) {
+      const commandLine = snapshot.commandLine;
       if (
         commandLineReferencesWorkspace(commandLine, workingDirectory, platform)
         && isForbiddenLongRunningWorkspaceCommand(commandLine)
+        && !isAllowedPlaywrightManagedWorkspaceServer(snapshot.pid, parentByPid, commandByPid)
       ) {
         return commandLine;
       }
@@ -239,22 +280,39 @@ function findForbiddenWorkspaceProcess(
     return null;
   }
 
-  const ps = spawnSync("ps", ["-eo", "pid=,command="], {
+  const ps = spawnSync("ps", ["-eo", "pid=,ppid=,command="], {
     encoding: "utf8",
     windowsHide: true,
   });
   if (ps.status !== 0) {
     return null;
   }
+  const parentByPid = new Map<number, number>();
+  const commandByPid = new Map<number, string>();
+  const snapshots: Array<{ pid: number; commandLine: string }> = [];
   for (const line of ps.stdout.split(/\r?\n/)) {
-    const match = line.trim().match(/^(\d+)\s+(.+)$/);
+    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
     if (!match) {
       continue;
     }
-    const commandLine = match[2] ?? "";
+    const pid = Number(match[1]);
+    const parent = Number(match[2]);
+    const commandLine = match[3] ?? "";
+    if (!Number.isFinite(pid)) {
+      continue;
+    }
+    if (Number.isFinite(parent)) {
+      parentByPid.set(pid, parent);
+    }
+    commandByPid.set(pid, commandLine);
+    snapshots.push({ pid, commandLine });
+  }
+  for (const snapshot of snapshots) {
+    const commandLine = snapshot.commandLine;
     if (
       commandLineReferencesWorkspace(commandLine, workingDirectory, platform)
       && isForbiddenLongRunningWorkspaceCommand(commandLine)
+      && !isAllowedPlaywrightManagedWorkspaceServer(snapshot.pid, parentByPid, commandByPid)
     ) {
       return commandLine;
     }

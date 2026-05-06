@@ -490,6 +490,16 @@ function buildTitanPrompt(
         "Stay within the allowed file scope. If required work is truly outside that scope, emit a blocking mutation_proposal instead of editing unrelated files.",
       ]
       : []),
+    ...(reviewFeedback
+      ? [
+        "Rework priority from prior Sentinel or Janus feedback:",
+        reviewFeedback,
+        isPolicyCreatedBlocker
+          ? "Resolve this feedback before returning success or explicit failure."
+          : "Resolve this feedback before returning success or already_satisfied.",
+        "If resolving this feedback requires files outside the allowed file scope, emit a blocking mutation_proposal instead of repeating the same handoff.",
+      ]
+      : []),
     ...(scopeNotes
       ? [
         "Oracle scope notes:",
@@ -506,16 +516,6 @@ function buildTitanPrompt(
       ? [
         "Failure steering:",
         options.failureSteering.map((entry) => `- ${entry}`).join("\n"),
-      ]
-      : []),
-    ...(reviewFeedback
-      ? [
-        "Prior Sentinel or Janus feedback:",
-        reviewFeedback,
-        isPolicyCreatedBlocker
-          ? "Resolve this feedback before returning success or explicit failure."
-          : "Resolve this feedback before returning success or already_satisfied.",
-        "If resolving this feedback requires files outside the allowed file scope, emit a blocking mutation_proposal instead of repeating the same handoff.",
       ]
       : []),
     ...(options?.requiresIntegrationRework
@@ -1253,6 +1253,157 @@ function isMissingTitanArtifactFailure(session: CasteSessionResult) {
     );
 }
 
+function isMissingSentinelVerdictFailure(session: CasteSessionResult) {
+  const haystack = [
+    session.error,
+    session.outputText,
+  ].filter((entry): entry is string => typeof entry === "string").join("\n").toLowerCase();
+
+  return session.status === "failed"
+    && haystack.includes("emit_sentinel_verdict")
+    && haystack.includes("missing");
+}
+
+function isMissingOracleAssessmentFailure(session: CasteSessionResult) {
+  const haystack = [
+    session.error,
+    session.outputText,
+  ].filter((entry): entry is string => typeof entry === "string").join("\n").toLowerCase();
+
+  return session.status === "failed"
+    && haystack.includes("emit_oracle_assessment")
+    && haystack.includes("missing");
+}
+
+function truncateDiagnosticSummary(input: string) {
+  const compact = input
+    .replace(/\s+/g, " ")
+    .trim();
+  return compact.length > 500 ? `${compact.slice(0, 497)}...` : compact;
+}
+
+function extractAssistantDiagnosticText(session: CasteSessionResult) {
+  const messageLog = session.messageLog ?? [];
+  return messageLog
+    .filter((message) => message.role === "assistant")
+    .map((message) => message.content)
+    .filter((content) => !content.toLowerCase().includes("tool contract repair required"))
+    .join("\n")
+    .trim();
+}
+
+function synthesizeOracleAssessmentFromDiagnostic(input: {
+  issue: AegisIssue;
+  session: CasteSessionResult;
+}): ReturnType<typeof parseOracleAssessment> | null {
+  if (!isMissingOracleAssessmentFailure(input.session)) {
+    return null;
+  }
+
+  const scopedFiles = normalizeFileScope(input.issue.fileScope ?? [])
+    ?? normalizeFileScope(extractDeclaredFileScope(input.issue.description ?? ""));
+  const files = scopedFiles?.files ?? [];
+  if (files.length === 0) {
+    return null;
+  }
+
+  const diagnostic = extractAssistantDiagnosticText(input.session);
+  return {
+    files_affected: files,
+    estimated_complexity: "moderate",
+    risks: [
+      "Recovered Oracle scout context after missing emit_oracle_assessment.",
+    ],
+    suggested_checks: [
+      "npm.cmd run build",
+      "npm.cmd test",
+      "npm.cmd run lint",
+    ],
+    scope_notes: [
+      `Declared file ownership is authoritative: ${files.join(", ")}.`,
+      ...(diagnostic
+        ? [`Recovered Oracle diagnostic: ${truncateDiagnosticSummary(diagnostic)}`]
+        : []),
+    ],
+  };
+}
+
+function synthesizeSentinelVerdictFromDiagnostic(input: {
+  issue: AegisIssue;
+  record: DispatchRecord;
+  session: CasteSessionResult;
+  workingDirectory: string;
+}): ReturnType<typeof parseSentinelVerdict> | null {
+  if (!isMissingSentinelVerdictFailure(input.session)) {
+    return null;
+  }
+
+  const diagnostic = extractAssistantDiagnosticText(input.session);
+  const lowerDiagnostic = diagnostic.toLowerCase();
+  const scopedFiles = input.record.fileScope?.files ?? [];
+  const hasCandidateDefect = [
+    "truncated",
+    "missing",
+    "does not exist",
+    "not present",
+    "incomplete",
+    "contract_gap",
+    "fail",
+    "error",
+  ].some((marker) => lowerDiagnostic.includes(marker));
+  if (!diagnostic) {
+    return null;
+  }
+
+  const summary = truncateDiagnosticSummary(diagnostic);
+  if (!hasCandidateDefect) {
+    const allScopedFilesExist = scopedFiles.length > 0
+      && scopedFiles.every((entry) => existsSync(path.join(input.workingDirectory, entry)));
+    if (!allScopedFilesExist) {
+      return null;
+    }
+
+    return {
+      verdict: "pass",
+      reviewSummary: `Recovered Sentinel pass diagnostic for ${input.issue.id} after missing final verdict tool: ${summary}`,
+      blockingFindings: [],
+      advisories: [
+        "Recovered pass verdict from Sentinel diagnostic text after missing emit_sentinel_verdict.",
+      ],
+      touchedFiles: scopedFiles,
+      contractChecks: [
+        "Recovered Sentinel diagnostic text after missing final verdict tool.",
+        "Verified all owned file-scope paths exist in the candidate worktree.",
+      ],
+    };
+  }
+
+  const ownershipSummary = scopedFiles.length > 0
+    ? `Complete the owned file scope before returning success: ${scopedFiles.join(", ")}. `
+    : "";
+  const findingSummary = truncateDiagnosticSummary(`${ownershipSummary}Sentinel diagnostic: ${summary}`);
+  return {
+    verdict: "fail_blocking",
+    reviewSummary: `Recovered Sentinel blocking diagnostic for ${input.issue.id} after missing final verdict tool: ${findingSummary}`,
+    blockingFindings: [
+      {
+        finding_kind: "contract_gap",
+        summary: findingSummary,
+        required_files: scopedFiles,
+        owner_issue: input.issue.id,
+        route: "rework_owner",
+      },
+    ],
+    advisories: [
+      "Recovered fail_blocking verdict from Sentinel diagnostic text after missing emit_sentinel_verdict.",
+    ],
+    touchedFiles: scopedFiles,
+    contractChecks: [
+      "Recovered Sentinel diagnostic text after missing final verdict tool.",
+    ],
+  };
+}
+
 function isRecoverableDirtyTitanFailure(session: CasteSessionResult) {
   return session.status === "failed";
 }
@@ -1383,8 +1534,13 @@ async function runScout(
   } satisfies CasteRunInput;
   const session = await input.runtime.run(runInput);
   const transcriptRef = persistSessionArtifact(input.root, input.action, runInput, session);
-  assertSuccessfulSession(runInput, session);
-  const assessment = parseOracleAssessment(session.outputText);
+  const assessment = session.status === "succeeded"
+    ? parseOracleAssessment(session.outputText)
+    : synthesizeOracleAssessmentFromDiagnostic({ issue, session });
+  if (!assessment) {
+    assertSuccessfulSession(runInput, session);
+    throw new Error(`Oracle session for ${issue.id} did not produce a usable assessment.`);
+  }
   const artifactRef = persistArtifact(input.root, {
     family: "oracle",
     issueId: issue.id,
@@ -1435,6 +1591,12 @@ async function runImplement(
   };
   const baseBranch = input.resolveBaseBranch?.() ?? resolveConfig().git.base_branch;
   const laborBasePath = input.resolveLaborBasePath?.() ?? resolveConfig().labor.base_path;
+  const existingLaborPath = path.join(input.root, laborBasePath, issue.id);
+  const preserveExistingCandidate = existsSync(existingLaborPath) && record.titanHandoffRef !== null && (
+    record.stage === "rework_required"
+    || record.reviewFeedbackRef !== null
+    || record.janusArtifactRef !== null
+  );
   const refreshExistingLabor = (
     record.stage === "scouted"
     && record.titanHandoffRef === null
@@ -1442,11 +1604,12 @@ async function runImplement(
     && record.failureCount > 0
   ) || (
     record.stage === "rework_required"
+    && !preserveExistingCandidate
   ) || (
     record.stage === "implementing"
     && (record.failureCount > 0 || record.reviewFeedbackRef !== null || record.titanHandoffRef === null)
+    && !preserveExistingCandidate
   );
-  const existingLaborPath = path.join(input.root, laborBasePath, issue.id);
   const preserveRecoverableDirtyLabor = hasRecoverableDirtyTitanLabor({
     workingDirectory: existingLaborPath,
     fileScope: record.fileScope,
@@ -1750,8 +1913,18 @@ async function runReview(
   } satisfies CasteRunInput;
   const session = await input.runtime.run(runInput);
   const transcriptRef = persistSessionArtifact(input.root, input.action, runInput, session);
-  assertSuccessfulSession(runInput, session);
-  const verdict = parseSentinelVerdict(session.outputText);
+  const verdict = session.status === "succeeded"
+    ? parseSentinelVerdict(session.outputText)
+    : synthesizeSentinelVerdictFromDiagnostic({
+      issue,
+      record,
+      session,
+      workingDirectory: runInput.workingDirectory,
+    });
+  if (!verdict) {
+    assertSuccessfulSession(runInput, session);
+    throw new Error(`Sentinel session for ${issue.id} did not produce a usable verdict.`);
+  }
   const ambientFindings = verdict.blockingFindings.filter((finding) => isAmbientCrossScopeFinding({
     root: input.root,
     issue,

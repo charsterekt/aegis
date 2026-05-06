@@ -197,6 +197,44 @@ describe("runMergeNext", () => {
     });
   });
 
+  it("preserves latest dispatch record fields when marking a merge complete", async () => {
+    const root = createTempRoot();
+    const issueId = "aegis-latest-record";
+    writeState(root, issueId);
+
+    await runMergeNext(root, {
+      tracker: {
+        getIssue: vi.fn(async () => createIssue(issueId)),
+      },
+      executor: {
+        execute: vi.fn(async () => {
+          const state = loadDispatchState(root);
+          saveDispatchState(root, {
+            ...state,
+            records: {
+              ...state.records,
+              [issueId]: {
+                ...state.records[issueId]!,
+                policyArtifactRef: ".aegis/policy/latest.json",
+              },
+            },
+          });
+          return {
+            outcome: "merged" as const,
+            detail: "Merged cleanly.",
+          };
+        }),
+      },
+      now: "2026-04-24T10:30:00.000Z",
+    });
+
+    expect(loadDispatchState(root).records[issueId]).toMatchObject({
+      stage: "complete",
+      policyArtifactRef: ".aegis/policy/latest.json",
+      sentinelVerdictRef: path.join(".aegis", "sentinel", `${issueId}.json`),
+    });
+  });
+
   it("uses real git merge execution when runtime is pi", async () => {
     const root = createTempRoot();
     writeFileSync(

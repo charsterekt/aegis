@@ -78,7 +78,7 @@ const CONTRACT_FIXTURES: ContractFixture[] = [
       contractChecks: [],
     },
     outputSnippet: "\"verdict\":\"pass\"",
-    expectedActiveTools: [SENTINEL_EMIT_VERDICT_TOOL_NAME],
+    expectedActiveTools: ["read", "find", "ls", "grep", SENTINEL_EMIT_VERDICT_TOOL_NAME],
   },
   {
     caste: "janus",
@@ -781,7 +781,7 @@ describe("PiCasteRuntime", () => {
     expect(result.outputText).toContain("\"estimated_complexity\":\"moderate\"");
   });
 
-  it("keeps Phase H/I tool setup: titan coding tools, scouts read-only tools, Sentinel emit-only", async () => {
+  it("keeps Phase H/I tool setup: titan coding tools and review/scout read-only tools", async () => {
     for (const fixture of CONTRACT_FIXTURES) {
       configureToolSuccess(fixture);
       const runtime = createSingleCasteRuntime(fixture.caste);
@@ -813,6 +813,9 @@ describe("PiCasteRuntime", () => {
       "repo/oracle",
     );
     expect(mockedAgent.createReadTool).toHaveBeenCalledWith(
+      "repo/sentinel",
+    );
+    expect(mockedAgent.createReadTool).toHaveBeenCalledWith(
       "repo/janus",
     );
     expect(mockedAgent.createFindTool).toHaveBeenCalledWith(
@@ -826,6 +829,15 @@ describe("PiCasteRuntime", () => {
     );
     expect(mockedAgent.createFindTool).toHaveBeenCalledWith(
       "repo/janus",
+      expect.objectContaining({
+        operations: expect.objectContaining({
+          exists: expect.any(Function),
+          glob: expect.any(Function),
+        }),
+      }),
+    );
+    expect(mockedAgent.createFindTool).toHaveBeenCalledWith(
+      "repo/sentinel",
       expect.objectContaining({
         operations: expect.objectContaining({
           exists: expect.any(Function),
@@ -835,12 +847,18 @@ describe("PiCasteRuntime", () => {
     );
     expect(mockedAgent.createLsTool).toHaveBeenCalledWith(
       "repo/oracle",
+    );
+    expect(mockedAgent.createLsTool).toHaveBeenCalledWith(
+      "repo/sentinel",
     );
     expect(mockedAgent.createLsTool).toHaveBeenCalledWith(
       "repo/janus",
     );
     expect(mockedAgent.createGrepTool).toHaveBeenCalledWith(
       "repo/oracle",
+    );
+    expect(mockedAgent.createGrepTool).toHaveBeenCalledWith(
+      "repo/sentinel",
     );
     expect(mockedAgent.createGrepTool).toHaveBeenCalledWith(
       "repo/janus",
