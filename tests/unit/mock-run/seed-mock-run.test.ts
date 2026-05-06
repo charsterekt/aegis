@@ -128,7 +128,6 @@ describe("seedMockRun", () => {
     };
     const uiComponents = snapshot.tickets[result.issueIdByKey["ui.components"]!]!;
     expect(uiComponents.blockedBy).toEqual([
-      result.issueIdByKey["foundation.app"],
       result.issueIdByKey["core.todo"],
     ]);
     expect(uiComponents.labels).toEqual(expect.arrayContaining([
@@ -151,9 +150,12 @@ describe("seedMockRun", () => {
       "src/components/TodoList.tsx",
     ]);
     expect(snapshot.tickets[result.issueIdByKey["foundation.app"]!]?.parent).toBe(result.issueIdByKey["todo-webapp.program"]);
+    expect(snapshot.tickets[result.issueIdByKey["core.todo"]!]?.blockedBy).toEqual([
+      result.issueIdByKey["foundation.app"],
+    ]);
   });
 
-  it("preserves parallel Oracle and post-scout Titan readiness through Agora", async () => {
+  it("runs foundation before core, then exposes product lanes in parallel", async () => {
     const workspaceRoot = createWorkspaceRoot();
     const result = await seedMockRun({
       workspaceRoot,
@@ -170,7 +172,27 @@ describe("seedMockRun", () => {
     expect(poll.readyIssues.map((issue) => issue.id)).toEqual(
       result.initialReadyKeys.map((key) => result.issueIdByKey[key]),
     );
-    expect(poll.readyIssues.length).toBeGreaterThan(1);
+    expect(poll.readyIssues).toHaveLength(1);
+
+    await tracker.closeIssue(result.issueIdByKey["foundation.app"]!, result.repoRoot);
+    await expect(tracker.listReadyIssues(result.repoRoot)).resolves.toEqual([
+      {
+        id: result.issueIdByKey["core.todo"],
+        title: "[core] Implement todo model and state",
+      },
+    ]);
+
+    await tracker.closeIssue(result.issueIdByKey["core.todo"]!, result.repoRoot);
+    await expect(tracker.listReadyIssues(result.repoRoot)).resolves.toEqual([
+      {
+        id: result.issueIdByKey["ui.components"],
+        title: "[ui] Build todo product components",
+      },
+      {
+        id: result.issueIdByKey["motion.polish"],
+        title: "[motion] Add animation and visual polish",
+      },
+    ]);
 
     saveDispatchState(result.repoRoot, {
       schemaVersion: 1,

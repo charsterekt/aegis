@@ -59,7 +59,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     priority: 1,
     queueRole: "executable",
     parentKey: "todo-webapp.program",
-    blocks: [],
+    blocks: ["foundation.app"],
     labels: ["mock-run", "core", "todo", "lane_b"],
   },
   {
@@ -85,7 +85,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     priority: 1,
     queueRole: "executable",
     parentKey: "todo-webapp.program",
-    blocks: ["foundation.app", "core.todo"],
+    blocks: ["core.todo"],
     labels: ["mock-run", "ui", "product", "lane_c"],
   },
   {
@@ -108,7 +108,7 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
     priority: 1,
     queueRole: "executable",
     parentKey: "todo-webapp.program",
-    blocks: ["foundation.app", "core.todo"],
+    blocks: ["core.todo"],
     labels: ["mock-run", "motion", "polish", "lane_d"],
   },
   {
@@ -191,7 +191,6 @@ export const TODO_MOCK_RUN_ISSUES: MockRunManifest["issues"] = [
 
 export const TODO_READY_QUEUE_EXPECTATION = [
   "foundation.app",
-  "core.todo",
 ] as const;
 
 export const TODO_MOCK_RUN_MANIFEST: MockRunManifest = {

@@ -2511,6 +2511,86 @@ describe("runCasteCommand", () => {
     expect(titanPrompt).toContain("If resolving this feedback requires files outside the allowed file scope, emit a blocking mutation_proposal");
   });
 
+  it("injects failure steering into Titan retry prompts", async () => {
+    const root = createTempRoot();
+    const transcriptRef = path.join(".aegis", "transcripts", "aegis-retry--titan.json");
+    mkdirSync(path.dirname(path.join(root, transcriptRef)), { recursive: true });
+    writeFileSync(path.join(root, transcriptRef), `${JSON.stringify({
+      error: "Titan tool contract violation: missing 'emit_titan_artifact' output.",
+      outputText: "Tool contract repair required: no 'emit_titan_artifact' output was captured.",
+    }, null, 2)}\n`, "utf8");
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-retry": {
+          issueId: "aegis-retry",
+          stage: "scouted",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "aegis-retry.json"),
+          titanHandoffRef: null,
+          titanClarificationRef: null,
+          sentinelVerdictRef: null,
+          janusArtifactRef: null,
+          failureTranscriptRef: transcriptRef,
+          operationalFailureKind: "runtime_failure",
+          fileScope: {
+            files: ["src/index.ts"],
+          },
+          failureCount: 1,
+          consecutiveFailures: 1,
+          failureWindowStartMs: 1778073209153,
+          cooldownUntil: null,
+          sessionProvenanceId: "test",
+          updatedAt: "2026-05-06T13:00:00.000Z",
+        },
+      },
+    });
+    persistArtifact(root, {
+      family: "oracle",
+      issueId: "aegis-retry",
+      artifact: {
+        files_affected: ["src/index.ts"],
+        estimated_complexity: "moderate",
+        risks: [],
+        suggested_checks: [],
+        scope_notes: [],
+      },
+    });
+    initializeGitRepository(root);
+
+    let titanPrompt = "";
+    await runCasteCommand({
+      root,
+      action: "implement",
+      issueId: "aegis-retry",
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-retry")),
+      },
+      runtime: new ScriptedCasteRuntime({
+        titan: (input) => {
+          titanPrompt = input.prompt;
+          return {
+            output: JSON.stringify({
+              outcome: "already_satisfied",
+              summary: "already satisfied",
+              files_changed: [],
+              tests_and_checks_run: ["inspected current files"],
+              known_risks: [],
+              follow_up_work: [],
+            }),
+          };
+        },
+      }),
+      resolveBaseBranch: () => "main",
+      resolveLaborBasePath: () => "scratchpad",
+    });
+
+    expect(titanPrompt).toContain("Failure steering:");
+    expect(titanPrompt).toContain("Previous titan attempt failed");
+    expect(titanPrompt).toContain("emit_titan_artifact");
+    expect(titanPrompt).toContain("Stage and commit in-scope edits");
+  });
+
   it("fails closed instead of creating repeated blockers after a resolved child", async () => {
     const root = createTempRoot();
     saveDispatchState(root, {

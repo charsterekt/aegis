@@ -45,6 +45,7 @@ import {
   type MutationProposal,
 } from "./control-plane-policy.js";
 import { calculateFailureCooldown, resolveFailureWindowStartMs } from "./failure-policy.js";
+import { buildFailureSteeringPromptLines } from "./failure-steering.js";
 import type { TrackerClient } from "../tracker/tracker.js";
 
 interface TrackerLike extends Pick<TrackerClient, "closeIssue" | "createIssue" | "linkBlockingIssue" | "updateIssueScope"> {
@@ -127,6 +128,7 @@ function artifactEmissionInstruction(
 function buildOraclePrompt(
   issue: AegisIssue,
   emissionMode?: RunCasteCommandInput["artifactEmissionMode"],
+  failureSteering?: string[],
 ) {
   const description = issue.description?.trim() || "No description provided.";
   const blockers = issue.blockers.length > 0 ? issue.blockers.join(", ") : "none";
@@ -144,6 +146,12 @@ function buildOraclePrompt(
     `Labels: ${labels}`,
     ...(declaredScope.length > 0
       ? [`Declared file ownership: ${declaredScope.join(", ")}`]
+      : []),
+    ...(failureSteering?.length
+      ? [
+        "Failure steering:",
+        failureSteering.map((entry) => `- ${entry}`).join("\n"),
+      ]
       : []),
     "Produce only scout context: files, risks, suggested checks, and scope notes.",
     ...WINDOWS_TERMINAL_GUARD,
@@ -442,6 +450,7 @@ function buildTitanPrompt(
     suggestedChecks?: string[];
     scopeNotes?: string[];
     reviewFeedback?: string[];
+    failureSteering?: string[];
     resolvedBlockerIssueId?: string | null;
     requiresIntegrationRework?: boolean;
     artifactEmissionMode?: RunCasteCommandInput["artifactEmissionMode"];
@@ -491,6 +500,12 @@ function buildTitanPrompt(
       ? [
         "Oracle suggested checks:",
         suggestedChecks,
+      ]
+      : []),
+    ...(options?.failureSteering?.length
+      ? [
+        "Failure steering:",
+        options.failureSteering.map((entry) => `- ${entry}`).join("\n"),
       ]
       : []),
     ...(reviewFeedback
@@ -562,6 +577,7 @@ function buildSentinelPrompt(
   options?: {
     fileScope?: { files: string[] } | null;
     titanReviewContext?: string[];
+    failureSteering?: string[];
     emissionMode?: RunCasteCommandInput["artifactEmissionMode"];
   },
 ) {
@@ -581,6 +597,12 @@ function buildSentinelPrompt(
       ]
       : []),
     "Return binary control verdict pass or fail_blocking.",
+    ...(options?.failureSteering?.length
+      ? [
+        "Failure steering:",
+        options.failureSteering.map((entry) => `- ${entry}`).join("\n"),
+      ]
+      : []),
     ...WINDOWS_TERMINAL_GUARD,
     "Sentinel is review-only. Do not edit files, repair defects, or complete missing work.",
     "If the candidate is incomplete, truncated, missing owned content, or otherwise fails the issue contract, emit fail_blocking with route=rework_owner.",
@@ -713,6 +735,7 @@ function buildJanusPrompt(
   issue: AegisIssue,
   janusContext?: JanusConflictContext,
   emissionMode?: RunCasteCommandInput["artifactEmissionMode"],
+  failureSteering?: string[],
 ) {
   const description = issue.description?.trim() || "No description provided.";
   const contextLines = janusContext
@@ -732,6 +755,12 @@ function buildJanusPrompt(
     `Title: ${issue.title}`,
     `Description: ${description}`,
     ...contextLines,
+    ...(failureSteering?.length
+      ? [
+        "Failure steering:",
+        failureSteering.map((entry) => `- ${entry}`).join("\n"),
+      ]
+      : []),
     ...WINDOWS_TERMINAL_GUARD,
     artifactEmissionInstruction(JANUS_EMIT_RESOLUTION_TOOL_NAME, "conflict analysis is complete", emissionMode),
     "Return only JSON. No markdown fences. No prose before or after JSON.",
@@ -1300,7 +1329,11 @@ async function runScout(
     issueId: issue.id,
     root: input.root,
     workingDirectory: input.root,
-    prompt: buildOraclePrompt(issue, input.artifactEmissionMode),
+    prompt: buildOraclePrompt(
+      issue,
+      input.artifactEmissionMode,
+      buildFailureSteeringPromptLines({ root: input.root, caste: "oracle", record }),
+    ),
   } satisfies CasteRunInput;
   const session = await input.runtime.run(runInput);
   const transcriptRef = persistSessionArtifact(input.root, input.action, runInput, session);
@@ -1401,6 +1434,7 @@ async function runImplement(
       suggestedChecks: oracleContext?.suggestedChecks,
       scopeNotes: oracleContext?.scopeNotes,
       reviewFeedback,
+      failureSteering: buildFailureSteeringPromptLines({ root: input.root, caste: "titan", record }),
       requiresIntegrationRework,
       resolvedBlockerIssueId: record.blockedByIssueId ?? null,
       artifactEmissionMode: input.artifactEmissionMode,
@@ -1658,6 +1692,7 @@ async function runReview(
     prompt: buildSentinelPrompt(issue, {
       fileScope: record.fileScope,
       titanReviewContext: readTitanReviewContext(input.root, record.titanHandoffRef),
+      failureSteering: buildFailureSteeringPromptLines({ root: input.root, caste: "sentinel", record }),
       emissionMode: input.artifactEmissionMode,
     }),
   } satisfies CasteRunInput;
@@ -1913,7 +1948,12 @@ async function runJanus(
     issueId: issue.id,
     root: input.root,
     workingDirectory: input.root,
-    prompt: buildJanusPrompt(issue, input.janusContext, input.artifactEmissionMode),
+    prompt: buildJanusPrompt(
+      issue,
+      input.janusContext,
+      input.artifactEmissionMode,
+      buildFailureSteeringPromptLines({ root: input.root, caste: "janus", record }),
+    ),
   } satisfies CasteRunInput;
   const gitProofPair = captureGitProofPair(runInput.workingDirectory);
   const session = await input.runtime.run(runInput);

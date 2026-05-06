@@ -26,7 +26,7 @@ describe("TODO_MOCK_RUN_ISSUES", () => {
   });
 
   it("starts with product-building lanes instead of standalone contract documents", () => {
-    expect(TODO_READY_QUEUE_EXPECTATION).toEqual(["foundation.app", "core.todo"]);
+    expect(TODO_READY_QUEUE_EXPECTATION).toEqual(["foundation.app"]);
 
     for (const key of TODO_READY_QUEUE_EXPECTATION) {
       const issue = TODO_MOCK_RUN_ISSUES.find((candidate) => candidate.key === key)!;
@@ -87,8 +87,9 @@ describe("TODO_MOCK_RUN_ISSUES", () => {
   it("keeps product implementation ordered before release verification", () => {
     const byKey = new Map(TODO_MOCK_RUN_ISSUES.map((issue) => [issue.key, issue]));
 
-    expect(byKey.get("ui.components")?.blocks).toEqual(["foundation.app", "core.todo"]);
-    expect(byKey.get("motion.polish")?.blocks).toEqual(["foundation.app", "core.todo"]);
+    expect(byKey.get("core.todo")?.blocks).toEqual(["foundation.app"]);
+    expect(byKey.get("ui.components")?.blocks).toEqual(["core.todo"]);
+    expect(byKey.get("motion.polish")?.blocks).toEqual(["core.todo"]);
     expect(byKey.get("app.integration")?.blocks).toEqual(["ui.components", "motion.polish"]);
     expect(byKey.get("release.smoke")?.blocks).toEqual(["app.integration"]);
     expect(byKey.get("janus.integration")?.blocks).toEqual(["app.integration"]);
