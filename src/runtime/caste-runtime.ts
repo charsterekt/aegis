@@ -1,11 +1,12 @@
-import type { AegisThinkingLevel } from "../config/schema.js";
+import type {
+  AdapterCasteName,
+  AdapterFinalResult,
+  AdapterSessionMessage,
+} from "./adapter-contract.js";
 
-export type CasteName = "oracle" | "titan" | "sentinel" | "janus";
+export type CasteName = AdapterCasteName;
 
-export interface CasteSessionMessage {
-  role: "user" | "assistant";
-  content: string;
-}
+export type CasteSessionMessage = AdapterSessionMessage;
 
 export interface CasteRunInput {
   caste: CasteName;
@@ -15,22 +16,12 @@ export interface CasteRunInput {
   prompt: string;
 }
 
-export interface CasteSessionResult {
-  sessionId: string;
-  caste: CasteName;
-  modelRef: string;
-  provider: string;
-  modelId: string;
-  thinkingLevel: AegisThinkingLevel;
-  status: "succeeded" | "failed";
-  outputText: string;
-  toolsUsed: string[];
-  messageLog: CasteSessionMessage[];
-  startedAt: string;
-  finishedAt: string;
-  error?: string;
-}
+export type CasteSessionResult = Omit<AdapterFinalResult, "artifactRefs"> & {
+  artifactRefs?: AdapterFinalResult["artifactRefs"];
+};
 
+// Direct caste runtimes collapse the canonical spawn/status/finalResult loop
+// into one terminal command call. Daemon runtimes keep the steps separate.
 export interface CasteRuntime {
   run(input: CasteRunInput): Promise<CasteSessionResult>;
 }
