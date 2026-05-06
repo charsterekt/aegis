@@ -2,6 +2,7 @@ import type { AegisConfig } from "../config/schema.js";
 import type { DispatchRecord, DispatchState } from "./dispatch-state.js";
 import type { TrackerReadyIssue } from "../tracker/tracker.js";
 import { hasExhaustedOperationalRetries } from "./failure-policy.js";
+import { calculateScopeOverlapCount } from "../shared/file-scope.js";
 
 export type TriageSkipReason =
   | "capacity"
@@ -122,31 +123,6 @@ const MERGE_RESERVED_SCOPE_STAGES = new Set<DispatchRecord["stage"]>([
   "merging",
   "resolving_integration",
 ]);
-
-function normalizeScopeFile(candidate: string) {
-  return candidate.replace(/\\/g, "/").replace(/^\.\//, "").trim();
-}
-
-function normalizeScopeStem(candidate: string) {
-  const normalized = normalizeScopeFile(candidate);
-  const lastSlashIndex = normalized.lastIndexOf("/");
-  const lastDotIndex = normalized.lastIndexOf(".");
-  return lastDotIndex > lastSlashIndex
-    ? normalized.slice(0, lastDotIndex)
-    : normalized;
-}
-
-function calculateScopeOverlapCount(left: string[], right: string[]) {
-  const leftStems = new Set(left.map((entry) => normalizeScopeStem(entry)).filter((entry) => entry.length > 0));
-  const rightStems = new Set(right.map((entry) => normalizeScopeStem(entry)).filter((entry) => entry.length > 0));
-  let overlap = 0;
-  for (const entry of leftStems) {
-    if (rightStems.has(entry)) {
-      overlap += 1;
-    }
-  }
-  return overlap;
-}
 
 export function triageReadyWork(input: TriageInput): TriageResult {
   const nowMs = Date.parse(input.now ?? new Date().toISOString());

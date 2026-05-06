@@ -21,8 +21,7 @@ function makeDeps(
 ): StartupPreflightDependencies {
   return {
     verifyGitRepo: () => undefined,
-    probeBeadsCli: () => ({ ok: true }),
-    probeBeadsRepo: () => ({ ok: true }),
+    probeTrackerBackend: () => ({ ok: true }),
     loadConfig: () => makeConfig(),
     verifyRuntimeAdapter: () => ({ ok: true }),
     verifyRuntimeLocalConfig: () => ({ ok: true }),
@@ -41,8 +40,7 @@ describe("runStartupPreflight", () => {
       repoRoot: "repo",
       checks: [
         { id: "git_repo", label: "git repo", status: "pass", detail: "Inside a git worktree." },
-        { id: "beads_cli", label: "beads cli", status: "pass", detail: "Beads CLI is available." },
-        { id: "beads_repo", label: "beads repo", status: "pass", detail: "Beads tracker is initialized." },
+        { id: "tracker_backend", label: "tracker backend", status: "pass", detail: "Agora tracker backend is available." },
         { id: "aegis_config", label: "aegis config", status: "pass", detail: "Config loaded." },
         { id: "runtime_adapter", label: "runtime adapter", status: "pass", detail: "Runtime adapter is supported." },
         { id: "runtime_local_config", label: "runtime local config", status: "pass", detail: "Runtime local config is valid." },
@@ -52,20 +50,19 @@ describe("runStartupPreflight", () => {
     });
   });
 
-  it("returns blocked when the Beads repository is missing", () => {
+  it("returns blocked when the tracker backend is unavailable", () => {
     const report = runStartupPreflight("repo", makeDeps({
-      probeBeadsRepo: () => ({
+      probeTrackerBackend: () => ({
         ok: false,
-        detail: "Beads tracker is not initialized.",
-        fix: "run `bd init` or `bd onboard` in this repository",
+        detail: "Agora tracker cannot load tickets.",
+        fix: "repair .agora/tickets.json",
       }),
     }));
 
     expect(report.overall).toBe("blocked");
     expect(report.checks.map((check) => [check.id, check.status])).toEqual([
       ["git_repo", "pass"],
-      ["beads_cli", "pass"],
-      ["beads_repo", "fail"],
+      ["tracker_backend", "fail"],
       ["aegis_config", "skipped"],
       ["runtime_adapter", "skipped"],
       ["runtime_local_config", "skipped"],
@@ -73,22 +70,21 @@ describe("runStartupPreflight", () => {
       ["runtime_state_paths", "skipped"],
     ]);
     expect(formatStartupPreflight(report)).toContain(
-      "fix: run `bd init` or `bd onboard` in this repository",
+      "fix: repair .agora/tickets.json",
     );
   });
 
   it("converts thrown probe errors into a failed check and skips downstream work", () => {
     const report = runStartupPreflight("repo", makeDeps({
-      probeBeadsCli: () => {
-        throw new Error("bd executable missing");
+      probeTrackerBackend: () => {
+        throw new Error("tracker failed");
       },
     }));
 
     expect(report.overall).toBe("blocked");
     expect(report.checks.map((check) => [check.id, check.status, check.detail])).toEqual([
       ["git_repo", "pass", "Inside a git worktree."],
-      ["beads_cli", "fail", "bd executable missing"],
-      ["beads_repo", "skipped", "Skipped because an earlier preflight check failed."],
+      ["tracker_backend", "fail", "tracker failed"],
       ["aegis_config", "skipped", "Skipped because an earlier preflight check failed."],
       ["runtime_adapter", "skipped", "Skipped because an earlier preflight check failed."],
       ["runtime_local_config", "skipped", "Skipped because an earlier preflight check failed."],
@@ -99,16 +95,16 @@ describe("runStartupPreflight", () => {
 
   it("uses a failure fallback detail when a failing probe does not provide one", () => {
     const report = runStartupPreflight("repo", makeDeps({
-      probeBeadsCli: () => ({ ok: false }),
+      probeTrackerBackend: () => ({ ok: false }),
     }));
 
     expect(report.overall).toBe("blocked");
     expect(report.checks[1]).toMatchObject({
-      id: "beads_cli",
+      id: "tracker_backend",
       status: "fail",
     });
-    expect(report.checks[1]?.detail).not.toBe("Beads CLI is available.");
-    expect(formatStartupPreflight(report)).not.toContain("Beads CLI is available.");
+    expect(report.checks[1]?.detail).not.toBe("Agora tracker backend is available.");
+    expect(formatStartupPreflight(report)).not.toContain("Agora tracker backend is available.");
   });
 
   it("fails the aegis_config check when loading config throws", () => {
@@ -121,8 +117,7 @@ describe("runStartupPreflight", () => {
     expect(report.overall).toBe("blocked");
     expect(report.checks.map((check) => [check.id, check.status, check.detail])).toEqual([
       ["git_repo", "pass", "Inside a git worktree."],
-      ["beads_cli", "pass", "Beads CLI is available."],
-      ["beads_repo", "pass", "Beads tracker is initialized."],
+      ["tracker_backend", "pass", "Agora tracker backend is available."],
       ["aegis_config", "fail", "Config file is missing."],
       ["runtime_adapter", "skipped", "Skipped because an earlier preflight check failed."],
       ["runtime_local_config", "skipped", "Skipped because an earlier preflight check failed."],
@@ -141,11 +136,10 @@ describe("runStartupPreflight", () => {
     }));
 
     expect(report.overall).toBe("blocked");
-    expect(report.checks).toHaveLength(8);
+    expect(report.checks).toHaveLength(7);
     expect(report.checks.map((check) => [check.id, check.status])).toEqual([
       ["git_repo", "pass"],
-      ["beads_cli", "pass"],
-      ["beads_repo", "pass"],
+      ["tracker_backend", "pass"],
       ["aegis_config", "pass"],
       ["runtime_adapter", "pass"],
       ["runtime_local_config", "pass"],

@@ -80,8 +80,8 @@ describe("runDaemonCycle", () => {
       },
     });
 
-    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
-      BeadsTrackerClient: class {
+    vi.doMock("../../../src/tracker/create-tracker.js", () => ({
+      createTrackerClient: () => new class {
         async listReadyIssues() {
           return [];
         }
@@ -100,7 +100,7 @@ describe("runDaemonCycle", () => {
             labels: [],
           };
         }
-      },
+      }(),
     }));
 
     const { runDaemonCycle } = await import("../../../src/core/loop-runner.js");
@@ -159,8 +159,8 @@ describe("runDaemonCycle", () => {
     });
 
     const updateIssueScope = vi.fn(async () => undefined);
-    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
-      BeadsTrackerClient: class {
+    vi.doMock("../../../src/tracker/create-tracker.js", () => ({
+      createTrackerClient: () => new class {
         async listReadyIssues() {
           return [{ id: "ISSUE-BLOCKER", title: "Policy child" }];
         }
@@ -188,7 +188,7 @@ describe("runDaemonCycle", () => {
         }
 
         updateIssueScope = updateIssueScope;
-      },
+      }(),
     }));
 
     const launch = vi.fn(async (input: any) => ({
@@ -279,8 +279,8 @@ describe("runDaemonCycle", () => {
       "utf8",
     );
 
-    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
-      BeadsTrackerClient: class {
+    vi.doMock("../../../src/tracker/create-tracker.js", () => ({
+      createTrackerClient: () => new class {
         async listReadyIssues() {
           return [{ id: "ISSUE-1", title: "Example" }];
         }
@@ -299,7 +299,7 @@ describe("runDaemonCycle", () => {
             labels: [],
           };
         }
-      },
+      }(),
     }));
 
     const { runDaemonCycle } = await import("../../../src/core/loop-runner.js");
@@ -360,12 +360,12 @@ describe("runDaemonCycle", () => {
       },
     });
 
-    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
-      BeadsTrackerClient: class {
+    vi.doMock("../../../src/tracker/create-tracker.js", () => ({
+      createTrackerClient: () => new class {
         async listReadyIssues() {
           return [];
         }
-      },
+      }(),
     }));
 
     const { runDaemonCycle } = await import("../../../src/core/loop-runner.js");
@@ -459,12 +459,12 @@ describe("runDaemonCycle", () => {
       },
     });
 
-    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
-      BeadsTrackerClient: class {
+    vi.doMock("../../../src/tracker/create-tracker.js", () => ({
+      createTrackerClient: () => new class {
         async listReadyIssues() {
           return [];
         }
-      },
+      }(),
     }));
 
     const launch = vi.fn(async (input: any) => ({
@@ -592,12 +592,12 @@ describe("runDaemonCycle", () => {
       },
     });
 
-    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
-      BeadsTrackerClient: class {
+    vi.doMock("../../../src/tracker/create-tracker.js", () => ({
+      createTrackerClient: () => new class {
         async listReadyIssues() {
           return [];
         }
-      },
+      }(),
     }));
 
     const launch = vi.fn(async (input: any) => ({
@@ -663,12 +663,12 @@ describe("runDaemonCycle", () => {
       },
     });
 
-    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
-      BeadsTrackerClient: class {
+    vi.doMock("../../../src/tracker/create-tracker.js", () => ({
+      createTrackerClient: () => new class {
         async listReadyIssues() {
           return [{ id: "ISSUE-REVIEW", title: "Review me" }];
         }
-      },
+      }(),
     }));
 
     const { runDaemonCycle } = await import("../../../src/core/loop-runner.js");
@@ -760,12 +760,12 @@ describe("runDaemonCycle", () => {
       },
     });
 
-    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
-      BeadsTrackerClient: class {
+    vi.doMock("../../../src/tracker/create-tracker.js", () => ({
+      createTrackerClient: () => new class {
         async listReadyIssues() {
           return [];
         }
-      },
+      }(),
     }));
 
     const { runDaemonCycle } = await import("../../../src/core/loop-runner.js");
@@ -874,12 +874,12 @@ describe("runDaemonCycle", () => {
       },
     });
 
-    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
-      BeadsTrackerClient: class {
+    vi.doMock("../../../src/tracker/create-tracker.js", () => ({
+      createTrackerClient: () => new class {
         async listReadyIssues() {
           return [{ id: "ISSUE-PARENT", title: "Parent ready after blocker" }];
         }
-      },
+      }(),
     }));
 
     const launch = vi.fn(async (input: any) => ({
@@ -969,12 +969,12 @@ describe("runDaemonCycle", () => {
       },
     });
 
-    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
-      BeadsTrackerClient: class {
+    vi.doMock("../../../src/tracker/create-tracker.js", () => ({
+      createTrackerClient: () => new class {
         async listReadyIssues() {
           return [{ id: "ISSUE-PARENT", title: "Parent ready after Titan blocker" }];
         }
-      },
+      }(),
     }));
 
     const launch = vi.fn(async (input: any) => ({
@@ -1059,12 +1059,12 @@ describe("runDaemonCycle", () => {
       },
     });
 
-    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
-      BeadsTrackerClient: class {
+    vi.doMock("../../../src/tracker/create-tracker.js", () => ({
+      createTrackerClient: () => new class {
         async listReadyIssues() {
           return [{ id: "ISSUE-LATE", title: "Late handoff" }];
         }
-      },
+      }(),
     }));
 
     const { runLoopPhase } = await import("../../../src/core/loop-runner.js");

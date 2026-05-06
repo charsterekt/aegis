@@ -99,7 +99,7 @@ describe("buildMockRunConfig", () => {
 });
 
 describe("seedMockRun", () => {
-  it("seeds the mock-run graph into Agora without requiring Beads", async () => {
+  it("seeds the mock-run graph into Agora", async () => {
     const workspaceRoot = createWorkspaceRoot();
 
     const result = await seedMockRun({

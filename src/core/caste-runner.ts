@@ -14,7 +14,7 @@ import { parseSentinelVerdict, type SentinelFinding } from "../castes/sentinel/s
 import { SENTINEL_EMIT_VERDICT_TOOL_NAME } from "../castes/sentinel/sentinel-tool-contract.js";
 import { parseJanusResolutionArtifact } from "../castes/janus/janus-parser.js";
 import { JANUS_EMIT_RESOLUTION_TOOL_NAME } from "../castes/janus/janus-tool-contract.js";
-import { buildLaborBranchName, planLaborCreation, prepareLaborWorktree, type LaborCreationPlan } from "../labor/create-labor.js";
+import { planLaborCreation, prepareLaborWorktree, type LaborCreationPlan } from "../labor/create-labor.js";
 import type { RuntimeCasteAction } from "../cli/runtime-command.js";
 import type { AegisIssue } from "../tracker/issue-model.js";
 import type { CasteRunInput, CasteRuntime, CasteSessionResult } from "../runtime/caste-runtime.js";
@@ -22,11 +22,9 @@ import { loadConfig } from "../config/load-config.js";
 import {
   captureGitProofPair,
   completeGitProofPair,
-  hasOnlyAegisRootControlCommits,
   hasAdvancedGitHead,
   persistGitProofArtifacts,
   resolveCommittedChangedFiles,
-  summarizeOperationalStatusDrift,
 } from "./git-proof.js";
 import {
   enqueueMergeCandidate,
@@ -40,6 +38,13 @@ import {
   assertTitanDispatchEligibility,
 } from "./stage-invariants.js";
 import {
+  cleanupRejectedTitanRootDrift,
+  materializeAdoptedRootCandidate,
+  normalizeTitanArtifactChangedFiles,
+  resolveRootCommitAdoption,
+  validateTitanSessionOutcome,
+} from "./titan-session-validation.js";
+import {
   applyMutationProposal,
   applyScopeExpansion,
   type MutationProposal,
@@ -47,6 +52,12 @@ import {
 import { calculateFailureCooldown, resolveFailureWindowStartMs } from "./failure-policy.js";
 import { buildFailureSteeringPromptLines } from "./failure-steering.js";
 import type { TrackerClient } from "../tracker/tracker.js";
+import {
+  hasNewScope,
+  hasScopeIntersection,
+  normalizeFileScope,
+  normalizeScopeFile,
+} from "../shared/file-scope.js";
 
 interface TrackerLike extends Pick<TrackerClient, "closeIssue" | "createIssue" | "linkBlockingIssue" | "updateIssueScope"> {
   getIssue(id: string, root?: string): Promise<AegisIssue>;
@@ -176,20 +187,6 @@ function extractDeclaredFileScope(description: string): string[] {
     .filter((entry) => entry.length > 0);
 }
 
-function normalizeScopeFile(candidate: string) {
-  return candidate.replace(/\\/g, "/").replace(/^\.\//, "").trim();
-}
-
-function normalizeFileScope(files: string[]) {
-  const normalized = [...new Set(
-    files
-      .map((entry) => normalizeScopeFile(entry))
-      .filter((entry) => entry.length > 0),
-  )].sort();
-
-  return normalized.length > 0 ? { files: normalized } : null;
-}
-
 function mergeFileScope(left: { files: string[] } | null, right: string[]) {
   return normalizeFileScope([
     ...(left?.files ?? []),
@@ -228,11 +225,6 @@ function extractScopeFilesFromProposalText(input: {
     input.suggestedDescription ?? "",
     ...input.scopeEvidence,
   ]);
-}
-
-function hasNewScopeFiles(current: { files: string[] } | null, expanded: { files: string[] }) {
-  const currentSet = new Set((current?.files ?? []).map((entry) => normalizeScopeFile(entry)));
-  return expanded.files.some((entry) => !currentSet.has(normalizeScopeFile(entry)));
 }
 
 const AEGIS_CASTE_SESSION_GUARD = [
@@ -416,11 +408,6 @@ function isGateLikeIssue(issue: AegisIssue) {
   return labels.has("gate") || labels.has("release") || labels.has("integration");
 }
 
-function hasScopeIntersection(left: string[], right: string[]) {
-  const rightSet = new Set(right.map((entry) => normalizeScopeFile(entry)));
-  return left.map((entry) => normalizeScopeFile(entry)).some((entry) => rightSet.has(entry));
-}
-
 function isAmbientCrossScopeFinding(input: {
   root: string;
   issue: AegisIssue;
@@ -538,7 +525,7 @@ function buildTitanPrompt(
         "Do not create another blocker from this issue; policy-created blockers must terminate with success or failure.",
       ]
       : []),
-    "Preserve existing Aegis/Beads operational files and ignore rules. Do not modify .aegis/, .beads/, or remove their existing .gitignore coverage.",
+    "Preserve existing Aegis operational files and ignore rules. Do not modify .aegis/ or remove its existing .gitignore coverage.",
     ...WINDOWS_TERMINAL_GUARD,
     "Do not run long-running dev, preview, watcher, or server commands. They block the adapter session and will be treated as an operational failure.",
     "Oracle suggested checks are advisory; skip checks that require files or package manifests outside the allowed file scope.",
@@ -806,335 +793,10 @@ function resolveCandidateWorkingDirectory(root: string, laborPath: string) {
     : path.join(path.resolve(root), laborPath);
 }
 
-function validateTitanSessionOutcome(input: {
-  root: string;
-  issueId: string;
-  issueDescription: string;
-  artifact: ReturnType<typeof parseTitanArtifact>;
-  candidateBranch: string;
-  fileScope: { files: string[] } | null;
-  candidateWorkingDirectory: string;
-  candidateProofPair: { before: ReturnType<typeof captureGitProofPair>["before"]; after: ReturnType<typeof captureGitProofPair>["after"] };
-  rootProofPair: { before: ReturnType<typeof captureGitProofPair>["before"]; after: ReturnType<typeof captureGitProofPair>["after"] };
-  adoptedRootCommit: boolean;
-  requiresIntegrationRework: boolean;
-}) {
-  const rootDrift = summarizeOperationalStatusDrift(input.rootProofPair);
-  if (rootDrift) {
-    return `Titan implementation for ${input.issueId} dirtied the project root outside .aegis: ${rootDrift}.`;
-  }
-
-  if (
-    input.rootProofPair.before?.headCommit
-    && input.rootProofPair.after?.headCommit
-    && input.rootProofPair.before.headCommit !== input.rootProofPair.after.headCommit
-    && !input.adoptedRootCommit
-    && !hasOnlyAegisRootControlCommits(input.root, input.rootProofPair, input.issueId)
-  ) {
-    return `Titan implementation for ${input.issueId} changed the project root HEAD from ${input.rootProofPair.before.headCommit} to ${input.rootProofPair.after.headCommit}.`;
-  }
-
-  const normalizedArtifactFiles = normalizeTitanArtifactChangedFiles(
-    input.issueId,
-    input.artifact.files_changed,
-    input.candidateWorkingDirectory,
-  );
-  const committedFiles = resolveCommittedChangedFiles(
-    input.candidateWorkingDirectory,
-    input.candidateProofPair,
-  ).map((entry) => normalizeScopeFile(entry));
-  const scopeError = validateTitanChangedFilesScope(
-    input.issueId,
-    input.fileScope,
-    [...normalizedArtifactFiles, ...committedFiles],
-  );
-  if (scopeError) {
-    return scopeError;
-  }
-
-  const isPolicyCreatedBlocker = isPolicyCreatedBlockerDescription(input.issueDescription);
-  const isVerifiedPolicyNoopSuccess = isPolicyCreatedBlocker
-    && input.artifact.outcome === "success"
-    && input.artifact.files_changed.length === 0
-    && committedFiles.length === 0
-    && input.artifact.tests_and_checks_run.length > 0;
-  const hasDurableGitProof = input.candidateProofPair.before !== null && input.candidateProofPair.after !== null;
-  if (
-    input.artifact.outcome === "success"
-    && hasDurableGitProof
-    && !isVerifiedPolicyNoopSuccess
-    && !(input.adoptedRootCommit
-      ? hasChangedHead(input.candidateProofPair)
-      : hasAdvancedGitHead(input.candidateProofPair, input.candidateBranch))
-  ) {
-    return `Titan implementation for ${input.issueId} did not advance candidate branch ${input.candidateBranch}.`;
-  }
-
-  if (input.artifact.outcome === "already_satisfied") {
-    if (input.artifact.files_changed.length > 0) {
-      return `Titan already_satisfied handoff for ${input.issueId} must not report changed files.`;
-    }
-
-    if (input.artifact.tests_and_checks_run.length === 0) {
-      return `Titan already_satisfied handoff for ${input.issueId} must include verification checks.`;
-    }
-
-    if (isPolicyCreatedBlocker) {
-      return `Titan policy-created blocker ${input.issueId} must resolve with success or failure, not already_satisfied.`;
-    }
-
-    if (input.requiresIntegrationRework) {
-      return `Titan integration rework for ${input.issueId} must advance the candidate branch, not return already_satisfied.`;
-    }
-  }
-
-  if (
-    input.artifact.mutation_proposal
-    && isPolicyCreatedBlocker
-  ) {
-    return `Titan policy-created blocker ${input.issueId} must resolve with success or failure, not another blocker.`;
-  }
-
-  if (
-    input.artifact.outcome === "success"
-    && committedFiles.length > 0
-    && !committedFiles.every((entry) => normalizedArtifactFiles.includes(entry))
-  ) {
-    return `Titan artifact files_changed for ${input.issueId} must include committed git proof files.`;
-  }
-
-  return null;
-}
-
 function isPolicyCreatedBlockerDescription(description: string) {
   return description.includes("Policy proposal:")
     && description.includes("Fingerprint:")
     && description.includes("Scope evidence:");
-}
-
-function hasChangedHead(proofPair: {
-  before: ReturnType<typeof captureGitProofPair>["before"];
-  after: ReturnType<typeof captureGitProofPair>["after"];
-}) {
-  return Boolean(
-    proofPair.before?.headCommit
-    && proofPair.after?.headCommit
-    && proofPair.before.headCommit !== proofPair.after.headCommit,
-  );
-}
-
-function arraysEqual(left: string[], right: string[]) {
-  return left.length === right.length && left.every((entry, index) => entry === right[index]);
-}
-
-function resolveRootCommitAdoption(input: {
-  issueId: string;
-  root: string;
-  artifact: ReturnType<typeof parseTitanArtifact>;
-  fileScope: { files: string[] } | null;
-  rootProofPair: { before: ReturnType<typeof captureGitProofPair>["before"]; after: ReturnType<typeof captureGitProofPair>["after"] };
-}) {
-  if (input.artifact.outcome !== "success" || !hasChangedHead(input.rootProofPair)) {
-    return null;
-  }
-
-  if (summarizeOperationalStatusDrift(input.rootProofPair)) {
-    return null;
-  }
-
-  const rootCommittedFiles = resolveCommittedChangedFiles(
-    input.root,
-    input.rootProofPair,
-  ).map((entry) => normalizeScopeFile(entry));
-  if (rootCommittedFiles.length === 0) {
-    return null;
-  }
-
-  const artifactFiles = normalizeTitanArtifactChangedFiles(
-    input.issueId,
-    input.artifact.files_changed,
-    input.root,
-  );
-  if (!arraysEqual(artifactFiles, rootCommittedFiles)) {
-    return null;
-  }
-
-  if (validateTitanChangedFilesScope(input.issueId, input.fileScope, rootCommittedFiles)) {
-    return null;
-  }
-
-  const baseBranch = input.rootProofPair.before?.branch;
-  const adoptedHeadCommit = input.rootProofPair.after?.headCommit;
-  if (!baseBranch || !adoptedHeadCommit) {
-    return null;
-  }
-
-  return {
-    adoptedHeadCommit,
-    baseBranch,
-  };
-}
-
-function runGit(root: string, args: string[]) {
-  return spawnSync("git", args, {
-    cwd: root,
-    encoding: "utf8",
-    windowsHide: true,
-  });
-}
-
-function formatGitResult(result: ReturnType<typeof runGit>) {
-  return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-}
-
-function buildAdoptedRootBranchName(issueId: string) {
-  return buildLaborBranchName(`adopted/${issueId}`).replace("aegis/adopted-", "aegis/adopted/");
-}
-
-function materializeAdoptedRootCandidate(input: {
-  issueId: string;
-  root: string;
-  adoptedHeadCommit: string;
-}) {
-  const candidateBranch = buildAdoptedRootBranchName(input.issueId);
-  const createBranch = runGit(input.root, [
-    "branch",
-    "-f",
-    candidateBranch,
-    input.adoptedHeadCommit,
-  ]);
-  if (createBranch.status !== 0) {
-    throw new Error(
-      `Failed to create adopted root candidate branch ${candidateBranch} for ${input.issueId}. ${formatGitResult(createBranch)}`,
-    );
-  }
-
-  const verifyBranch = runGit(input.root, ["rev-parse", "--verify", candidateBranch]);
-  if (verifyBranch.status !== 0 || verifyBranch.stdout.trim() !== input.adoptedHeadCommit) {
-    throw new Error(
-      `Failed to verify adopted root candidate branch ${candidateBranch} for ${input.issueId}. ${formatGitResult(verifyBranch)}`,
-    );
-  }
-
-  return candidateBranch;
-}
-
-function isPathInside(basePath: string, candidatePath: string) {
-  const relativePath = path.relative(basePath, candidatePath);
-  return relativePath.length > 0
-    && !relativePath.startsWith("..")
-    && !path.isAbsolute(relativePath);
-}
-
-function normalizeAbsoluteTitanFilePath(
-  issueId: string,
-  candidate: string,
-  laborWorkingDirectory: string,
-) {
-  const normalizedLabor = path.resolve(laborWorkingDirectory);
-  const normalizedCandidate = path.resolve(candidate);
-
-  if (!isPathInside(normalizedLabor, normalizedCandidate)) {
-    throw new Error(`Titan artifact for ${issueId} contains invalid files_changed path: ${candidate}`);
-  }
-
-  return normalizeScopeFile(path.relative(normalizedLabor, normalizedCandidate));
-}
-
-function normalizeTitanArtifactChangedFiles(
-  issueId: string,
-  filesChanged: string[],
-  laborWorkingDirectory: string,
-) {
-  return filesChanged.map((entry) => {
-    const trimmed = entry.trim();
-    if (
-      trimmed.length === 0
-      || /\[[^\]]+\]\([^)]+\)/.test(trimmed)
-    ) {
-      throw new Error(`Titan artifact for ${issueId} contains invalid files_changed path: ${entry}`);
-    }
-
-    if (path.isAbsolute(trimmed)) {
-      return normalizeAbsoluteTitanFilePath(issueId, trimmed, laborWorkingDirectory);
-    }
-
-    if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
-      throw new Error(`Titan artifact for ${issueId} contains invalid files_changed path: ${entry}`);
-    }
-
-    const normalized = normalizeScopeFile(trimmed);
-    if (
-      normalized.length === 0
-      || normalized.startsWith("../")
-      || normalized === ".."
-      || path.isAbsolute(normalized)
-      || /^[a-zA-Z]:\//.test(normalized)
-    ) {
-      throw new Error(`Titan artifact for ${issueId} contains invalid files_changed path: ${entry}`);
-    }
-
-    return normalized;
-  }).sort();
-}
-
-function validateTitanChangedFilesScope(
-  issueId: string,
-  fileScope: { files: string[] } | null,
-  changedFiles: string[],
-) {
-  if (!fileScope) {
-    return null;
-  }
-
-  const allowed = new Set(fileScope.files.map((entry) => normalizeScopeFile(entry)));
-  const outOfScope = [...new Set(changedFiles)]
-    .filter((entry) => entry.length > 0 && !allowed.has(entry))
-    .sort();
-
-  if (outOfScope.length > 0) {
-    return `Titan implementation for ${issueId} changed files outside allowed scope: ${outOfScope.join(", ")}.`;
-  }
-
-  return null;
-}
-
-function isOperationalRootPath(candidate: string) {
-  return candidate !== ".aegis"
-    && !candidate.startsWith(".aegis/")
-    && candidate !== ".agora"
-    && !candidate.startsWith(".agora/");
-}
-
-function listNewOperationalRootDirtyFiles(proofPair: {
-  before: ReturnType<typeof captureGitProofPair>["before"];
-  after: ReturnType<typeof captureGitProofPair>["after"];
-}) {
-  const before = new Set((proofPair.before?.changedFiles ?? []).map((entry) => normalizeScopeFile(entry)));
-  return (proofPair.after?.changedFiles ?? [])
-    .map((entry) => normalizeScopeFile(entry))
-    .filter((entry) => isOperationalRootPath(entry) && !before.has(entry));
-}
-
-function cleanupRejectedTitanRootDrift(root: string, proofPair: {
-  before: ReturnType<typeof captureGitProofPair>["before"];
-  after: ReturnType<typeof captureGitProofPair>["after"];
-}) {
-  const dirtyFiles = listNewOperationalRootDirtyFiles(proofPair);
-  if (dirtyFiles.length === 0) {
-    return;
-  }
-
-  spawnSync("git", ["restore", "--staged", "--worktree", "--", ...dirtyFiles], {
-    cwd: root,
-    encoding: "utf8",
-    windowsHide: true,
-  });
-  spawnSync("git", ["clean", "-f", "--", ...dirtyFiles], {
-    cwd: root,
-    encoding: "utf8",
-    windowsHide: true,
-  });
 }
 
 function persistSessionArtifact(
@@ -1972,7 +1634,7 @@ async function runReview(
   if (blockerFinding) {
     const isPolicyCreatedBlocker = isPolicyCreatedBlockerDescription(issue.description ?? "");
     const expandedFileScope = mergeFileScope(record.fileScope, blockerFinding.required_files);
-    if (isPolicyCreatedBlocker && expandedFileScope && hasNewScopeFiles(record.fileScope, expandedFileScope)) {
+    if (isPolicyCreatedBlocker && expandedFileScope && hasNewScope(record.fileScope?.files ?? [], expandedFileScope.files)) {
       const previousScope = record.fileScope?.files
         ?? issue.fileScope
         ?? extractDeclaredFileScope(issue.description ?? "");

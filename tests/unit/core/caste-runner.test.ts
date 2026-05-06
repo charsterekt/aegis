@@ -1464,7 +1464,7 @@ describe("runCasteCommand", () => {
     expect(prompt).toContain("Current allowed file scope is authoritative for this issue.");
     expect(prompt).toContain("You are a dispatched Aegis caste subagent");
     expect(prompt).toContain("skip those skills and follow this Aegis prompt directly");
-    expect(prompt).toContain("Preserve existing Aegis/Beads operational files and ignore rules.");
+    expect(prompt).toContain("Preserve existing Aegis operational files and ignore rules.");
     expect(prompt).toContain("run package-manager commands as npm.cmd");
     expect(prompt).toContain("Do not use GUI/open/start/invoke-item/Start-Process");
     expect(prompt).toContain("Do not run long-running dev, preview, watcher, or server commands.");
@@ -3875,7 +3875,7 @@ describe("runCasteCommand", () => {
     });
 
     const closeIssue = vi.fn(async () => {
-      throw new Error("bd close failed");
+      throw new Error("tracker close failed");
     });
 
     await expect(runCasteCommand({

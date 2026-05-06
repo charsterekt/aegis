@@ -34,42 +34,30 @@ afterEach(() => {
 });
 
 describe("verifyTrackerRepository", () => {
-  it("accepts a healthy tracker probe even when the worktree has no local .beads directory", () => {
+  it("accepts a healthy Agora tracker backend probe", () => {
     const root = createTempRoot();
 
     expect(() => verifyTrackerRepository(root, () => ({
-      status: 0,
-      stdout: "[]",
-      stderr: "",
-    }), () => ({
       ok: true,
-      detail: "Beads CLI is available.",
+      detail: "Agora tracker backend is available.",
     }))).not.toThrow();
   });
 
-  it("fails clearly when the Beads CLI is unavailable", () => {
+  it("fails clearly when the tracker backend is unavailable", () => {
     const root = createTempRoot();
 
     expect(() => verifyTrackerRepository(root, () => ({
-      status: 0,
-      stdout: "",
-      stderr: "",
-    }), () => ({
       ok: false,
-      detail: "Beads CLI was not found. Install or fix `bd` before starting Aegis.",
-    }))).toThrow("Beads CLI was not found");
+      detail: "Agora tracker backend is unavailable.",
+    }))).toThrow("Agora tracker backend is unavailable");
   });
 
-  it("includes tracker probe details when bd ready fails", () => {
+  it("includes tracker probe details when tracker probe fails", () => {
     const root = createTempRoot();
 
     expect(() => verifyTrackerRepository(root, () => ({
-      status: 1,
-      stdout: "",
-      stderr: "tracker metadata missing",
-    }), () => ({
-      ok: true,
-      detail: "Beads CLI is available.",
+      ok: false,
+      detail: "tracker metadata missing",
     }))).toThrow("tracker metadata missing");
   });
 });
@@ -109,9 +97,9 @@ describe("startAegis daemon loop", () => {
     const result = await startModule.startAegis(root, {}, {
       verifyTracker: () => undefined,
       verifyGitRepo: () => undefined,
-      probeBeadsCli: () => ({
+      probeTrackerBackend: () => ({
         ok: true,
-        detail: "Beads CLI is available.",
+        detail: "Agora tracker backend is available.",
       }),
       registerSignalHandlers: false,
       runDaemonCycle,
@@ -176,9 +164,9 @@ describe("startAegis daemon loop", () => {
     await startModule.startAegis(root, {}, {
       verifyTracker: () => undefined,
       verifyGitRepo: () => undefined,
-      probeBeadsCli: () => ({
+      probeTrackerBackend: () => ({
         ok: true,
-        detail: "Beads CLI is available.",
+        detail: "Agora tracker backend is available.",
       }),
       registerSignalHandlers: false,
       runDaemonCycle,
@@ -241,9 +229,9 @@ describe("startAegis daemon loop", () => {
     const result = await startModule.startAegis(root, {}, {
       verifyTracker: () => undefined,
       verifyGitRepo: () => undefined,
-      probeBeadsCli: () => ({
+      probeTrackerBackend: () => ({
         ok: true,
-        detail: "Beads CLI is available.",
+        detail: "Agora tracker backend is available.",
       }),
       registerSignalHandlers: false,
       runDaemonCycle,
@@ -314,9 +302,9 @@ describe("startAegis daemon loop", () => {
     const result = await startModule.startAegis(root, {}, {
       verifyTracker: () => undefined,
       verifyGitRepo: () => undefined,
-      probeBeadsCli: () => ({
+      probeTrackerBackend: () => ({
         ok: true,
-        detail: "Beads CLI is available.",
+        detail: "Agora tracker backend is available.",
       }),
       registerSignalHandlers: false,
       runDaemonCycle: async () => undefined,
@@ -392,9 +380,9 @@ describe("startAegis daemon loop", () => {
     const result = await startModule.startAegis(root, {}, {
       verifyTracker: () => undefined,
       verifyGitRepo: () => undefined,
-      probeBeadsCli: () => ({
+      probeTrackerBackend: () => ({
         ok: true,
-        detail: "Beads CLI is available.",
+        detail: "Agora tracker backend is available.",
       }),
       registerSignalHandlers: false,
       runDaemonCycle: async () => undefined,
@@ -440,9 +428,9 @@ describe("startAegis daemon loop", () => {
     const result = await startModule.startAegis(root, {}, {
       verifyTracker: () => undefined,
       verifyGitRepo: () => undefined,
-      probeBeadsCli: () => ({
+      probeTrackerBackend: () => ({
         ok: true,
-        detail: "Beads CLI is available.",
+        detail: "Agora tracker backend is available.",
       }),
       registerSignalHandlers: false,
       runDaemonCycle: async () => undefined,
@@ -552,9 +540,9 @@ describe("startAegis daemon loop", () => {
     const result = await startModule.startAegis(root, {}, {
       verifyTracker: () => undefined,
       verifyGitRepo: () => undefined,
-      probeBeadsCli: () => ({
+      probeTrackerBackend: () => ({
         ok: true,
-        detail: "Beads CLI is available.",
+        detail: "Agora tracker backend is available.",
       }),
       registerSignalHandlers: false,
       runDaemonCycle,
@@ -639,9 +627,9 @@ describe("startAegis daemon loop", () => {
     const result = await startModule.startAegis(root, {}, {
       verifyTracker: () => undefined,
       verifyGitRepo: () => undefined,
-      probeBeadsCli: () => ({
+      probeTrackerBackend: () => ({
         ok: true,
-        detail: "Beads CLI is available.",
+        detail: "Agora tracker backend is available.",
       }),
       registerSignalHandlers: false,
       runDaemonCycle,
@@ -706,9 +694,9 @@ describe("startAegis daemon loop", () => {
     await expect(startModule.startAegis(root, {}, {
       verifyTracker: () => undefined,
       verifyGitRepo: () => undefined,
-      probeBeadsCli: () => ({
+      probeTrackerBackend: () => ({
         ok: true,
-        detail: "Beads CLI is available.",
+        detail: "Agora tracker backend is available.",
       }),
       registerSignalHandlers: false,
       verifyModelRefs: () => ({

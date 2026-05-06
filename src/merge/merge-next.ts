@@ -26,6 +26,7 @@ import {
   classifyMergeTier,
   type MergeExecutionOutcome,
 } from "./tier-policy.js";
+import { normalizeScopeFile } from "../shared/file-scope.js";
 
 interface TrackerLike extends Pick<TrackerClient, "closeIssue" | "createIssue" | "linkBlockingIssue"> {
   getIssue(id: string, root?: string): Promise<AegisIssue>;
@@ -286,10 +287,6 @@ function updateDispatchStage(
   return nextState.records[issueId]!;
 }
 
-function normalizeScopePath(candidate: string) {
-  return candidate.replace(/\\/g, "/").replace(/^\.\//, "").trim();
-}
-
 function findActiveTitanDirtyOwners(
   dispatchState: ReturnType<typeof loadDispatchState>,
   dirtyFiles: string[],
@@ -299,11 +296,11 @@ function findActiveTitanDirtyOwners(
   }
 
   const ownerByFile = new Map<string, string>();
-  for (const dirtyFile of dirtyFiles.map((entry) => normalizeScopePath(entry))) {
+  for (const dirtyFile of dirtyFiles.map((entry) => normalizeScopeFile(entry))) {
     const owner = Object.values(dispatchState.records).find((record) =>
       record.runningAgent?.caste === "titan"
       && record.fileScope !== null
-      && record.fileScope.files.map((entry) => normalizeScopePath(entry)).includes(dirtyFile));
+      && record.fileScope.files.map((entry) => normalizeScopeFile(entry)).includes(dirtyFile));
     if (!owner) {
       return null;
     }

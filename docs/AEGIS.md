@@ -65,7 +65,7 @@ Built or mostly built:
 
 - Terminal daemon and direct commands.
 - Core loop shell.
-- Legacy Beads tracker integration.
+- Agora tracker integration through the generic tracker boundary.
 - `.aegis` dispatch, runtime, log, transcript, and caste artifact surfaces.
 - Deterministic scripted runtime for seam tests.
 - Pi-backed live runtime path.
@@ -167,7 +167,7 @@ Deferred until Steps 1-3 work:
 
 - budget/economics guardrails
 - Mnemosyne/Lethe
-- Beads integration and Beads-native messaging
+- alternate tracker integrations
 - eval harness and benchmark corpus
 - extra tracker adapters
 - configurable pipelines
@@ -513,12 +513,12 @@ Before selecting work:
 node packages/agora/dist/cli.js board --json
 ```
 
-Beads is on the backburner. Existing Beads code may remain until replaced, but new Step 1 proof work must route through Agora.
+Agora is the only active tracker backend. Any future tracker integration is later work and must not change Step 1 tracker semantics.
 
 Current next work after this spec:
 
 1. Integrate Agora as Aegis task truth through the existing generic tracker boundary.
-2. Convert seeded React todo mock-run from Beads seeding to Agora seeding with equivalent graph semantics.
+2. Prove seeded React todo mock-run drains through Agora with equivalent graph semantics.
 3. Prove Pi drains the Agora-seeded graph after Copilot usage reset.
 4. If Pi fails by adapter-specific contract breach, use Codex adapter without changing tracker semantics.
 

@@ -3,6 +3,7 @@ import path from "node:path";
 
 import type { AgentCaste, DispatchRecord } from "./dispatch-state.js";
 import type { TrackerClient, TrackerCreateIssueInput } from "../tracker/tracker.js";
+import { normalizeScopeFile } from "../shared/file-scope.js";
 
 export type MutationProposalType =
   | "create_clarification_blocker"
@@ -109,13 +110,9 @@ function hasEvidence(proposal: MutationProposal): boolean {
   return proposal.scopeEvidence.some((entry) => entry.trim().length > 0);
 }
 
-function normalizeScopeFile(candidate: string) {
-  return candidate.replace(/\\/g, "/").replace(/^\.\//, "").trim().toLowerCase();
-}
-
 function extractMentionedFileNames(text: string) {
   const matches = text.match(/[A-Za-z0-9@._/-]+\.[A-Za-z0-9._-]+/g) ?? [];
-  return matches.map((entry) => normalizeScopeFile(entry));
+  return matches.map((entry) => normalizeScopeFile(entry, { lowercase: true }));
 }
 
 function shouldRequeueMissingOwnedFileProposal(input: ApplyMutationProposalInput) {
@@ -139,7 +136,7 @@ function shouldRequeueMissingOwnedFileProposal(input: ApplyMutationProposalInput
     return false;
   }
 
-  const owned = new Set(record.fileScope.files.map((entry) => normalizeScopeFile(entry)));
+  const owned = new Set(record.fileScope.files.map((entry) => normalizeScopeFile(entry, { lowercase: true })));
   const mentionedOwnedFiles = extractMentionedFileNames(text).filter((entry) => owned.has(entry));
   return mentionedOwnedFiles.length > 0;
 }

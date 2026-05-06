@@ -28,7 +28,7 @@ Core loop:
 
 Truth planes:
 
-- task truth: Beads
+- task truth: Agora
 - orchestration truth: `.aegis/dispatch-state.json`
 - merge truth: `.aegis/merge-queue.json`
 - durable observability: `.aegis/logs/` plus caste artifacts
@@ -57,7 +57,7 @@ Do not drift into:
 - SSE/dashboard transport before session terminals
 - economics / budgets / quotas
 - Mnemosyne / Lethe
-- Beads-native messaging
+- tracker-native messaging
 - eval harness / benchmark corpus
 - extra tracker adapters
 - broad pipeline systems
@@ -79,36 +79,35 @@ Do not drift into:
 - Prefer clean deterministic tests over brittle git/installable simulations.
 - Do not claim pass without running relevant command and seeing pass.
 
-## Beads Integration
+## Agora Integration
 
-This project uses `bd` for issue tracking.
+This project uses Agora for issue tracking.
 
 Common commands:
 
 ```bash
-bd ready --json
-bd show <id>
-bd update <id> --claim --json
-bd close <id> --reason "Completed" --json
-bd create "Title" --description "Details" --deps discovered-from:<id> --json
+node packages/agora/dist/cli.js board --json
+node packages/agora/dist/cli.js list --json
+node packages/agora/dist/cli.js create --title "Title" --body "Details" --kind task --actor agent --json
+node packages/agora/dist/cli.js move <id> done --reason "Completed" --actor agent --json
 ```
 
 Rules:
 
-- Use `bd` for work tracking.
+- Use Agora for work tracking.
 - Use `--json` for programmatic calls.
-- Check `bd ready --json` before selecting work.
-- Link discovered work with `discovered-from` dependencies.
+- Check `node packages/agora/dist/cli.js board --json` before selecting work.
+- Link discovered blocking work through Agora dependencies.
 - Do not create markdown TODO tracking.
-- If Beads server is down, report it and continue only with explicitly requested non-Beads work.
+- If Agora is unavailable, report it and continue only with explicitly requested non-Agora work.
 
 ## Session Completion
 
 When closing work session:
 
-1. File real follow-up `bd` issues if needed and available.
+1. File real follow-up Agora tickets if needed and available.
 2. Run relevant verification.
-3. Update issue status in `bd` if available.
+3. Update issue status in Agora if available.
 4. `git pull --rebase`
 5. `git push`
 6. Confirm branch up to date with origin.

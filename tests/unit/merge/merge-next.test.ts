@@ -12,7 +12,6 @@ import { runMergeNext } from "../../../src/merge/merge-next.js";
 import { loadMergeQueueState, saveMergeQueueState, type MergeQueueItem } from "../../../src/merge/merge-state.js";
 import { ScriptedCasteRuntime } from "../../../src/runtime/scripted-caste-runtime.js";
 import type { AgentRuntime } from "../../../src/runtime/agent-runtime.js";
-import { BeadsTrackerClient } from "../../../src/tracker/beads-tracker.js";
 import type { AegisIssue } from "../../../src/tracker/issue-model.js";
 
 const tempRoots: string[] = [];
@@ -791,13 +790,8 @@ describe("runMergeNext", () => {
     const root = createTempRoot();
     writeState(root, "aegis-444");
 
-    const readyIssues: Array<{ id: string; title: string }> = [];
     const issueCatalog = new Map<string, AegisIssue>([
       ["aegis-444", createIssue("aegis-444")],
-    ]);
-
-    vi.spyOn(BeadsTrackerClient.prototype, "listReadyIssues").mockImplementation(async () => [
-      ...readyIssues,
     ]);
 
     const trackerWithFollowUps = {
@@ -830,7 +824,6 @@ describe("runMergeNext", () => {
       stage: "complete",
     });
     expect(trackerWithFollowUps.createIssue).not.toHaveBeenCalled();
-    expect(readyIssues).toEqual([]);
 
     const runtime: AgentRuntime = {
       launch: vi.fn(async (input) => ({
@@ -868,8 +861,6 @@ describe("runMergeNext", () => {
       schemaVersion: 1,
       items: [],
     });
-
-    vi.spyOn(BeadsTrackerClient.prototype, "listReadyIssues").mockImplementation(async () => []);
 
     const runtime: AgentRuntime = {
       launch: vi.fn(async (input) => ({
