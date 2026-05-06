@@ -19,4 +19,5 @@ export interface AegisIssue {
   parentId: string | null;
   childIds: string[];
   labels: string[];
+  fileScope?: string[];
 }

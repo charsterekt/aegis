@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Value } from "@sinclair/typebox/value";
 
 import {
   createOracleEmitAssessmentTool,
@@ -110,5 +111,17 @@ describe("oracle tool contract", () => {
         },
       },
     });
+  });
+
+  it("allows quoted complexity enum at schema validation boundary", () => {
+    const tool = createOracleEmitAssessmentTool();
+
+    expect(Value.Check(tool.parameters, {
+      files_affected: ["docs/ui-contract.md"],
+      estimated_complexity: "\"moderate\"",
+      risks: [],
+      suggested_checks: [],
+      scope_notes: [],
+    })).toBe(true);
   });
 });

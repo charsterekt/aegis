@@ -15,7 +15,7 @@ import { loadDispatchState } from "../core/dispatch-state.js";
 import { readSessionReport, writeSessionReport } from "./session-report.js";
 import { runCasteCommand } from "../core/caste-runner.js";
 import { createCasteRuntime } from "./create-caste-runtime.js";
-import { BeadsTrackerClient } from "../tracker/beads-tracker.js";
+import { createTrackerClient } from "../tracker/create-tracker.js";
 
 type DispatchRuntimeMode = "scripted" | "pi" | "codex";
 type DispatchAction = "scout" | "implement" | "review";
@@ -94,7 +94,7 @@ class CasteDispatchRuntime implements AgentRuntime {
         root: input.root,
         action,
         issueId: input.issueId,
-        tracker: new BeadsTrackerClient(),
+        tracker: createTrackerClient(),
         runtime: createCasteRuntime(this.mode, {}, {
           root: input.root,
           issueId: input.issueId,

@@ -50,7 +50,10 @@ function extractStatusPath(line: string) {
 }
 
 function isOperationalPath(candidate: string) {
-  return candidate !== ".aegis" && !candidate.startsWith(".aegis/");
+  return candidate !== ".aegis"
+    && !candidate.startsWith(".aegis/")
+    && candidate !== ".agora"
+    && !candidate.startsWith(".agora/");
 }
 
 function parseChangedFiles(statusLines: string[]) {
@@ -209,6 +212,54 @@ export function hasAdvancedGitHead(
   }
 
   return proofPair.before.headCommit !== proofPair.after.headCommit;
+}
+
+function isAegisMergeCommitSubject(subject: string) {
+  return /^Merge branch 'aegis\/[^']+'/.test(subject);
+}
+
+function isOtherAegisIssueCommitSubject(subject: string, currentIssueId?: string) {
+  const match = /^(AG-\d+)\b/.exec(subject);
+  return match !== null && match[1] !== currentIssueId;
+}
+
+export function hasOnlyAegisRootControlCommits(
+  workingDirectory: string,
+  proofPair: { before: GitSnapshot | null; after: GitSnapshot | null },
+  currentIssueId?: string,
+) {
+  if (!proofPair.before?.headCommit || !proofPair.after?.headCommit) {
+    return false;
+  }
+  if (proofPair.before.headCommit === proofPair.after.headCommit) {
+    return false;
+  }
+
+  const result = runGit(workingDirectory, [
+    "log",
+    "--first-parent",
+    "--format=%s",
+    `${proofPair.before.headCommit}..${proofPair.after.headCommit}`,
+  ]);
+  if (result.status !== 0) {
+    return false;
+  }
+
+  const subjects = result.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  return subjects.length > 0
+    && subjects.every((subject) =>
+      isAegisMergeCommitSubject(subject)
+      || isOtherAegisIssueCommitSubject(subject, currentIssueId));
+}
+
+export function hasOnlyAegisMergeCommits(
+  workingDirectory: string,
+  proofPair: { before: GitSnapshot | null; after: GitSnapshot | null },
+) {
+  return hasOnlyAegisRootControlCommits(workingDirectory, proofPair);
 }
 
 export function resolveCommittedChangedFiles(

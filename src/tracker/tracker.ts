@@ -9,11 +9,18 @@ export interface TrackerCreateIssueInput {
   title: string;
   description: string;
   dependencies?: string[];
+  fileScope?: string[];
 }
 
 export interface TrackerLinkInput {
   blockingIssueId: string;
   blockedIssueId: string;
+}
+
+export interface TrackerUpdateIssueScopeInput {
+  issueId: string;
+  fileScope: string[];
+  reason: string;
 }
 
 export interface TrackerClient {
@@ -22,4 +29,5 @@ export interface TrackerClient {
   closeIssue?(id: string, root?: string): Promise<void>;
   createIssue?(input: TrackerCreateIssueInput, root?: string): Promise<string>;
   linkBlockingIssue?(input: TrackerLinkInput, root?: string): Promise<void>;
+  updateIssueScope?(input: TrackerUpdateIssueScopeInput, root?: string): Promise<void>;
 }

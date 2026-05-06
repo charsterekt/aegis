@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { initProject } from "../../../src/config/init-project.js";
+import { loadDispatchState, saveDispatchState } from "../../../src/core/dispatch-state.js";
 import {
   StartupPreflightBlockedError,
 } from "../../../src/cli/startup-preflight.js";
@@ -122,6 +123,75 @@ describe("startAegis daemon loop", () => {
     expect(runDaemonCycle).toHaveBeenCalledTimes(2);
 
     await result.runtime.stop();
+  });
+
+  it("pauses the daemon after a provider usage limit failure", async () => {
+    vi.useFakeTimers();
+    const root = createTempRoot();
+    initProject(root);
+
+    const configPath = path.join(root, ".aegis", "config.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8")) as {
+      runtime: string;
+      thresholds: { poll_interval_seconds: number };
+    };
+    writeFileSync(
+      configPath,
+      `${JSON.stringify({
+        ...config,
+        runtime: "scripted",
+        thresholds: {
+          ...config.thresholds,
+          poll_interval_seconds: 1,
+        },
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const runDaemonCycle = vi.fn(async () => {
+      saveDispatchState(root, {
+        schemaVersion: 1,
+        records: {
+          "ISSUE-QUOTA": {
+            issueId: "ISSUE-QUOTA",
+            stage: "failed_operational",
+            runningAgent: null,
+            oracleAssessmentRef: null,
+            titanHandoffRef: null,
+            sentinelVerdictRef: null,
+            fileScope: null,
+            operationalFailureKind: "provider_usage_limit",
+            failureCount: 1,
+            consecutiveFailures: 3,
+            failureWindowStartMs: 1,
+            cooldownUntil: "2026-04-29T20:06:00.000Z",
+            sessionProvenanceId: String(process.pid),
+            updatedAt: "2026-04-29T20:01:00.000Z",
+          },
+        },
+      });
+    });
+    const startModule = await import("../../../src/cli/start.js");
+
+    await startModule.startAegis(root, {}, {
+      verifyTracker: () => undefined,
+      verifyGitRepo: () => undefined,
+      probeBeadsCli: () => ({
+        ok: true,
+        detail: "Beads CLI is available.",
+      }),
+      registerSignalHandlers: false,
+      runDaemonCycle,
+    });
+
+    expect(readRuntimeState(root)).toMatchObject({
+      server_state: "stopped",
+      mode: "paused",
+      last_stop_reason: "provider_usage_limit",
+    });
+
+    await vi.advanceTimersByTimeAsync(1_100);
+    expect(runDaemonCycle).toHaveBeenCalledTimes(1);
   });
 
   it("keeps daemon merge pass active across Janus requeue and fail-closed outcomes", async () => {
@@ -347,6 +417,96 @@ describe("startAegis daemon loop", () => {
     expect(recovered.records["ISSUE-REVIEW"]?.sessionProvenanceId).toBe(String(process.pid));
 
     await result.runtime.stop();
+  });
+
+  it("releases active records on manual stop without consuming retry budget", async () => {
+    const root = createTempRoot();
+    initProject(root);
+
+    const configPath = path.join(root, ".aegis", "config.json");
+    const config = JSON.parse(readFileSync(configPath, "utf8")) as {
+      runtime: string;
+    };
+    writeFileSync(
+      configPath,
+      `${JSON.stringify({
+        ...config,
+        runtime: "scripted",
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const startModule = await import("../../../src/cli/start.js");
+    const result = await startModule.startAegis(root, {}, {
+      verifyTracker: () => undefined,
+      verifyGitRepo: () => undefined,
+      probeBeadsCli: () => ({
+        ok: true,
+        detail: "Beads CLI is available.",
+      }),
+      registerSignalHandlers: false,
+      runDaemonCycle: async () => undefined,
+    });
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "ISSUE-TITAN": {
+          issueId: "ISSUE-TITAN",
+          stage: "implementing",
+          runningAgent: {
+            caste: "titan",
+            sessionId: "running-titan",
+            startedAt: "2026-04-14T11:00:00.000Z",
+          },
+          oracleAssessmentRef: ".aegis/oracle/ISSUE-TITAN.json",
+          sentinelVerdictRef: null,
+          fileScope: { files: ["src/App.tsx"] },
+          failureCount: 2,
+          consecutiveFailures: 2,
+          failureWindowStartMs: 1,
+          cooldownUntil: null,
+          sessionProvenanceId: String(process.pid),
+          updatedAt: "2026-04-14T11:00:00.000Z",
+        },
+        "ISSUE-REVIEW": {
+          issueId: "ISSUE-REVIEW",
+          stage: "reviewing",
+          runningAgent: {
+            caste: "sentinel",
+            sessionId: "running-sentinel",
+            startedAt: "2026-04-14T11:00:00.000Z",
+          },
+          oracleAssessmentRef: ".aegis/oracle/ISSUE-REVIEW.json",
+          titanHandoffRef: ".aegis/titan/ISSUE-REVIEW.json",
+          sentinelVerdictRef: null,
+          fileScope: { files: ["src/App.tsx"] },
+          failureCount: 1,
+          consecutiveFailures: 1,
+          failureWindowStartMs: 1,
+          cooldownUntil: null,
+          sessionProvenanceId: String(process.pid),
+          updatedAt: "2026-04-14T11:00:00.000Z",
+        },
+      },
+    });
+
+    await result.runtime.stop("manual");
+
+    const stopped = loadDispatchState(root);
+    expect(stopped.records["ISSUE-TITAN"]).toMatchObject({
+      stage: "scouted",
+      runningAgent: null,
+      failureCount: 2,
+      consecutiveFailures: 2,
+      cooldownUntil: null,
+    });
+    expect(stopped.records["ISSUE-REVIEW"]).toMatchObject({
+      stage: "implemented",
+      runningAgent: null,
+      failureCount: 1,
+      consecutiveFailures: 1,
+      cooldownUntil: null,
+    });
   });
 
   it("serializes daemon-routed phase commands with an in-flight daemon cycle", async () => {

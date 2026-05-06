@@ -30,6 +30,9 @@ const LABOR_GIT_EXCLUDE_PATTERNS = [
   "dist/",
   "coverage/",
   ".vite/",
+  "test-results/",
+  "playwright-report/",
+  "tsconfig.tsbuildinfo",
 ];
 
 function sanitizeIssueId(issueId: string) {

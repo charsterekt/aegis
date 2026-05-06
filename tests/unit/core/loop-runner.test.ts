@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { initProject } from "../../../src/config/init-project.js";
+import { DEFAULT_AEGIS_CONFIG } from "../../../src/config/defaults.js";
 import { loadDispatchState, saveDispatchState } from "../../../src/core/dispatch-state.js";
 import { loadMergeQueueState } from "../../../src/merge/merge-state.js";
 
@@ -38,6 +39,198 @@ afterEach(() => {
 });
 
 describe("runDaemonCycle", () => {
+  it("recovers stale non-running records when tracker issue is already closed", async () => {
+    const root = createTempRoot();
+    initProject(root);
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "ISSUE-DONE": {
+          issueId: "ISSUE-DONE",
+          stage: "rework_required",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "ISSUE-DONE.json"),
+          titanHandoffRef: path.join(".aegis", "titan", "ISSUE-DONE.json"),
+          sentinelVerdictRef: path.join(".aegis", "sentinel", "ISSUE-DONE.json"),
+          reviewFeedbackRef: path.join(".aegis", "sentinel", "ISSUE-DONE.json"),
+          fileScope: null,
+          failureCount: 2,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "daemon",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        } as any,
+        "ISSUE-OPEN": {
+          issueId: "ISSUE-OPEN",
+          stage: "rework_required",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "ISSUE-OPEN.json"),
+          titanHandoffRef: path.join(".aegis", "titan", "ISSUE-OPEN.json"),
+          sentinelVerdictRef: path.join(".aegis", "sentinel", "ISSUE-OPEN.json"),
+          reviewFeedbackRef: path.join(".aegis", "sentinel", "ISSUE-OPEN.json"),
+          fileScope: null,
+          failureCount: 1,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "daemon",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        } as any,
+      },
+    });
+
+    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
+      BeadsTrackerClient: class {
+        async listReadyIssues() {
+          return [];
+        }
+
+        async getIssue(id: string) {
+          return {
+            id,
+            title: id,
+            description: "Desc",
+            issueClass: "primary",
+            status: id === "ISSUE-DONE" ? "closed" : "open",
+            priority: 1,
+            blockers: [],
+            parentId: null,
+            childIds: [],
+            labels: [],
+          };
+        }
+      },
+    }));
+
+    const { runDaemonCycle } = await import("../../../src/core/loop-runner.js");
+
+    await runDaemonCycle(root);
+
+    const state = loadDispatchState(root);
+    expect(state.records["ISSUE-DONE"]?.stage).toBe("complete");
+    expect(state.records["ISSUE-OPEN"]?.stage).toBe("rework_required");
+  });
+
+  it("recovers failed policy-created blockers by expanding scope from durable Sentinel findings", async () => {
+    const root = createTempRoot();
+    initProject(root);
+    mkdirSync(path.join(root, ".aegis", "sentinel"), { recursive: true });
+    writeFileSync(
+      path.join(root, ".aegis", "sentinel", "ISSUE-BLOCKER.json"),
+      `${JSON.stringify({
+        verdict: "fail_blocking",
+        reviewSummary: "needs app files",
+        blockingFindings: [{
+          finding_kind: "out_of_scope_blocker",
+          summary: "full lint needs src files",
+          required_files: ["package.json", "src/App.tsx", "src/main.tsx"],
+          owner_issue: "ISSUE-BLOCKER",
+          route: "create_blocker",
+        }],
+        advisories: [],
+        ignoredBlockingFindings: [],
+        touchedFiles: ["package.json"],
+        contractChecks: ["lint scope checked"],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "ISSUE-BLOCKER": {
+          issueId: "ISSUE-BLOCKER",
+          stage: "failed_operational",
+          runningAgent: null,
+          oracleAssessmentRef: path.join(".aegis", "oracle", "ISSUE-BLOCKER.json"),
+          titanHandoffRef: path.join(".aegis", "titan", "ISSUE-BLOCKER.json"),
+          sentinelVerdictRef: path.join(".aegis", "sentinel", "ISSUE-BLOCKER.json"),
+          reviewFeedbackRef: path.join(".aegis", "sentinel", "ISSUE-BLOCKER.json"),
+          fileScope: { files: ["package.json"] },
+          failureTranscriptRef: path.join(".aegis", "transcripts", "ISSUE-BLOCKER--titan.json"),
+          failureCount: 6,
+          consecutiveFailures: 3,
+          failureWindowStartMs: 1777562269020,
+          cooldownUntil: "2026-04-29T12:00:30.000Z",
+          sessionProvenanceId: "daemon",
+          updatedAt: "2026-04-14T12:00:00.000Z",
+        } as any,
+      },
+    });
+
+    const updateIssueScope = vi.fn(async () => undefined);
+    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
+      BeadsTrackerClient: class {
+        async listReadyIssues() {
+          return [{ id: "ISSUE-BLOCKER", title: "Policy child" }];
+        }
+
+        async getIssue(id: string) {
+          return {
+            id,
+            title: "Policy child",
+            description: [
+              "Fix policy child.",
+              "Policy proposal: create_out_of_scope_blocker",
+              "Fingerprint: abc123",
+              "Scope evidence:",
+              "- package.json",
+            ].join("\n"),
+            issueClass: "clarification",
+            status: "open",
+            priority: 1,
+            blockers: [],
+            parentId: null,
+            childIds: [],
+            labels: ["aegis-created"],
+            fileScope: ["package.json"],
+          };
+        }
+
+        updateIssueScope = updateIssueScope;
+      },
+    }));
+
+    const launch = vi.fn(async (input: any) => ({
+      sessionId: `session-${input.caste}`,
+      startedAt: "2026-04-29T12:01:00.000Z",
+    }));
+    const { runDaemonCycle } = await import("../../../src/core/loop-runner.js");
+
+    await runDaemonCycle(root, {
+      runtime: {
+        launch,
+        async readSession() {
+          return null;
+        },
+        async terminate() {
+          return null;
+        },
+      },
+      sessionProvenanceId: "daemon-new",
+    });
+
+    expect(updateIssueScope).toHaveBeenCalledWith({
+      issueId: "ISSUE-BLOCKER",
+      fileScope: ["package.json", "src/App.tsx", "src/main.tsx"],
+      reason: expect.stringContaining("Aegis expanded scope"),
+    }, root);
+    expect(launch).toHaveBeenCalledWith(expect.objectContaining({
+      issueId: "ISSUE-BLOCKER",
+      caste: "titan",
+      stage: "implementing",
+    }));
+    const record = loadDispatchState(root).records["ISSUE-BLOCKER"];
+    expect(record).toMatchObject({
+      stage: "implementing",
+      fileScope: { files: ["package.json", "src/App.tsx", "src/main.tsx"] },
+      policyArtifactRef: expect.stringContaining("scope-expanded"),
+      failureTranscriptRef: null,
+      consecutiveFailures: 0,
+      cooldownUntil: null,
+    });
+  });
+
   it("reaps a completed Oracle session into scouted with an artifact ref", async () => {
     const root = createTempRoot();
     initProject(root);
@@ -310,6 +503,129 @@ describe("runDaemonCycle", () => {
     expect(loadMergeQueueState(root).items).toEqual([]);
   });
 
+  it("does not launch pre-merge Sentinel when global agent capacity is full", async () => {
+    const root = createTempRoot();
+    initProject(root);
+    writeFileSync(
+      path.join(root, ".aegis", "config.json"),
+      `${JSON.stringify({
+        ...DEFAULT_AEGIS_CONFIG,
+        concurrency: {
+          ...DEFAULT_AEGIS_CONFIG.concurrency,
+          max_agents: 2,
+          max_oracles: 2,
+          max_titans: 2,
+          max_sentinels: 2,
+        },
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "ISSUE-A": {
+          issueId: "ISSUE-A",
+          stage: "implementing",
+          runningAgent: {
+            caste: "titan",
+            sessionId: "titan-a",
+            startedAt: "2026-04-26T20:00:00.000Z",
+          },
+          oracleAssessmentRef: ".aegis/oracle/ISSUE-A.json",
+          titanHandoffRef: null,
+          titanClarificationRef: null,
+          sentinelVerdictRef: null,
+          janusArtifactRef: null,
+          failureTranscriptRef: null,
+          fileScope: null,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "daemon",
+          updatedAt: "2026-04-26T20:00:00.000Z",
+        } as any,
+        "ISSUE-B": {
+          issueId: "ISSUE-B",
+          stage: "implementing",
+          runningAgent: {
+            caste: "titan",
+            sessionId: "titan-b",
+            startedAt: "2026-04-26T20:00:00.000Z",
+          },
+          oracleAssessmentRef: ".aegis/oracle/ISSUE-B.json",
+          titanHandoffRef: null,
+          titanClarificationRef: null,
+          sentinelVerdictRef: null,
+          janusArtifactRef: null,
+          failureTranscriptRef: null,
+          fileScope: null,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "daemon",
+          updatedAt: "2026-04-26T20:00:00.000Z",
+        } as any,
+        "ISSUE-REVIEW": {
+          issueId: "ISSUE-REVIEW",
+          stage: "implemented",
+          runningAgent: {
+            caste: "sentinel",
+            sessionId: "stale-sentinel-session",
+            startedAt: "2026-04-26T19:50:00.000Z",
+          },
+          oracleAssessmentRef: ".aegis/oracle/ISSUE-REVIEW.json",
+          titanHandoffRef: ".aegis/titan/ISSUE-REVIEW.json",
+          titanClarificationRef: null,
+          sentinelVerdictRef: null,
+          janusArtifactRef: null,
+          failureTranscriptRef: null,
+          fileScope: null,
+          failureCount: 0,
+          consecutiveFailures: 0,
+          failureWindowStartMs: null,
+          cooldownUntil: null,
+          sessionProvenanceId: "daemon",
+          updatedAt: "2026-04-26T20:00:00.000Z",
+        } as any,
+      },
+    });
+
+    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
+      BeadsTrackerClient: class {
+        async listReadyIssues() {
+          return [];
+        }
+      },
+    }));
+
+    const launch = vi.fn(async (input: any) => ({
+      sessionId: `session-${input.caste}`,
+      startedAt: "2026-04-26T20:01:00.000Z",
+    }));
+    const { runDaemonCycle } = await import("../../../src/core/loop-runner.js");
+
+    await runDaemonCycle(root, {
+      runtime: {
+        launch,
+        async readSession() {
+          return null;
+        },
+        async terminate() {
+          return null;
+        },
+      },
+      sessionProvenanceId: "daemon-new",
+    });
+
+    expect(launch).not.toHaveBeenCalled();
+    expect(loadDispatchState(root).records["ISSUE-REVIEW"]).toMatchObject({
+      stage: "implemented",
+      runningAgent: null,
+    });
+  });
+
   it("keeps implemented work in cooldown when pre-merge review crashes", async () => {
     const root = createTempRoot();
     initProject(root);
@@ -474,6 +790,7 @@ describe("runDaemonCycle", () => {
 
     expect(loadDispatchState(root).records["ISSUE-REVIEW"]).toMatchObject({
       stage: "rework_required",
+      runningAgent: null,
       sentinelVerdictRef: ".aegis/sentinel/ISSUE-REVIEW.json",
       reviewFeedbackRef: ".aegis/sentinel/ISSUE-REVIEW.json",
     });
@@ -694,6 +1011,83 @@ describe("runDaemonCycle", () => {
       fileScope: null,
       failureCount: 3,
       consecutiveFailures: 3,
+    });
+  });
+
+  it("recovers failed operational Titan records when a valid durable handoff exists", async () => {
+    const root = createTempRoot();
+    initProject(root);
+    mkdirSync(path.join(root, ".aegis", "titan"), { recursive: true });
+    writeFileSync(
+      path.join(root, ".aegis", "titan", "ISSUE-LATE.json"),
+      `${JSON.stringify({
+        outcome: "already_satisfied",
+        summary: "Prior merged work satisfies the issue.",
+        files_changed: [],
+        tests_and_checks_run: ["npm run build"],
+        known_risks: [],
+        follow_up_work: [],
+        labor_path: path.join(root, ".aegis", "labors", "ISSUE-LATE"),
+        candidate_branch: "aegis/ISSUE-LATE",
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "ISSUE-LATE": {
+          issueId: "ISSUE-LATE",
+          stage: "failed_operational",
+          runningAgent: null,
+          blockedByIssueId: null,
+          policyArtifactRef: null,
+          oracleAssessmentRef: ".aegis/oracle/ISSUE-LATE.json",
+          titanHandoffRef: null,
+          titanClarificationRef: null,
+          sentinelVerdictRef: null,
+          reviewFeedbackRef: null,
+          janusArtifactRef: null,
+          failureTranscriptRef: ".aegis/transcripts/ISSUE-LATE--titan.json",
+          fileScope: { files: ["src/App.tsx"] },
+          failureCount: 3,
+          consecutiveFailures: 3,
+          failureWindowStartMs: 1777562269020,
+          cooldownUntil: null,
+          sessionProvenanceId: "daemon-old",
+          updatedAt: "2026-04-29T12:00:00.000Z",
+        } as any,
+      },
+    });
+
+    vi.doMock("../../../src/tracker/beads-tracker.js", () => ({
+      BeadsTrackerClient: class {
+        async listReadyIssues() {
+          return [{ id: "ISSUE-LATE", title: "Late handoff" }];
+        }
+      },
+    }));
+
+    const { runLoopPhase } = await import("../../../src/core/loop-runner.js");
+    const result = await runLoopPhase(root, "dispatch", {
+      runtime: {
+        launch: vi.fn(),
+        async readSession() {
+          return null;
+        },
+        async terminate() {
+          return null;
+        },
+      },
+      sessionProvenanceId: "daemon-new",
+    });
+
+    expect(result.dispatched).toEqual([]);
+    expect(loadDispatchState(root).records["ISSUE-LATE"]).toMatchObject({
+      stage: "implemented",
+      titanHandoffRef: path.join(".aegis", "titan", "ISSUE-LATE.json"),
+      lastCompletedCaste: "titan",
+      consecutiveFailures: 0,
+      cooldownUntil: null,
     });
   });
 });

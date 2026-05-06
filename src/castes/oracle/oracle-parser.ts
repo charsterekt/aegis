@@ -56,8 +56,13 @@ function normalizeFilesAffected(value: unknown): string[] {
 }
 
 function assertComplexity(value: unknown): OracleComplexity {
-  if (value === "trivial" || value === "moderate" || value === "complex") {
-    return value;
+  let normalizedValue = value;
+  if (typeof value === "string" && /^"(trivial|moderate|complex)"$/.test(value)) {
+    normalizedValue = value.slice(1, -1);
+  }
+
+  if (normalizedValue === "trivial" || normalizedValue === "moderate" || normalizedValue === "complex") {
+    return normalizedValue;
   }
 
   throw new Error(

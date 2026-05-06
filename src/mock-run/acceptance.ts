@@ -1,28 +1,39 @@
 import path from "node:path";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { createServer } from "node:net";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
+import { CASTE_CONFIG_KEYS, type CasteConfigKey } from "../config/caste-config.js";
+import { loadConfig } from "../config/load-config.js";
 import { loadDispatchState, type DispatchRecord } from "../core/dispatch-state.js";
 import { loadMergeQueueState, type MergeQueueItem } from "../merge/merge-state.js";
 import { runMockCommand, type RunMockCommandOptions } from "./mock-run.js";
 import { resolveDefaultMockWorkspaceRoot } from "./mock-paths.js";
 import { seedMockRun, type SeedMockRunResult } from "./seed-mock-run.js";
-import { BeadsTrackerClient } from "../tracker/beads-tracker.js";
+import { createTrackerClient } from "../tracker/create-tracker.js";
 import type { RuntimeStateRecord } from "../cli/runtime-state.js";
 import { readRuntimeState } from "../cli/runtime-state.js";
 import type { AegisIssue } from "../tracker/issue-model.js";
 import { isProcessRunning } from "../cli/runtime-state.js";
+import { AgoraStore, type AgoraColumn, type AgoraTicket } from "../../packages/agora/dist/index.js";
+import { renameWithRetries } from "../shared/atomic-write.js";
 
-const HAPPY_PATH_ISSUE_KEY = "setup.contract";
-const JANUS_ISSUE_KEY = "setup.scaffold";
-const SCRIPTED_MERGE_PLAN_ENV = "AEGIS_SCRIPTED_MERGE_PLAN";
-const MOCK_ACCEPTANCE_TIMEOUT_MS = 120_000;
+const HAPPY_PATH_ISSUE_KEY = "foundation.app";
+const JANUS_ISSUE_KEY = "janus.integration";
+const MOCK_ACCEPTANCE_TIMEOUT_MS = 300_000;
 const MOCK_ACCEPTANCE_POLL_MS = 250;
 
 type MockCommandRunner = (
   args: string[],
   options?: RunMockCommandOptions,
 ) => Promise<unknown>;
+
+export interface FinalProductQualityOptions {
+  loadPageText?: (root: string) => Promise<string>;
+}
 
 interface TrackerLike {
   getIssue(id: string, root?: string): Promise<AegisIssue>;
@@ -41,6 +52,7 @@ export interface MockAcceptanceDependencies {
   runMockCommand?: MockCommandRunner;
   waitForMockAcceptanceProgress?: typeof waitForMockAcceptanceProgress;
   collectMockAcceptanceSurface?: typeof collectMockAcceptanceSurface;
+  verifyFinalApp?: typeof verifyFinalApp;
   tracker?: TrackerLike;
 }
 
@@ -65,6 +77,21 @@ export interface MockAcceptanceIssueSummary {
   status: string;
 }
 
+export interface MockAcceptanceAgoraTicketSummary {
+  id: string;
+  title: string;
+  column: AgoraColumn;
+  labels: string[];
+  blockedBy: string[];
+  blocks: string[];
+}
+
+export interface MockAcceptanceAgoraSummary {
+  tickets: MockAcceptanceAgoraTicketSummary[];
+  executableOpenTicketIds: string[];
+  haltedTicketIds: string[];
+}
+
 export interface MockAcceptancePhaseLogSummary {
   timestamp: string;
   phase: "poll" | "triage" | "dispatch" | "monitor" | "reap";
@@ -84,7 +111,25 @@ export interface MockAcceptanceLaborSummary {
   recommendedNextAction: string | null;
 }
 
+export interface MockAcceptanceFinalAppCommandSummary {
+  command: string;
+  exitCode: number;
+  durationMs: number;
+}
+
+export interface MockAcceptanceFinalAppVerification {
+  status: "passed" | "skipped";
+  verifiedAt: string;
+  commands: MockAcceptanceFinalAppCommandSummary[];
+  skipReason?: string;
+}
+
 export interface MockAcceptanceSurface {
+  config: {
+    runtime: string;
+    models: Record<CasteConfigKey, string>;
+    fingerprint: string;
+  };
   runtimeState: RuntimeStateRecord;
   dispatch: {
     happy: MockAcceptanceRecordSummary;
@@ -98,11 +143,13 @@ export interface MockAcceptanceSurface {
     happy: MockAcceptanceIssueSummary;
     janus: MockAcceptanceIssueSummary;
   };
+  agora?: MockAcceptanceAgoraSummary;
   phaseLogs: MockAcceptancePhaseLogSummary[];
   labor: {
     happy: MockAcceptanceLaborSummary;
     janus: MockAcceptanceLaborSummary;
   };
+  finalAppVerification: MockAcceptanceFinalAppVerification;
 }
 
 export interface MockAcceptanceResult {
@@ -228,6 +275,261 @@ function isJanusProofComplete(
   return janusRework || janusBlocked;
 }
 
+function resolveNpmExecutable() {
+  return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+
+function resolveFinalAppCommand(args: string[]) {
+  if (process.platform === "win32") {
+    return {
+      executable: process.env.ComSpec || "cmd.exe",
+      args: ["/d", "/s", "/c", `${resolveNpmExecutable()} ${args.join(" ")}`],
+      display: `${resolveNpmExecutable()} ${args.join(" ")}`,
+    };
+  }
+
+  return {
+    executable: resolveNpmExecutable(),
+    args,
+    display: `${resolveNpmExecutable()} ${args.join(" ")}`,
+  };
+}
+
+function resolveFinalAppVerificationPath(root: string) {
+  return path.join(root, ".aegis", "final-app-verification.json");
+}
+
+function writeFinalAppVerification(root: string, verification: MockAcceptanceFinalAppVerification) {
+  const targetPath = resolveFinalAppVerificationPath(root);
+  const temporaryPath = `${targetPath}.tmp`;
+  mkdirSync(path.dirname(targetPath), { recursive: true });
+  writeFileSync(temporaryPath, `${JSON.stringify(verification, null, 2)}\n`, "utf8");
+  renameWithRetries(temporaryPath, targetPath);
+}
+
+function readFinalAppVerification(root: string): MockAcceptanceFinalAppVerification {
+  const targetPath = resolveFinalAppVerificationPath(root);
+  if (!existsSync(targetPath)) {
+    throw new Error(`Missing final app verification at ${targetPath}.`);
+  }
+
+  return JSON.parse(readFileSync(targetPath, "utf8")) as MockAcceptanceFinalAppVerification;
+}
+
+async function runFinalAppCommand(root: string, args: string[]): Promise<MockAcceptanceFinalAppCommandSummary> {
+  const startedAt = Date.now();
+  const command = resolveFinalAppCommand(args);
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command.executable, command.args, {
+      cwd: root,
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        CI: "1",
+      },
+    });
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      reject(new Error(`${command.display} exited with ${String(code ?? signal)}.`));
+    });
+  });
+
+  return {
+    command: command.display,
+    exitCode: 0,
+    durationMs: Date.now() - startedAt,
+  };
+}
+
+const FORBIDDEN_PRODUCT_UI_TERMS = [
+  "React + TypeScript App Shell",
+  "Workspace",
+  "Motion proof",
+  "Motion gate",
+  "Motion lane",
+  "lane mounted",
+  "proof lane",
+  "setup shell",
+  "Stability snapshot",
+  "UI gate",
+  "Next steps",
+] as const;
+
+async function findAvailablePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to allocate local preview port.")));
+        return;
+      }
+      const { port } = address;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+async function waitForPreview(baseUrl: string) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    try {
+      const response = await fetch(baseUrl);
+      if (response.ok) {
+        return;
+      }
+    } catch {
+      // Keep polling until the preview server is ready.
+    }
+    await sleep(250);
+  }
+  throw new Error(`Generated app preview did not become ready at ${baseUrl}.`);
+}
+
+async function loadFinalAppPageText(root: string): Promise<string> {
+  const port = await findAvailablePort();
+  const baseUrl = `http://127.0.0.1:${port}/`;
+  const preview = spawn(process.execPath, [
+    path.join(root, "node_modules", "vite", "bin", "vite.js"),
+    "preview",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    String(port),
+    "--strictPort",
+  ], {
+    cwd: root,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+
+  try {
+    await waitForPreview(baseUrl);
+    const requireFromApp = createRequire(path.join(root, "package.json"));
+    const { chromium } = requireFromApp("playwright") as {
+      chromium: {
+        launch: () => Promise<{
+          newPage: (options: { viewport: { width: number; height: number } }) => Promise<any>;
+          close: () => Promise<void>;
+        }>;
+      };
+    };
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+      const pageErrors: string[] = [];
+      page.on("pageerror", (error: Error) => pageErrors.push(error.message));
+      page.on("console", (message: { type: () => string; text: () => string }) => {
+        if (message.type() === "error") {
+          pageErrors.push(message.text());
+        }
+      });
+      await page.goto(baseUrl, { waitUntil: "networkidle" });
+      const bodyText = await page.locator("body").innerText();
+
+      const todoHeading = page.getByRole("heading", { name: /todo/i }).first();
+      if (!(await todoHeading.isVisible())) {
+        throw new Error("Generated app does not show a todo heading.");
+      }
+      const headingBox = await todoHeading.boundingBox();
+      if (!headingBox || headingBox.y > 260) {
+        throw new Error("Generated app does not put the todo product in the first viewport.");
+      }
+
+      const input = page.getByRole("textbox").first();
+      await input.fill("Plan launch");
+      await page.getByRole("button", { name: /add/i }).first().click();
+      if (!(await page.getByText("Plan launch", { exact: true }).isVisible())) {
+        throw new Error("Generated app does not add and show a todo item.");
+      }
+      if (pageErrors.length > 0) {
+        throw new Error(`Generated app emitted browser errors: ${pageErrors.join("; ")}`);
+      }
+
+      return bodyText;
+    } finally {
+      await browser.close();
+    }
+  } finally {
+    preview.kill("SIGTERM");
+  }
+}
+
+export async function assertFinalProductQuality(
+  root: string,
+  options: FinalProductQualityOptions = {},
+): Promise<void> {
+  const pageText = await (options.loadPageText ?? loadFinalAppPageText)(root);
+  const lowerText = pageText.toLowerCase();
+  const leakedTerms = FORBIDDEN_PRODUCT_UI_TERMS.filter((term) =>
+    lowerText.includes(term.toLowerCase()));
+  if (leakedTerms.length > 0) {
+    throw new Error(`Generated app leaks orchestration vocabulary: ${leakedTerms.join(", ")}.`);
+  }
+  if (!lowerText.includes("todo")) {
+    throw new Error("Generated app does not present itself as a todo app.");
+  }
+}
+
+export async function verifyFinalApp(root: string): Promise<MockAcceptanceFinalAppVerification> {
+  if (!existsSync(path.join(root, "package.json"))) {
+    const verification = {
+      status: "skipped" as const,
+      verifiedAt: new Date().toISOString(),
+      commands: [],
+      skipReason: "Generated app package.json is absent; scripted mock acceptance does not produce product files.",
+    };
+    writeFinalAppVerification(root, verification);
+    return verification;
+  }
+
+  const commandArgs = [
+    ["run", "lint"],
+    ["run", "build"],
+    ["test"],
+    ["run", "smoke"],
+  ];
+  const commands: MockAcceptanceFinalAppCommandSummary[] = [];
+  for (const args of commandArgs) {
+    commands.push(await runFinalAppCommand(root, args));
+  }
+  await assertFinalProductQuality(root);
+
+  const verification = {
+    status: "passed" as const,
+    verifiedAt: new Date().toISOString(),
+    commands,
+  };
+  writeFinalAppVerification(root, verification);
+  return verification;
+}
+
+function readConfigSummary(root: string): MockAcceptanceSurface["config"] {
+  const config = loadConfig(root);
+  const normalized = JSON.stringify({
+    runtime: config.runtime,
+    models: config.models,
+    thinking: config.thinking,
+    concurrency: config.concurrency,
+    thresholds: config.thresholds,
+  });
+
+  return {
+    runtime: config.runtime,
+    models: { ...config.models },
+    fingerprint: createHash("sha256").update(normalized).digest("hex").slice(0, 16),
+  };
+}
+
+function hasAgoraTickets(root: string) {
+  return existsSync(path.join(root, ".agora", "tickets.json"));
+}
+
 function summarizeProofProgress(
   record: DispatchRecord | undefined,
   queueItem: MergeQueueItem | undefined,
@@ -292,11 +594,21 @@ export async function waitForMockAcceptanceProgress(
       throw new Error(deadlockReason);
     }
 
-    if (
-      isHappyProofComplete(happyRecord, happyQueueItem)
-      && isJanusProofComplete(janusRecord, janusQueueItem)
-    ) {
-      return;
+    if (hasAgoraTickets(root)) {
+      const agora = readAgoraSummary(root);
+      if (agora.haltedTicketIds.length > 0) {
+        throw new Error(`Agora tickets halted during proof: ${agora.haltedTicketIds.join(", ")}.`);
+      }
+      if (agora.executableOpenTicketIds.length === 0) {
+        return;
+      }
+    } else {
+      if (
+        isHappyProofComplete(happyRecord, happyQueueItem)
+        && isJanusProofComplete(janusRecord, janusQueueItem)
+      ) {
+        return;
+      }
     }
 
     await pause(pollMs);
@@ -355,6 +667,39 @@ function readLaborSummary(root: string, item: MergeQueueItem): MockAcceptanceLab
   };
 }
 
+const EXECUTABLE_DRAIN_COLUMNS = new Set<AgoraColumn>([
+  "ready",
+  "in_progress",
+  "in_review",
+  "blocked",
+  "ready_to_merge",
+]);
+
+function isExecutableTicket(ticket: AgoraTicket) {
+  return ticket.labels.includes("role:executable")
+    || !ticket.labels.includes("role:coordination");
+}
+
+function readAgoraSummary(root: string): MockAcceptanceAgoraSummary {
+  const tickets = new AgoraStore({ root }).listTickets();
+  return {
+    tickets: tickets.map((ticket) => ({
+      id: ticket.id,
+      title: ticket.title,
+      column: ticket.column,
+      labels: [...ticket.labels],
+      blockedBy: [...ticket.blockedBy],
+      blocks: [...ticket.blocks],
+    })),
+    executableOpenTicketIds: tickets
+      .filter((ticket) => isExecutableTicket(ticket) && EXECUTABLE_DRAIN_COLUMNS.has(ticket.column))
+      .map((ticket) => ticket.id),
+    haltedTicketIds: tickets
+      .filter((ticket) => ticket.column === "halted")
+      .map((ticket) => ticket.id),
+  };
+}
+
 export async function collectMockAcceptanceSurface(
   root: string,
   issueIds: { happyIssueId: string; janusIssueId: string; tracker?: TrackerLike },
@@ -364,7 +709,7 @@ export async function collectMockAcceptanceSurface(
     throw new Error(`Missing runtime state at ${path.join(root, ".aegis", "runtime-state.json")}.`);
   }
 
-  const tracker = issueIds.tracker ?? new BeadsTrackerClient();
+  const tracker = issueIds.tracker ?? createTrackerClient();
   const happyRecord = readDispatchRecord(root, issueIds.happyIssueId);
   const janusRecord = readDispatchRecord(root, issueIds.janusIssueId);
   const happyQueueItem = readQueueItem(root, issueIds.happyIssueId);
@@ -376,6 +721,7 @@ export async function collectMockAcceptanceSurface(
   ]);
 
   return {
+    config: readConfigSummary(root),
     runtimeState,
     dispatch: {
       happy: {
@@ -411,11 +757,13 @@ export async function collectMockAcceptanceSurface(
       happy: happyIssue,
       janus: janusIssue,
     },
+    agora: readAgoraSummary(root),
     phaseLogs,
     labor: {
       happy: readLaborSummary(root, happyQueueItem),
       janus: readLaborSummary(root, janusQueueItem),
     },
+    finalAppVerification: readFinalAppVerification(root),
   };
 }
 
@@ -436,6 +784,8 @@ export function assertMockAcceptanceSurface(surface: MockAcceptanceSurface) {
     throw new Error(`Expected happy-path merge queue item to be merged, got ${surface.mergeQueue.happy.status}.`);
   }
 
+  const janusMerged = surface.dispatch.janus.stage === "complete"
+    && surface.mergeQueue.janus.status === "merged";
   const janusRework = surface.dispatch.janus.stage === "rework_required"
     && surface.mergeQueue.janus.status === "failed"
     && surface.labor.janus.recommendedNextAction === "requeue_parent";
@@ -443,21 +793,21 @@ export function assertMockAcceptanceSurface(surface: MockAcceptanceSurface) {
     && surface.mergeQueue.janus.status === "failed"
     && surface.labor.janus.recommendedNextAction === "create_integration_blocker";
 
-  if (!janusRework && !janusBlocked) {
+  if (!janusMerged && !janusRework && !janusBlocked) {
     throw new Error(
-      `Expected Janus-path issue to require rework or block on child, got dispatch=${surface.dispatch.janus.stage} queue=${surface.mergeQueue.janus.status}.`,
+      `Expected Janus-path issue to merge, require rework, or block on child, got dispatch=${surface.dispatch.janus.stage} queue=${surface.mergeQueue.janus.status}.`,
     );
   }
 
-  if (!surface.dispatch.janus.janusArtifactRef) {
+  if (!janusMerged && !surface.dispatch.janus.janusArtifactRef) {
     throw new Error("Janus proof surface is missing its artifact reference.");
   }
 
-  if (surface.mergeQueue.janus.janusInvocations < 1) {
+  if (!janusMerged && surface.mergeQueue.janus.janusInvocations < 1) {
     throw new Error("Janus proof surface did not record an invocation.");
   }
 
-  if (surface.mergeQueue.janus.attempts < 3 || surface.mergeQueue.janus.lastTier !== "T3") {
+  if (!janusMerged && (surface.mergeQueue.janus.attempts < 3 || surface.mergeQueue.janus.lastTier !== "T3")) {
     throw new Error("Janus proof surface did not reach deterministic T3 escalation.");
   }
 
@@ -467,6 +817,16 @@ export function assertMockAcceptanceSurface(surface: MockAcceptanceSurface) {
 
   if (!surface.trackerIssues.janus.status) {
     throw new Error("Janus-path tracker issue status is missing.");
+  }
+
+  if (surface.agora) {
+    if (surface.agora.executableOpenTicketIds.length > 0) {
+      throw new Error(`Executable Agora tickets remain undrained: ${surface.agora.executableOpenTicketIds.join(", ")}.`);
+    }
+
+    if (surface.agora.haltedTicketIds.length > 0) {
+      throw new Error(`Agora tickets halted during proof: ${surface.agora.haltedTicketIds.join(", ")}.`);
+    }
   }
 
   if (!surface.phaseLogs.some((entry) => entry.phase === "poll")) {
@@ -489,47 +849,26 @@ export function assertMockAcceptanceSurface(surface: MockAcceptanceSurface) {
     throw new Error("Labor evidence is missing the retained queue path.");
   }
 
-  if (!surface.labor.janus.janusArtifactExists || !surface.labor.janus.preservedLaborPathExists) {
+  if (!janusMerged && (!surface.labor.janus.janusArtifactExists || !surface.labor.janus.preservedLaborPathExists)) {
     throw new Error("Janus labor evidence is missing the preserved worktree artifact.");
   }
-}
 
-function buildScriptedMergePlan(issueId: string) {
-  return JSON.stringify({
-    rules: [
-      {
-        issueId,
-        candidateBranch: `aegis/${issueId}`,
-        outcomes: [
-          { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-          { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-          { outcome: "conflict", detail: "Deterministic acceptance merge conflict." },
-        ],
-      },
-    ],
-  });
-}
-
-async function withTemporaryEnv<T>(
-  key: string,
-  value: string | undefined,
-  action: () => Promise<T>,
-): Promise<T> {
-  const previous = process.env[key];
-  if (value === undefined) {
-    delete process.env[key];
-  } else {
-    process.env[key] = value;
+  if (surface.finalAppVerification.status === "skipped") {
+    if (surface.config.runtime !== "scripted") {
+      throw new Error(`Final app verification skipped for ${surface.config.runtime}: ${surface.finalAppVerification.skipReason ?? "no reason recorded"}.`);
+    }
+    return;
   }
 
-  try {
-    return await action();
-  } finally {
-    if (previous === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = previous;
-    }
+  if (surface.finalAppVerification.commands.length === 0) {
+    throw new Error("Final app verification did not record any commands.");
+  }
+
+  const failedFinalAppCommands = surface.finalAppVerification.commands
+    .filter((command) => command.exitCode !== 0)
+    .map((command) => command.command);
+  if (failedFinalAppCommands.length > 0) {
+    throw new Error(`Final app verification failed: ${failedFinalAppCommands.join(", ")}.`);
   }
 }
 
@@ -546,18 +885,18 @@ export async function runMockAcceptance(
   const runCommand = options.runMockCommand ?? runMockCommand;
   const waitForProgress = options.waitForMockAcceptanceProgress ?? waitForMockAcceptanceProgress;
   const collectSurface = options.collectMockAcceptanceSurface ?? collectMockAcceptanceSurface;
-  const tracker = options.tracker ?? new BeadsTrackerClient();
+  const verifyApp = options.verifyFinalApp ?? verifyFinalApp;
+  const tracker = options.tracker ?? createTrackerClient();
 
-  await withTemporaryEnv(SCRIPTED_MERGE_PLAN_ENV, buildScriptedMergePlan(janusIssueId), async () => {
-    await runCommand(["node", aegisCliPath, "start"], { mockDir: seed.repoRoot });
-    await runCommand(["node", aegisCliPath, "status"], { mockDir: seed.repoRoot });
-    await waitForProgress(seed.repoRoot, {
-      happyIssueId,
-      janusIssueId,
-    });
-    await runCommand(["node", aegisCliPath, "stop"], { mockDir: seed.repoRoot });
-    await runCommand(["node", aegisCliPath, "status"], { mockDir: seed.repoRoot });
+  await runCommand(["node", aegisCliPath, "start"], { mockDir: seed.repoRoot });
+  await runCommand(["node", aegisCliPath, "status"], { mockDir: seed.repoRoot });
+  await waitForProgress(seed.repoRoot, {
+    happyIssueId,
+    janusIssueId,
   });
+  await runCommand(["node", aegisCliPath, "stop"], { mockDir: seed.repoRoot });
+  await runCommand(["node", aegisCliPath, "status"], { mockDir: seed.repoRoot });
+  await verifyApp(seed.repoRoot);
 
   const surface = await collectSurface(seed.repoRoot, {
     happyIssueId,

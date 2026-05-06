@@ -4,7 +4,7 @@ import {
   type RuntimeCasteAction,
 } from "./runtime-command.js";
 import { runCasteCommand } from "../core/caste-runner.js";
-import { BeadsTrackerClient } from "../tracker/beads-tracker.js";
+import { createTrackerClient } from "../tracker/create-tracker.js";
 import { loadConfig } from "../config/load-config.js";
 import { createCasteRuntime } from "../runtime/create-caste-runtime.js";
 
@@ -43,7 +43,7 @@ async function runUnsupportedLocalAction(
     root,
     action,
     issueId,
-    tracker: new BeadsTrackerClient(),
+    tracker: createTrackerClient(),
     runtime: createCasteRuntime(config.runtime, {}, { root, issueId }),
     artifactEmissionMode: config.runtime === "pi" ? "tool" : "json",
   });

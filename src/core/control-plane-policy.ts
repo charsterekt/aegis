@@ -22,6 +22,7 @@ export interface MutationProposal {
   suggestedDescription?: string;
   dependencyType?: "blocks";
   scopeEvidence: string[];
+  fileScope?: string[];
   fingerprint: string;
 }
 
@@ -42,6 +43,19 @@ export interface ApplyMutationProposalInput {
   now: string;
   existingBlockers?: ExistingBlocker[];
   mode?: "auto" | "manual";
+}
+
+export interface ApplyScopeExpansionInput {
+  root: string;
+  tracker: Pick<TrackerClient, "updateIssueScope">;
+  issueId: string;
+  originCaste: MutationProposalOrigin;
+  findingKind: string;
+  summary: string;
+  previousScope: string[];
+  expandedScope: string[];
+  fingerprint: string;
+  now: string;
 }
 
 export type PolicyRejectionReason =
@@ -93,6 +107,41 @@ const ROUTER_PROPOSALS = new Set<MutationProposalType>([
 
 function hasEvidence(proposal: MutationProposal): boolean {
   return proposal.scopeEvidence.some((entry) => entry.trim().length > 0);
+}
+
+function normalizeScopeFile(candidate: string) {
+  return candidate.replace(/\\/g, "/").replace(/^\.\//, "").trim().toLowerCase();
+}
+
+function extractMentionedFileNames(text: string) {
+  const matches = text.match(/[A-Za-z0-9@._/-]+\.[A-Za-z0-9._-]+/g) ?? [];
+  return matches.map((entry) => normalizeScopeFile(entry));
+}
+
+function shouldRequeueMissingOwnedFileProposal(input: ApplyMutationProposalInput) {
+  const { proposal, record } = input;
+  if (
+    proposal.originCaste !== "titan"
+    || !proposal.proposalType.startsWith("create_")
+    || !record.fileScope
+    || record.fileScope.files.length === 0
+  ) {
+    return false;
+  }
+
+  const text = [
+    proposal.summary,
+    proposal.suggestedTitle ?? "",
+    proposal.suggestedDescription ?? "",
+    ...proposal.scopeEvidence,
+  ].join("\n").toLowerCase();
+  if (!/\b(absent|missing|not present|no matches|does not contain|does not exist|doesn't exist|not found|returned false)\b/.test(text)) {
+    return false;
+  }
+
+  const owned = new Set(record.fileScope.files.map((entry) => normalizeScopeFile(entry)));
+  const mentionedOwnedFiles = extractMentionedFileNames(text).filter((entry) => owned.has(entry));
+  return mentionedOwnedFiles.length > 0;
 }
 
 function isOpenBlocker(blocker: ExistingBlocker): boolean {
@@ -287,6 +336,7 @@ function buildCreateIssueInput(proposal: MutationProposal): TrackerCreateIssueIn
       "Scope evidence:",
       ...proposal.scopeEvidence.map((entry) => `- ${entry}`),
     ].join("\n"),
+    fileScope: proposal.fileScope,
   };
 }
 
@@ -358,6 +408,10 @@ export async function applyMutationProposal(
     return requeue(input);
   }
 
+  if (shouldRequeueMissingOwnedFileProposal(input)) {
+    return requeue(input);
+  }
+
   const reusedIssueId = findReusableIssueId(input);
   if (reusedIssueId) {
     return accept(input, "reused", reusedIssueId);
@@ -370,4 +424,52 @@ export async function applyMutationProposal(
   }, input.root);
 
   return accept(input, "accepted", childIssueId);
+}
+
+export async function applyScopeExpansion(
+  input: ApplyScopeExpansionInput,
+): Promise<{
+  outcome: "expanded";
+  parentStage: "rework_required";
+  fileScope: { files: string[] };
+  policyArtifactRef: string;
+}> {
+  if (!input.tracker.updateIssueScope) {
+    throw new Error("Tracker cannot update issue scope.");
+  }
+
+  await input.tracker.updateIssueScope({
+    issueId: input.issueId,
+    fileScope: input.expandedScope,
+    reason: `Aegis expanded scope from ${input.originCaste} typed finding ${input.fingerprint}.`,
+  }, input.root);
+
+  const policyArtifactRefValue = persistPolicyArtifact(
+    input.root,
+    path.join(
+      ".aegis",
+      "policy",
+      `${sanitizeArtifactPart(input.issueId)}--${sanitizeArtifactPart(input.fingerprint)}--scope-expanded.json`,
+    ),
+    {
+      schemaVersion: 1,
+      outcome: "scope_expanded",
+      originIssueId: input.issueId,
+      originCaste: input.originCaste,
+      findingKind: input.findingKind,
+      fingerprint: input.fingerprint,
+      summary: input.summary,
+      previousScope: input.previousScope,
+      expandedScope: input.expandedScope,
+      parentStage: "rework_required",
+      createdAt: input.now,
+    },
+  );
+
+  return {
+    outcome: "expanded",
+    parentStage: "rework_required",
+    fileScope: { files: input.expandedScope },
+    policyArtifactRef: policyArtifactRefValue,
+  };
 }

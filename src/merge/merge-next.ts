@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 
 import { loadConfig } from "../config/load-config.js";
-import { captureGitProofPair, summarizeOperationalDirtyFiles } from "../core/git-proof.js";
+import { captureGitProofPair, listOperationalDirtyFiles, summarizeOperationalDirtyFiles } from "../core/git-proof.js";
 import {
   loadDispatchState,
   replaceDispatchRecord,
@@ -12,9 +12,9 @@ import { assertDispatchRecordStage } from "../core/stage-invariants.js";
 import { runCasteCommand } from "../core/caste-runner.js";
 import { createCasteRuntime } from "../runtime/create-caste-runtime.js";
 import type { CasteRuntime } from "../runtime/caste-runtime.js";
-import { BeadsTrackerClient } from "../tracker/beads-tracker.js";
 import type { AegisIssue } from "../tracker/issue-model.js";
 import type { TrackerClient } from "../tracker/tracker.js";
+import { createTrackerClient } from "../tracker/create-tracker.js";
 import {
   findNextQueuedItem,
   loadMergeQueueState,
@@ -202,6 +202,13 @@ class GitMergeExecutor implements MergeExecutor {
       };
     }
 
+    if (item.candidateBranch === item.targetBranch) {
+      return {
+        outcome: "stale_branch",
+        detail: `Candidate branch ${item.candidateBranch} matches target branch ${item.targetBranch}; refusing no-op self-merge.`,
+      };
+    }
+
     const targetProbe = runGit(root, ["rev-parse", "--verify", item.targetBranch]);
     if (targetProbe.status !== 0) {
       return {
@@ -254,7 +261,7 @@ function createDefaultExecutor(root: string): MergeExecutor {
 }
 
 function createDefaultTracker(): TrackerLike {
-  return new BeadsTrackerClient();
+  return createTrackerClient() as TrackerLike;
 }
 
 function createDefaultRuntime(root: string, issueId: string): CasteRuntime {
@@ -269,13 +276,41 @@ function updateDispatchStage(
   now: string,
 ) {
   const state = loadDispatchState(root);
+  const latestRecord = state.records[issueId] ?? record;
   const nextState = replaceDispatchRecord(state, issueId, {
-    ...record,
+    ...latestRecord,
     stage,
     updatedAt: now,
   });
   saveDispatchState(root, nextState);
   return nextState.records[issueId]!;
+}
+
+function normalizeScopePath(candidate: string) {
+  return candidate.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+}
+
+function findActiveTitanDirtyOwners(
+  dispatchState: ReturnType<typeof loadDispatchState>,
+  dirtyFiles: string[],
+) {
+  if (dirtyFiles.length === 0) {
+    return null;
+  }
+
+  const ownerByFile = new Map<string, string>();
+  for (const dirtyFile of dirtyFiles.map((entry) => normalizeScopePath(entry))) {
+    const owner = Object.values(dispatchState.records).find((record) =>
+      record.runningAgent?.caste === "titan"
+      && record.fileScope !== null
+      && record.fileScope.files.map((entry) => normalizeScopePath(entry)).includes(dirtyFile));
+    if (!owner) {
+      return null;
+    }
+    ownerByFile.set(dirtyFile, owner.issueId);
+  }
+
+  return ownerByFile;
 }
 
 export async function runMergeNext(
@@ -300,6 +335,23 @@ export async function runMergeNext(
     throw new Error(`Merge queue item ${queueItem.queueItemId} has no dispatch record.`);
   }
   assertDispatchRecordStage(dispatchRecord, "queued_for_merge");
+
+  const rootWorkspace = captureGitProofPair(root).before;
+  const dirtyFiles = listOperationalDirtyFiles(rootWorkspace);
+  const activeDirtyOwners = findActiveTitanDirtyOwners(dispatchState, dirtyFiles);
+  if (activeDirtyOwners) {
+    const ownerSummary = [...activeDirtyOwners.entries()]
+      .map(([file, owner]) => `${file}:${owner}`)
+      .join(", ");
+    return {
+      action: "merge_next",
+      status: "requeued",
+      issueId: queueItem.issueId,
+      queueItemId: queueItem.queueItemId,
+      stage: "queued_for_merge",
+      detail: `Merge waiting for active scoped work to finish before requiring a clean root: ${ownerSummary}.`,
+    };
+  }
 
   const executor = options.executor ?? createDefaultExecutor(root);
   const tracker = options.tracker ?? createDefaultTracker();

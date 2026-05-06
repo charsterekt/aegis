@@ -60,9 +60,14 @@ describe("planLaborCreation", () => {
       const exclude = readFileSync(excludePath, "utf8");
       expect(exclude).toContain("node_modules/");
       expect(exclude).toContain("dist/");
+      expect(exclude).toContain("test-results/");
+      expect(exclude).toContain("playwright-report/");
+      expect(exclude).toContain("tsconfig.tsbuildinfo");
 
       mkdirSync(path.join(plan.laborPath, "node_modules", ".bin"), { recursive: true });
       writeFileSync(path.join(plan.laborPath, "node_modules", ".bin", "vite"), "", "utf8");
+      mkdirSync(path.join(plan.laborPath, "test-results"), { recursive: true });
+      writeFileSync(path.join(plan.laborPath, "test-results", ".last-run.json"), "{}", "utf8");
       expect(runGit(plan.laborPath, ["status", "--porcelain", "--untracked-files=all"])).toBe("");
     } finally {
       rmSync(root, { recursive: true, force: true });

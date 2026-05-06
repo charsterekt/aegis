@@ -24,7 +24,9 @@ import {
   type AttachArtifactInput,
   type CreateTicketInput,
   type LeaseTicketInput,
+  type LinkBlockingTicketInput,
   type MoveTicketInput,
+  type UpdateTicketScopeInput,
 } from "./types.js";
 
 export interface AgoraStoreOptions {
@@ -422,6 +424,116 @@ export class AgoraStore {
       });
     }
     return this.load().tickets[ticket.id];
+  }
+
+  linkBlockingTicket(
+    input: LinkBlockingTicketInput,
+    now?: string,
+  ): { blocking: AgoraTicket; blocked: AgoraTicket } {
+    const actor = assertActor(input.actor);
+    const snapshot = this.init(actor);
+    const blocking = snapshot.tickets[input.blockingTicketId];
+    const blocked = snapshot.tickets[input.blockedTicketId];
+    if (!blocking) {
+      throw new Error(`Unknown Agora ticket "${input.blockingTicketId}".`);
+    }
+    if (!blocked) {
+      throw new Error(`Unknown Agora ticket "${input.blockedTicketId}".`);
+    }
+    if (blocking.id === blocked.id) {
+      throw new Error("Agora tickets cannot block themselves.");
+    }
+
+    const timestamp = nowIso(now);
+    const nextBlocking: AgoraTicket = {
+      ...blocking,
+      blocks: [...new Set([...blocking.blocks, blocked.id])].sort(),
+      updatedAt: timestamp,
+    };
+    const shouldMoveBlocked = blocked.column !== "done"
+      && blocked.column !== "halted"
+      && blocked.column !== "blocked";
+    const nextBlocked: AgoraTicket = {
+      ...blocked,
+      column: shouldMoveBlocked ? "blocked" : blocked.column,
+      blockedBy: [...new Set([...blocked.blockedBy, blocking.id])].sort(),
+      updatedAt: timestamp,
+    };
+    const tickets = {
+      ...snapshot.tickets,
+      [blocking.id]: nextBlocking,
+      [blocked.id]: nextBlocked,
+    };
+
+    this.save({ ...snapshot, tickets });
+    if (shouldMoveBlocked) {
+      this.appendEvent({
+        actor,
+        action: "blocked",
+        ticketId: blocked.id,
+        from: blocked.column,
+        to: "blocked",
+        reason: input.reason,
+        metadata: {
+          blockingTicketId: blocking.id,
+        },
+      });
+    }
+    this.appendEvent({
+      actor,
+      action: "child_linked",
+      ticketId: blocked.id,
+      from: blocked.column,
+      to: nextBlocked.column,
+      reason: input.reason,
+      metadata: {
+        blockingTicketId: blocking.id,
+        blockedTicketId: blocked.id,
+      },
+    });
+
+    const reloaded = this.load().tickets;
+    return {
+      blocking: reloaded[blocking.id]!,
+      blocked: reloaded[blocked.id]!,
+    };
+  }
+
+  updateTicketScope(input: UpdateTicketScopeInput, now?: string): AgoraTicket {
+    const actor = assertActor(input.actor);
+    const snapshot = this.init(actor);
+    const ticket = snapshot.tickets[input.ticketId];
+    if (!ticket) {
+      throw new Error(`Unknown Agora ticket "${input.ticketId}".`);
+    }
+
+    const timestamp = nowIso(now);
+    const nextScope = normalizeStringList(input.scope, "scope");
+    const updated: AgoraTicket = {
+      ...ticket,
+      scope: nextScope,
+      updatedAt: timestamp,
+    };
+    this.save({
+      ...snapshot,
+      tickets: {
+        ...snapshot.tickets,
+        [ticket.id]: updated,
+      },
+    });
+    this.appendEvent({
+      actor,
+      action: "scope_updated",
+      ticketId: ticket.id,
+      from: ticket.column,
+      to: ticket.column,
+      reason: input.reason,
+      metadata: {
+        previousScope: ticket.scope,
+        scope: nextScope,
+      },
+    });
+    return this.load().tickets[ticket.id]!;
   }
 
   leaseTicket(input: LeaseTicketInput): AgoraTicket {

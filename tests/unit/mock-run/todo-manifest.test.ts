@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { formatMockRunIssueDescription } from "../../../src/mock-run/seed-mock-run.js";
-import { TODO_MOCK_RUN_ISSUES } from "../../../src/mock-run/todo-manifest.js";
+import { TODO_MOCK_RUN_ISSUES, TODO_READY_QUEUE_EXPECTATION } from "../../../src/mock-run/todo-manifest.js";
 import type { MockRunIssueDefinition } from "../../../src/mock-run/types.js";
 
 function fileScopeOf(issue: MockRunIssueDefinition) {
@@ -9,6 +9,47 @@ function fileScopeOf(issue: MockRunIssueDefinition) {
 }
 
 describe("TODO_MOCK_RUN_ISSUES", () => {
+  it("keeps the live proof graph small enough for local models while preserving product scope", () => {
+    const executableIssues = TODO_MOCK_RUN_ISSUES.filter((issue) => issue.queueRole === "executable");
+
+    expect(executableIssues).toHaveLength(8);
+    expect(executableIssues.map((issue) => issue.key)).toEqual([
+      "foundation.app",
+      "core.todo",
+      "ui.components",
+      "motion.polish",
+      "app.integration",
+      "release.smoke",
+      "janus.integration",
+      "release.final",
+    ]);
+  });
+
+  it("starts with product-building lanes instead of standalone contract documents", () => {
+    expect(TODO_READY_QUEUE_EXPECTATION).toEqual(["foundation.app"]);
+
+    for (const key of TODO_READY_QUEUE_EXPECTATION) {
+      const issue = TODO_MOCK_RUN_ISSUES.find((candidate) => candidate.key === key)!;
+      expect(issue.fileScope?.some((file) => file.startsWith("docs/"))).toBe(false);
+      expect(issue.description.toLowerCase()).toContain("todo");
+    }
+  });
+
+  it("pins foundation tooling so partial app checks can run before smoke tests exist", () => {
+    const foundation = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "foundation.app")!;
+
+    expect(foundation.description).toContain("eslint-plugin-react-hooks");
+    expect(foundation.description).toContain("test script must pass when no test files exist");
+  });
+
+  it("retains a Janus integration lane in the drained product proof", () => {
+    const janusIssue = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "janus.integration")!;
+
+    expect(janusIssue.description).toContain("Janus");
+    expect(janusIssue.blocks).toEqual(["app.integration"]);
+    expect(janusIssue.fileScope).toEqual(["README.md"]);
+  });
+
   it("declares explicit file ownership for every executable issue", () => {
     const executableIssues = TODO_MOCK_RUN_ISSUES.filter((issue) => issue.queueRole === "executable");
 
@@ -41,51 +82,57 @@ describe("TODO_MOCK_RUN_ISSUES", () => {
 
   it("formats file ownership into the seeded issue description", () => {
     const issue = {
-      ...TODO_MOCK_RUN_ISSUES.find((candidate) => candidate.key === "setup.contract")!,
-      fileScope: ["docs/setup-contract.md"],
+      ...TODO_MOCK_RUN_ISSUES.find((candidate) => candidate.key === "foundation.app")!,
+      fileScope: ["package.json"],
     };
 
     expect(formatMockRunIssueDescription(issue)).toContain(
-      "Aegis file ownership: docs/setup-contract.md",
+      "Aegis file ownership: package.json",
     );
   });
 
-  it("orders setup prerequisites before scaffold work", () => {
+  it("keeps product implementation ordered before release verification", () => {
     const byKey = new Map(TODO_MOCK_RUN_ISSUES.map((issue) => [issue.key, issue]));
 
-    expect(byKey.get("setup.dependencies")?.blocks).toEqual(["setup.contract"]);
-    expect(byKey.get("setup.scaffold")?.blocks).toEqual(["setup.dependencies"]);
-    expect(byKey.get("setup.tooling")?.blocks).toEqual(["setup.scaffold"]);
-    expect(byKey.get("setup.gate")?.blocks).toContain("setup.scaffold");
+    expect(byKey.get("core.todo")?.blocks).toEqual(["foundation.app"]);
+    expect(byKey.get("ui.components")?.blocks).toEqual(["core.todo"]);
+    expect(byKey.get("motion.polish")?.blocks).toEqual(["core.todo"]);
+    expect(byKey.get("app.integration")?.blocks).toEqual(["ui.components", "motion.polish"]);
+    expect(byKey.get("release.smoke")?.blocks).toEqual(["app.integration"]);
+    expect(byKey.get("janus.integration")?.blocks).toEqual(["app.integration"]);
+    expect(byKey.get("release.final")?.blocks).toEqual(["release.smoke", "janus.integration"]);
   });
 
-  it("lets setup tooling own package scripts after scaffold exists", () => {
-    const toolingScope = fileScopeOf(TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "setup.tooling")!);
+  it("keeps product UI requirements free of orchestration vocabulary", () => {
+    const forbiddenProductTerms = [
+      "React + TypeScript App Shell",
+      "Workspace",
+      "Motion gate",
+      "Motion proof",
+      "lane mounted",
+      "proof lane",
+      "setup shell",
+    ];
+    const productIssues = TODO_MOCK_RUN_ISSUES.filter((issue) => issue.queueRole === "executable");
 
-    expect(toolingScope).toContain("package.json");
-    expect(toolingScope).toContain("package-lock.json");
+    for (const issue of productIssues) {
+      for (const term of forbiddenProductTerms) {
+        expect(issue.description, `${issue.key} leaked ${term}`).not.toContain(term);
+      }
+    }
   });
 
-  it("keeps setup tooling format checks inside owned files", () => {
-    const tooling = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "setup.tooling")!;
+  it("requires a product-first todo app rather than proof scaffolding", () => {
+    const ui = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "ui.components")!;
+    const motion = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "motion.polish")!;
+    const releaseFinal = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "release.final")!;
 
-    expect(tooling.description).toContain("format check");
-    expect(tooling.description).toContain("owned tooling/package files");
-    expect(tooling.description).toContain("Do not format or rewrite src/");
-  });
-
-  it("keeps package-run commands in the setup dependency lane", () => {
-    const dependencies = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "setup.dependencies")!;
-    const scaffold = TODO_MOCK_RUN_ISSUES.find((issue) => issue.key === "setup.scaffold")!;
-
-    expect(dependencies.description).toContain("dev/build/preview");
-    expect(dependencies.description).toContain("Vite");
-    expect(dependencies.description).toContain("Do not require build or preview checks to pass");
-    expect(dependencies.description).toContain("Do not create blockers for scaffold or tooling files");
-    expect(scaffold.description).toContain("Do not require build or preview checks to pass");
-    expect(scaffold.description).toContain("tooling lane owns TypeScript/Vite config files");
-    expect(scaffold.description).toContain("Do not create blockers for tooling files");
-    expect(scaffold.description).not.toContain("npm scripts");
+    expect(ui.description).toContain("first viewport");
+    expect(ui.description).toContain("Ban visible orchestration words");
+    expect(ui.description).toContain("Todo app");
+    expect(motion.description).toContain("observable add, complete, delete transitions");
+    expect(releaseFinal.description).toContain("no visible orchestration vocabulary");
+    expect(releaseFinal.description).toContain("Playwright");
   });
 
   it("lists blockers before dependents for deterministic seeding", () => {

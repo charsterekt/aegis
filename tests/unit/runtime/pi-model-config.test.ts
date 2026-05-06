@@ -2,6 +2,7 @@ import type { Model } from "@mariozechner/pi-ai";
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_AEGIS_CONFIG } from "../../../src/config/defaults.js";
+import { createCasteConfig } from "../../../src/config/caste-config.js";
 import {
   resolveConfiguredCasteModel,
   verifyConfiguredPiModels,
@@ -16,9 +17,9 @@ function makeDeps(options: {
   registeredModels?: Model<any>[];
   availableModels?: Model<any>[];
 } = {}) {
-  const authenticatedProviders = options.authenticatedProviders ?? ["openai-codex"];
+  const authenticatedProviders = options.authenticatedProviders ?? ["github-copilot"];
   const registeredModels = options.registeredModels ?? [
-    makeModel("openai-codex", "gpt-5.4-mini"),
+    makeModel("github-copilot", "gpt-5.4-mini"),
   ];
   const availableModels = options.availableModels ?? registeredModels;
 
@@ -39,11 +40,7 @@ function makeConfig() {
   return {
     ...DEFAULT_AEGIS_CONFIG,
     runtime: "pi",
-    models: {
-      ...DEFAULT_AEGIS_CONFIG.models,
-      titan: "openai-codex:gpt-5.4-mini",
-      sentinel: "openai-codex:gpt-5.4-mini",
-    },
+    models: createCasteConfig(() => "github-copilot:gpt-5.4-mini"),
   };
 }
 
@@ -55,8 +52,8 @@ describe("resolveConfiguredCasteModel", () => {
 
     expect(resolved).toMatchObject({
       caste: "titan",
-      reference: "openai-codex:gpt-5.4-mini",
-      provider: "openai-codex",
+      reference: "github-copilot:gpt-5.4-mini",
+      provider: "github-copilot",
       modelId: "gpt-5.4-mini",
       thinkingLevel: "medium",
     });
@@ -69,16 +66,16 @@ describe("resolveConfiguredCasteModel", () => {
       makeDeps({
         authenticatedProviders: ["anthropic"],
         registeredModels: [
-          makeModel("openai-codex", "gpt-5.4-mini"),
+          makeModel("github-copilot", "gpt-5.4-mini"),
           makeModel("anthropic", "claude-sonnet-4-5"),
         ],
         availableModels: [
-          makeModel("openai-codex", "gpt-5.4-mini"),
+          makeModel("github-copilot", "gpt-5.4-mini"),
           makeModel("anthropic", "claude-sonnet-4-5"),
         ],
       }),
     )).toThrow(
-      'Configured provider "openai-codex" for "titan" is not authenticated. Authenticated providers: anthropic',
+      'Configured provider "github-copilot" for "titan" is not authenticated. Authenticated providers: anthropic',
     );
   });
 });
@@ -95,7 +92,7 @@ describe("verifyConfiguredPiModels", () => {
     );
 
     expect(probe.ok).toBe(false);
-    expect(probe.detail).toContain('Configured provider "openai-codex"');
+    expect(probe.detail).toContain('Configured provider "github-copilot"');
     expect(probe.detail).toContain("Authenticated providers: anthropic");
     expect(probe.detail).not.toContain("gemini");
   });

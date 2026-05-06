@@ -45,16 +45,25 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function normalizeTitanProposalType(value: unknown): TitanMutationProposalType {
-  if (
-    value === "create_clarification_blocker"
-    || value === "create_prerequisite_blocker"
-    || value === "create_out_of_scope_blocker"
-  ) {
-    return value;
+function normalizeQuotedEnum(value: unknown) {
+  if (typeof value === "string" && /^"[a-z_]+"$/.test(value)) {
+    return value.slice(1, -1);
   }
 
-  if (value === "blocking_dependency" || value === "out_of_scope_blocker") {
+  return value;
+}
+
+function normalizeTitanProposalType(value: unknown): TitanMutationProposalType {
+  const normalizedValue = normalizeQuotedEnum(value);
+  if (
+    normalizedValue === "create_clarification_blocker"
+    || normalizedValue === "create_prerequisite_blocker"
+    || normalizedValue === "create_out_of_scope_blocker"
+  ) {
+    return normalizedValue;
+  }
+
+  if (normalizedValue === "blocking_dependency" || normalizedValue === "out_of_scope_blocker") {
     return "create_out_of_scope_blocker";
   }
 
@@ -123,7 +132,7 @@ export function parseTitanArtifact(raw: string): TitanArtifact {
     throw new Error(`Titan output contains unexpected keys: ${unexpectedKeys.join(", ")}`);
   }
 
-  const outcome = candidate["outcome"];
+  const outcome = normalizeQuotedEnum(candidate["outcome"]);
   if (
     outcome !== "success"
     && outcome !== "already_satisfied"

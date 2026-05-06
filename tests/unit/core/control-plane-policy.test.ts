@@ -100,6 +100,69 @@ describe("applyMutationProposal", () => {
     }, root);
   });
 
+  it("requeues Titan proposals that treat missing owned files as blockers", async () => {
+    const root = createTempRoot();
+    const tracker = createTracker();
+
+    await expect(applyMutationProposal({
+      root,
+      tracker,
+      record: createRecord({
+        fileScope: { files: ["package.json", "package-lock.json"] },
+      }),
+      proposal: createProposal({
+        proposalType: "create_prerequisite_blocker",
+        summary: "Owned manifest files are missing from the worktree.",
+        suggestedTitle: "Mount package manifests",
+        suggestedDescription: "package.json and package-lock.json are not present.",
+        scopeEvidence: [
+          "Test-Path package.json returned false.",
+          "Test-Path package-lock.json returned false.",
+        ],
+        fingerprint: "missing-owned-manifests",
+      }),
+      now: "2026-04-24T10:00:00.000Z",
+    })).resolves.toMatchObject({
+      outcome: "requeued",
+      parentStage: "rework_required",
+      childIssueId: null,
+    });
+
+    expect(tracker.createIssue).not.toHaveBeenCalled();
+    expect(tracker.linkBlockingIssue).not.toHaveBeenCalled();
+  });
+
+  it("requeues Titan proposals that say an owned file does not exist", async () => {
+    const root = createTempRoot();
+    const tracker = createTracker();
+
+    await expect(applyMutationProposal({
+      root,
+      tracker,
+      record: createRecord({
+        fileScope: { files: ["docs/ui-contract.md"] },
+      }),
+      proposal: createProposal({
+        proposalType: "create_prerequisite_blocker",
+        summary: "The owned path docs/ui-contract.md does not exist locally.",
+        suggestedTitle: "Create docs/ui-contract.md",
+        suggestedDescription: "docs/ui-contract.md does not exist in the worktree.",
+        scopeEvidence: [
+          "Checked the requested owned file before proposing the blocker.",
+        ],
+        fingerprint: "missing-owned-ui-doc",
+      }),
+      now: "2026-04-24T10:00:00.000Z",
+    })).resolves.toMatchObject({
+      outcome: "requeued",
+      parentStage: "rework_required",
+      childIssueId: null,
+    });
+
+    expect(tracker.createIssue).not.toHaveBeenCalled();
+    expect(tracker.linkBlockingIssue).not.toHaveBeenCalled();
+  });
+
   it("rejects Oracle mutation proposals", async () => {
     const root = createTempRoot();
 

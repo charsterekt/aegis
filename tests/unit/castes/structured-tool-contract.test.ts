@@ -117,6 +117,65 @@ describe("structured tool contracts", () => {
     });
   });
 
+  it("extracts Titan artifact with quoted enum payloads from local tool callers", () => {
+    expect(extractTitanArtifactFromToolEvent({
+      type: "tool_execution_end",
+      toolCallId: "call-quoted-titan",
+      toolName: TITAN_EMIT_ARTIFACT_TOOL_NAME,
+      isError: false,
+      result: {
+        content: [],
+        details: {
+          artifact: {
+            outcome: "\"success\"",
+            summary: "implemented",
+            files_changed: ["src/index.ts"],
+            tests_and_checks_run: [],
+            known_risks: [],
+            follow_up_work: [],
+          },
+        },
+      },
+    })).toMatchObject({
+      outcome: "success",
+      summary: "implemented",
+    });
+  });
+
+  it("extracts Sentinel verdict with quoted enum payloads from local tool callers", () => {
+    expect(extractSentinelVerdictFromToolEvent({
+      type: "tool_execution_end",
+      toolCallId: "call-quoted-sentinel",
+      toolName: SENTINEL_EMIT_VERDICT_TOOL_NAME,
+      isError: false,
+      result: {
+        content: [],
+        details: {
+          verdict: {
+            verdict: "\"fail_blocking\"",
+            reviewSummary: "contract gap",
+            blockingFindings: [{
+              finding_kind: "\"contract_gap\"",
+              summary: "missing required test",
+              required_files: ["src/index.ts"],
+              owner_issue: "aegis-123",
+              route: "\"rework_owner\"",
+            }],
+            advisories: [],
+            touchedFiles: ["src/index.ts"],
+            contractChecks: ["reviewed"],
+          },
+        },
+      },
+    })).toMatchObject({
+      verdict: "fail_blocking",
+      blockingFindings: [{
+        finding_kind: "contract_gap",
+        route: "rework_owner",
+      }],
+    });
+  });
+
   it("extracts Oracle scout-only assessment from matching tool event", () => {
     expect(extractOracleAssessmentFromToolEvent({
       type: "tool_execution_end",

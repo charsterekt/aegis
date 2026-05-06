@@ -11,7 +11,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "npm run build:node && npm run build:agora",
+    "build": "npm run build:agora && npm run build:node",
     "build:node": "node --eval \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc --project tsconfig.json",
     "build:agora": "node --eval \"require('node:fs').rmSync('packages/agora/dist', { recursive: true, force: true })\" && tsc --project packages/agora/tsconfig.json",
     "dev": "tsx src/index.ts",
@@ -19,10 +19,10 @@
     "mock:run": "tsx src/mock-run/mock-run.ts",
     "mock:acceptance": "tsx src/mock-run/acceptance.ts",
     "start": "node dist/index.js",
-    "test": "vitest run --config vitest.config.ts --project default",
+    "test": "npm run build:agora && vitest run --config vitest.config.ts --project default",
     "test:acceptance": "vitest run --config vitest.config.ts --project acceptance",
     "test:watch": "vitest --config vitest.config.ts",
-    "lint": "tsc --project tsconfig.tests.json --noEmit && tsc --project packages/agora/tsconfig.json --noEmit",
+    "lint": "npm run build:agora && tsc --project tsconfig.tests.json --noEmit && tsc --project packages/agora/tsconfig.json --noEmit",
     "prepack": "npm run build"
   },
   "engines": {

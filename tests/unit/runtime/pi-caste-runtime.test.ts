@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -17,6 +17,10 @@ import {
 } from "../../../src/runtime/pi-caste-runtime.js";
 
 type MockListener = (event: any) => void;
+type MockToolResult = {
+  content: Array<{ type: string; text: string }>;
+  isError: boolean;
+};
 
 interface ContractFixture {
   caste: CasteName;
@@ -108,7 +112,7 @@ const mockedAgent = vi.hoisted(() => {
   const createTool = (name: string) => ({
     name,
     parameters: {},
-    execute: vi.fn(async () => ({
+    execute: vi.fn(async (): Promise<MockToolResult> => ({
       content: [],
       isError: false,
     })),
@@ -171,9 +175,9 @@ const mockedAgent = vi.hoisted(() => {
     createBashTool: vi.fn(() => createTool("bash")),
     createEditTool: vi.fn(() => createTool("edit")),
     createWriteTool: vi.fn(() => createTool("write")),
-    createFindTool: vi.fn(() => ({ name: "find" })),
-    createLsTool: vi.fn(() => ({ name: "ls" })),
-    createGrepTool: vi.fn(() => ({ name: "grep" })),
+    createFindTool: vi.fn(() => createTool("find")),
+    createLsTool: vi.fn(() => createTool("ls")),
+    createGrepTool: vi.fn(() => createTool("grep")),
     DefaultResourceLoader: vi.fn(function DefaultResourceLoader(options: Record<string, unknown>) {
       return createResourceLoader(options);
     }),
@@ -342,7 +346,10 @@ describe("PiCasteRuntime", () => {
         .at(-1)?.[0] as {
         customTools?: unknown[];
       } | undefined;
-      expect(createSessionCall?.customTools).toHaveLength(1);
+      const customToolNames = createSessionCall?.customTools
+        ?.map((tool) => (tool as { name?: string }).name)
+        .sort();
+      expect(customToolNames).toEqual([...fixture.expectedActiveTools].sort());
       expect(mockedAgent.session.setActiveToolsByName).toHaveBeenLastCalledWith(
         fixture.expectedActiveTools,
       );
@@ -411,6 +418,44 @@ describe("PiCasteRuntime", () => {
       entry.role === "user"
       && entry.content.includes("Tool contract repair required")
     ))).toBe(true);
+  });
+
+  it("accepts valid final JSON text when local models do not call the caste tool", async () => {
+    mockedAgent.session.prompt.mockImplementation(async () => {
+      const listener = mockedAgent.listeners.at(-1);
+      if (!listener) {
+        return;
+      }
+
+      listener({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: JSON.stringify({
+            verdict: "pass",
+            reviewSummary: "clean",
+            blockingFindings: [],
+            advisories: [],
+            touchedFiles: ["docs/core-contract.md"],
+            contractChecks: ["reviewed candidate artifact"],
+          }),
+        },
+      });
+      listener({ type: "agent_end" });
+    });
+    const runtime = createSingleCasteRuntime("sentinel");
+
+    const result = await runtime.run({
+      caste: "sentinel",
+      issueId: "aegis-json-fallback",
+      root: "repo",
+      workingDirectory: "repo/sentinel",
+      prompt: "Review via JSON fallback",
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.outputText).toContain("\"verdict\":\"pass\"");
+    expect(result.toolsUsed).toEqual([]);
   });
 
   it("fails run when tool output is still missing after repair", async () => {
@@ -487,7 +532,7 @@ describe("PiCasteRuntime", () => {
     expect(result.error).toBe("Pi sentinel session timed out after 5ms.");
   });
 
-  it("defaults oracle sessions to a five-minute timeout budget", async () => {
+  it("defaults oracle sessions to a ten-minute timeout budget", async () => {
     vi.useFakeTimers();
     try {
       mockedAgent.session.prompt.mockImplementation(async () => {
@@ -508,11 +553,42 @@ describe("PiCasteRuntime", () => {
         prompt: "Scout default-timeout",
       });
 
-      await vi.advanceTimersByTimeAsync(300_000);
+      await vi.advanceTimersByTimeAsync(600_000);
       const result = await resultPromise;
 
       expect(result.status).toBe("failed");
-      expect(result.error).toBe("Pi oracle session timed out after 300000ms.");
+      expect(result.error).toBe("Pi oracle session timed out after 600000ms.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("defaults titan sessions to a fifteen-minute timeout budget", async () => {
+    vi.useFakeTimers();
+    try {
+      mockedAgent.session.prompt.mockImplementation(async () => {
+        // Simulate provider/session hang: no events emitted.
+      });
+
+      const runtime = new PiCasteRuntime({
+        titan: createModelConfig("titan"),
+      }, {
+        timeoutRetryCount: 0,
+      });
+
+      const resultPromise = runtime.run({
+        caste: "titan",
+        issueId: "aegis-default-titan-timeout",
+        root: "repo",
+        workingDirectory: "repo",
+        prompt: "Implement default-timeout",
+      });
+
+      await vi.advanceTimersByTimeAsync(900_000);
+      const result = await resultPromise;
+
+      expect(result.status).toBe("failed");
+      expect(result.error).toBe("Pi titan session timed out after 900000ms.");
     } finally {
       vi.useRealTimers();
     }
@@ -705,7 +781,7 @@ describe("PiCasteRuntime", () => {
     expect(result.outputText).toContain("\"estimated_complexity\":\"moderate\"");
   });
 
-  it("keeps Phase H/I tool setup: titan coding tools, others read-only tools", async () => {
+  it("keeps Phase H/I tool setup: titan coding tools and review/scout read-only tools", async () => {
     for (const fixture of CONTRACT_FIXTURES) {
       configureToolSuccess(fixture);
       const runtime = createSingleCasteRuntime(fixture.caste);
@@ -752,7 +828,7 @@ describe("PiCasteRuntime", () => {
       }),
     );
     expect(mockedAgent.createFindTool).toHaveBeenCalledWith(
-      "repo/sentinel",
+      "repo/janus",
       expect.objectContaining({
         operations: expect.objectContaining({
           exists: expect.any(Function),
@@ -761,7 +837,7 @@ describe("PiCasteRuntime", () => {
       }),
     );
     expect(mockedAgent.createFindTool).toHaveBeenCalledWith(
-      "repo/janus",
+      "repo/sentinel",
       expect.objectContaining({
         operations: expect.objectContaining({
           exists: expect.any(Function),
@@ -992,6 +1068,144 @@ describe("PiCasteRuntime", () => {
       );
     } finally {
       rmSync(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks read-only caste tools from reading Aegis control-plane files", async () => {
+    const fixture = CONTRACT_FIXTURES.find((candidate) => candidate.caste === "oracle");
+    if (!fixture) {
+      throw new Error("Missing oracle fixture.");
+    }
+
+    configureToolSuccess(fixture);
+    const runtime = createSingleCasteRuntime("oracle");
+
+    await runtime.run({
+      caste: "oracle",
+      issueId: "aegis-readonly-guard",
+      root: "repo",
+      workingDirectory: "repo/oracle",
+      prompt: "Oracle tool guard",
+    });
+
+    const createSessionCall = mockedAgent.createAgentSession.mock.calls.at(-1) as [
+      { tools?: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }> },
+    ] | undefined;
+    const tools = createSessionCall?.[0].tools ?? [];
+    const readTool = tools.find((tool) => tool.name === "read");
+    const lsTool = tools.find((tool) => tool.name === "ls");
+    const grepTool = tools.find((tool) => tool.name === "grep");
+
+    await expect(readTool?.execute("call-1", {
+      path: ".agora/tickets.json",
+    }, undefined, undefined)).rejects.toThrow("read path targets Aegis control plane");
+    await expect(lsTool?.execute("call-2", {
+      path: ".aegis",
+    }, undefined, undefined)).rejects.toThrow("ls path targets Aegis control plane");
+    await expect(grepTool?.execute("call-3", {
+      path: ".git/config",
+      pattern: "main",
+    }, undefined, undefined)).rejects.toThrow("grep path targets Aegis control plane");
+
+    const originalReadTool = mockedAgent.createReadTool.mock.results.at(-1)?.value as
+      | { execute: ReturnType<typeof vi.fn> }
+      | undefined;
+    expect(originalReadTool?.execute).not.toHaveBeenCalled();
+  });
+
+  it("filters Aegis control-plane entries from read-only directory listings", async () => {
+    const fixture = CONTRACT_FIXTURES.find((candidate) => candidate.caste === "oracle");
+    if (!fixture) {
+      throw new Error("Missing oracle fixture.");
+    }
+
+    const originalLsTool = mockedAgent.createLsTool.mock.results.at(-1)?.value as
+      | { execute: ReturnType<typeof vi.fn> }
+      | undefined;
+    void originalLsTool;
+    mockedAgent.createLsTool.mockReturnValueOnce({
+      name: "ls",
+      parameters: {},
+      execute: vi.fn(async () => ({
+        content: [{ type: "text", text: ".aegis/\n.agora/\n.git/\n.gitignore\nsrc/" }],
+        isError: false,
+      })),
+    });
+    configureToolSuccess(fixture);
+    const runtime = createSingleCasteRuntime("oracle");
+
+    await runtime.run({
+      caste: "oracle",
+      issueId: "aegis-ls-filter",
+      root: "repo",
+      workingDirectory: "repo/oracle",
+      prompt: "Oracle tool guard",
+    });
+
+    const createSessionCall = mockedAgent.createAgentSession.mock.calls.at(-1) as [
+      { tools?: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }> },
+    ] | undefined;
+    const lsTool = createSessionCall?.[0].tools?.find((tool) => tool.name === "ls");
+    await expect(lsTool?.execute("call-1", {
+      path: ".",
+    }, undefined, undefined)).resolves.toMatchObject({
+      content: [{ type: "text", text: ".gitignore\nsrc/" }],
+    });
+  });
+
+  it("forces hidden Titan bash execution to stay in the labor working directory", async () => {
+    const fixture = CONTRACT_FIXTURES.find((candidate) => candidate.caste === "titan");
+    if (!fixture) {
+      throw new Error("Missing titan fixture.");
+    }
+
+    const root = mkdtempSync(path.join(tmpdir(), "aegis-pi-root-"));
+    const workingDirectory = path.join(root, ".aegis", "labors", "AG-0004");
+    mkdirSync(workingDirectory, { recursive: true });
+    try {
+      configureToolSuccess(fixture);
+      const runtime = createSingleCasteRuntime("titan");
+
+      await runtime.run({
+        caste: "titan",
+        issueId: "AG-0004",
+        root,
+        workingDirectory,
+        prompt: "Allowed file scope: package.json, package-lock.json",
+      });
+
+      const bashToolCall = mockedAgent.createBashTool.mock.calls.at(-1) as
+        | [string, unknown]
+        | undefined;
+      const bashToolOptions = bashToolCall?.[1] as
+        | {
+          operations?: {
+            exec?: (
+              command: string,
+              cwd: string,
+              options: {
+                onData: (chunk: Buffer) => void;
+                signal?: AbortSignal;
+                timeout?: number;
+                env?: NodeJS.ProcessEnv;
+              },
+            ) => Promise<{ exitCode: number | null }>;
+          };
+        }
+        | undefined;
+      const result = await bashToolOptions?.operations?.exec?.(
+        process.platform === "win32" ? "cd > cwd.txt" : "pwd > cwd.txt",
+        root,
+        {
+          onData: () => undefined,
+        },
+      );
+
+      expect(result?.exitCode).toBe(0);
+      expect(readFileSync(path.join(workingDirectory, "cwd.txt"), "utf8").trim()).toBe(workingDirectory);
+      expect(existsSync(path.join(root, "cwd.txt"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

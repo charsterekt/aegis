@@ -197,6 +197,44 @@ describe("runMergeNext", () => {
     });
   });
 
+  it("preserves latest dispatch record fields when marking a merge complete", async () => {
+    const root = createTempRoot();
+    const issueId = "aegis-latest-record";
+    writeState(root, issueId);
+
+    await runMergeNext(root, {
+      tracker: {
+        getIssue: vi.fn(async () => createIssue(issueId)),
+      },
+      executor: {
+        execute: vi.fn(async () => {
+          const state = loadDispatchState(root);
+          saveDispatchState(root, {
+            ...state,
+            records: {
+              ...state.records,
+              [issueId]: {
+                ...state.records[issueId]!,
+                policyArtifactRef: ".aegis/policy/latest.json",
+              },
+            },
+          });
+          return {
+            outcome: "merged" as const,
+            detail: "Merged cleanly.",
+          };
+        }),
+      },
+      now: "2026-04-24T10:30:00.000Z",
+    });
+
+    expect(loadDispatchState(root).records[issueId]).toMatchObject({
+      stage: "complete",
+      policyArtifactRef: ".aegis/policy/latest.json",
+      sentinelVerdictRef: path.join(".aegis", "sentinel", `${issueId}.json`),
+    });
+  });
+
   it("uses real git merge execution when runtime is pi", async () => {
     const root = createTempRoot();
     writeFileSync(
@@ -240,6 +278,45 @@ describe("runMergeNext", () => {
     expect(readFileSync(path.join(root, "README.md"), "utf8")).toContain("phase-i merge change");
   });
 
+  it("requeues instead of marking merged when candidate and target are the same branch", async () => {
+    const root = createTempRoot();
+    writeFileSync(
+      path.join(root, ".aegis", "config.json"),
+      `${JSON.stringify({
+        ...DEFAULT_AEGIS_CONFIG,
+        runtime: "pi",
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    initializeGitRepository(root);
+    writeState(root, "aegis-same-branch");
+    saveMergeQueueState(root, {
+      schemaVersion: 1,
+      items: [{
+        ...createQueueItem("aegis-same-branch"),
+        candidateBranch: "main",
+        targetBranch: "main",
+      }],
+    });
+
+    const result = await runMergeNext(root, {
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-same-branch")),
+      },
+      now: "2026-04-14T12:30:00.000Z",
+    });
+
+    expect(result).toMatchObject({
+      action: "merge_next",
+      status: "requeued",
+      issueId: "aegis-same-branch",
+      tier: "T2",
+      stage: "queued_for_merge",
+    });
+    expect(result.detail).toContain("Candidate branch main matches target branch main");
+  });
+
   it("fail-closes merge execution when the repo root has non-Aegis dirty files", async () => {
     const root = createTempRoot();
     writeFileSync(
@@ -278,6 +355,104 @@ describe("runMergeNext", () => {
     });
     expect(result.detail).toContain("non-Aegis working tree changes");
     expect(result.detail).toContain("root-leak.txt");
+  });
+
+  it("waits instead of escalating when active Titan work owns dirty root files", async () => {
+    const root = createTempRoot();
+    writeFileSync(
+      path.join(root, ".aegis", "config.json"),
+      `${JSON.stringify({
+        ...DEFAULT_AEGIS_CONFIG,
+        runtime: "pi",
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    initializeGitRepository(root);
+
+    runGit(root, ["checkout", "-b", "aegis/aegis-903"]);
+    writeFileSync(path.join(root, "README.md"), "merge me\n", "utf8");
+    runGit(root, ["add", "README.md"]);
+    runGit(root, ["commit", "-m", "candidate change"]);
+    runGit(root, ["checkout", "main"]);
+
+    const mergeRecord = createRecord("aegis-903", "queued_for_merge");
+    const activeRecord = {
+      ...createRecord("aegis-active", "implementing"),
+      runningAgent: {
+        caste: "titan" as const,
+        sessionId: "session-active",
+        startedAt: "2026-04-14T12:00:00.000Z",
+      },
+      fileScope: { files: ["active-owned.txt"] },
+    };
+    saveDispatchState(root, {
+      schemaVersion: 1,
+      records: {
+        "aegis-903": mergeRecord,
+        "aegis-active": activeRecord,
+      },
+    });
+    saveMergeQueueState(root, {
+      schemaVersion: 1,
+      items: [createQueueItem("aegis-903")],
+    });
+    writeFileSync(path.join(root, "active-owned.txt"), "dirty but owned by active titan\n", "utf8");
+
+    const result = await runMergeNext(root, {
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-903")),
+      },
+      now: "2026-04-14T12:30:00.000Z",
+    });
+
+    expect(result).toMatchObject({
+      action: "merge_next",
+      status: "requeued",
+      issueId: "aegis-903",
+      stage: "queued_for_merge",
+    });
+    expect(result.detail).toContain("waiting for active scoped work");
+    const queueItem = loadMergeQueueState(root).items[0]!;
+    expect(queueItem.status).toBe("queued");
+    expect(queueItem.attempts).toBe(0);
+    expect(loadDispatchState(root).records["aegis-903"]?.stage).toBe("queued_for_merge");
+  });
+
+  it("cleans files left by a failed real git merge before requeueing", async () => {
+    const root = createTempRoot();
+    initializeGitRepository(root);
+    writeFileSync(path.join(root, "conflict.txt"), "base\n", "utf8");
+    runGit(root, ["add", "conflict.txt"]);
+    runGit(root, ["commit", "-m", "add conflict base"]);
+    runGit(root, ["checkout", "-b", "aegis/aegis-clean"]);
+    mkdirSync(path.join(root, "src", "domain"), { recursive: true });
+    writeFileSync(path.join(root, "conflict.txt"), "candidate\n", "utf8");
+    writeFileSync(path.join(root, "src", "domain", "todo.ts"), "export const todo = true;\n", "utf8");
+    runGit(root, ["add", "conflict.txt", "src/domain/todo.ts"]);
+    runGit(root, ["commit", "-m", "candidate"]);
+    runGit(root, ["checkout", "main"]);
+    writeFileSync(path.join(root, "conflict.txt"), "main\n", "utf8");
+    runGit(root, ["add", "conflict.txt"]);
+    runGit(root, ["commit", "-m", "main change"]);
+    writeFileSync(
+      path.join(root, ".aegis", "config.json"),
+      `${JSON.stringify({ ...DEFAULT_AEGIS_CONFIG, runtime: "codex" }, null, 2)}\n`,
+      "utf8",
+    );
+    writeState(root, "aegis-clean");
+
+    const result = await runMergeNext(root, {
+      tracker: {
+        getIssue: vi.fn(async () => createIssue("aegis-clean")),
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "requeued",
+      stage: "queued_for_merge",
+    });
+    expect(runGit(root, ["status", "--short", "--", "src/domain/todo.ts"])).toBe("");
   });
 
   it("uses scripted merge outcomes when a scripted merge plan override is provided under pi runtime", async () => {
