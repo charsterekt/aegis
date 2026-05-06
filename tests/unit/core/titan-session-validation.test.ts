@@ -6,7 +6,7 @@ import { normalizeTitanArtifactChangedFiles } from "../../../src/core/titan-sess
 
 describe("titan session validation", () => {
   it("normalizes absolute files_changed paths inside the candidate worktree", () => {
-    const workingDirectory = path.join("C:", "work", "labor");
+    const workingDirectory = path.resolve("work", "labor");
 
     expect(normalizeTitanArtifactChangedFiles(
       "aegis-paths",
